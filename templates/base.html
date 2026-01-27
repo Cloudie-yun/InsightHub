@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Document Chatbot{% endblock %}</title>
+
+    <!-- Tailwind CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-slate-100 to-slate-300">
+
+<div class="flex min-h-screen">
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-slate-900 text-white p-6">
+        <h2 class="text-xl font-semibold mb-6">Insight Hub</h2>
+
+        <nav class="space-y-3">
+            <a href="/" class="block px-4 py-2 rounded hover:bg-slate-700">Home</a>
+            <a href="#" class="block px-4 py-2 rounded hover:bg-slate-700">Upload</a>
+            <a href="#" class="block px-4 py-2 rounded hover:bg-slate-700">Chat</a>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 p-8">
+        {% block content %}{% endblock %}
+    </main>
+
+</div>
+
+</body>
+</html>

@@ -1,15 +1,20 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Upload Document</title>
-</head>
-<body>
-    <h2>Upload a document</h2>
+{% extends "base.html" %}
 
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="document" required>
-        <br><br>
-        <button type="submit">Upload</button>
-    </form>
-</body>
-</html>
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+    <div class="bg-white rounded-xl shadow p-8">
+        <h1 class="text-2xl font-bold mb-4">
+            Welcome 👋
+        </h1>
+        <p class="text-gray-600 mb-6">
+            Upload your documents and interact with them using an AI-powered chatbot.
+        </p>
+        <a href="/upload"
+           class="inline-block bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">
+            Get Started
+        </a>
+    </div>
+</div>
+{% endblock %}

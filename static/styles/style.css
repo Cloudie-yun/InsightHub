@@ -1,7 +1,3 @@
 body {
-    background-color: #f0f0f0;
-}
-h1 {
-    color: #c76363;
-    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #f5f7fa, #c3cfe2);
 }
