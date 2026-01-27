@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up - InsightHub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-100 h-screen flex items-center justify-center p-4">
+
+    <div class="bg-white w-full max-w-4xl h-[600px] rounded-3xl shadow-2xl flex overflow-hidden">
+        
+        <!-- Left: Decorative (Reversed for Signup) -->
+        <div class="w-1/2 bg-[#a39cb6] relative flex flex-col items-center justify-center text-white p-12 text-center" style="border-top-right-radius: 100px;">
+            <a href="/" class="absolute top-8 left-8 text-white hover:opacity-80 font-bold flex items-center gap-2">
+                <i class="fa-solid fa-chevron-left"></i> Back
+            </a>
+            
+            <h2 class="text-4xl font-bold mb-4">Hello!</h2>
+            <p class="mb-8 opacity-90">Already have an account?</p>
+            <a href="/login" class="border-2 border-white text-white px-8 py-2 rounded-full font-bold hover:bg-white hover:text-[#a39cb6] transition-colors">
+                Login here
+            </a>
+        </div>
+
+        <!-- Right: Form -->
+        <div class="w-1/2 p-12 flex flex-col justify-center">
+            <div class="max-w-xs mx-auto w-full">
+                <h1 class="text-3xl font-bold text-indigo-900 mb-6 text-center">Sign Up</h1>
+                
+                <form action="/dashboard" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-bold text-indigo-900 mb-1">Username</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-800">
+                                <i class="fa-solid fa-user"></i>
+                            </span>
+                            <input type="text" placeholder="yunite" class="w-full bg-gray-100 rounded-lg pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-indigo-900 mb-1">Email</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-800">
+                                <i class="fa-solid fa-envelope"></i>
+                            </span>
+                            <input type="email" placeholder="yunite@gmail.com" class="w-full bg-gray-100 rounded-lg pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-indigo-900 mb-1">Password</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-800">
+                                <i class="fa-solid fa-lock"></i>
+                            </span>
+                            <input type="password" placeholder="******" class="w-full bg-gray-100 rounded-lg pl-10 pr-10 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-800 cursor-pointer">
+                                <i class="fa-regular fa-eye"></i>
+                            </span>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="w-full bg-indigo-700 hover:bg-indigo-800 text-white font-bold py-3 rounded-lg shadow-lg shadow-indigo-200 transition-all mt-2">
+                        Sign up
+                    </button>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>
