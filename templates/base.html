@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>InsightHub</title>
+    <!-- Website Icon-->
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Font Awesome -->
@@ -43,7 +45,8 @@
             <!-- Logo -->
             <div class="h-16 flex items-center px-6 border-b border-gray-100">
                 <a href="/dashboard" class="text-2xl font-bold tracking-tight text-brand-700 flex items-center gap-2">
-                    <i class="fa-solid fa-layer-group"></i> InsightHub
+                    <img src="/static/images/favicon.png" alt="Logo" class="h-9 w-9"/>
+                    InsightHub
                 </a>
             </div>
 
@@ -75,13 +78,8 @@
             </div>
         </div>
 
-        <!-- User Profile (Bottom Sidebar) -->
-        <div class="p-4 border-t border-gray-100">
-            <a href="/login" class="flex items-center gap-3 px-2 py-2 text-gray-500 hover:text-red-500 transition-colors">
-                <i class="fa-solid fa-arrow-right-from-bracket"></i>
-                <span>Log Out</span>
-            </a>
-        </div>
+        <!-- Sidebar Footer Spacer -->
+        <div class="p-4 border-t border-gray-100"></div>
     </aside>
 
     <!-- Main Content Wrapper -->
@@ -90,14 +88,14 @@
         <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 flex-shrink-0">
             <!-- Search -->
             <div class="w-full max-w-lg relative">
-                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                <input type="text" placeholder="Search documents, conversations..." 
+                       class="w-full pl-4 pr-4 py-2 rounded-full border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
                     <i class="fa-solid fa-magnifying-glass"></i>
                 </span>
-                <input type="text" placeholder="Search documents, conversations..." 
-                       class="w-full pl-10 pr-4 py-2 rounded-full border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
             </div>
 
-            <!-- User Info -->
+            <!-- User / Auth Actions -->
             <div class="flex items-center gap-4 ml-4">
                 <div class="text-right hidden sm:block">
                     <div class="text-sm font-bold text-gray-900">Yunite</div>
@@ -105,6 +103,14 @@
                 </div>
                 <div class="h-10 w-10 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center font-bold text-lg border-2 border-white shadow-sm">
                     Y
+                </div>
+                <div class="flex items-center gap-2">
+                    <button data-auth-open="login" class="px-3 py-2 text-xs font-semibold text-brand-700 bg-brand-50 rounded-lg hover:bg-brand-100 transition-colors">
+                        Log In
+                    </button>
+                    <button data-auth-open="signup" class="px-3 py-2 text-xs font-semibold text-white bg-brand-600 rounded-lg hover:bg-brand-700 transition-colors">
+                        Sign Up
+                    </button>
                 </div>
             </div>
         </header>
@@ -115,5 +121,117 @@
         </main>
     </div>
 
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="fixed inset-0 z-50 hidden items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" data-auth-close></div>
+        <div class="relative z-10 w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl border border-slate-100">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-900" id="auth-title">Welcome Back</h3>
+                    <p class="text-xs text-slate-500" id="auth-subtitle">Log in to continue</p>
+                </div>
+                <button class="h-9 w-9 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors" data-auth-close>
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="px-6 py-5">
+                <!-- Login -->
+                <form id="auth-login" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Email</label>
+                        <input type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Password</label>
+                        <input type="password" placeholder="********" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
+                        Log In
+                    </button>
+                    <div class="flex items-center gap-3 text-xs text-slate-400">
+                        <div class="h-px flex-1 bg-slate-200"></div>
+                        <span>OR</span>
+                        <div class="h-px flex-1 bg-slate-200"></div>
+                    </div>
+                    <button type="button" class="w-full rounded-xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                        Continue with Google
+                    </button>
+                    <p class="text-xs text-slate-500 text-center">
+                        New here?
+                        <button type="button" class="text-brand-700 font-semibold" data-auth-open="signup">Create an account</button>
+                    </p>
+                </form>
+
+                <!-- Signup -->
+                <form id="auth-signup" class="space-y-4 hidden">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Name</label>
+                        <input type="text" placeholder="Your name" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Email</label>
+                        <input type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Password</label>
+                        <input type="password" placeholder="Create a password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
+                        Sign Up
+                    </button>
+                    <div class="flex items-center gap-3 text-xs text-slate-400">
+                        <div class="h-px flex-1 bg-slate-200"></div>
+                        <span>OR</span>
+                        <div class="h-px flex-1 bg-slate-200"></div>
+                    </div>
+                    <button type="button" class="w-full rounded-xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                        Continue with Google
+                    </button>
+                    <p class="text-xs text-slate-500 text-center">
+                        Already have an account?
+                        <button type="button" class="text-brand-700 font-semibold" data-auth-open="login">Log in</button>
+                    </p>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const authModal = document.getElementById("auth-modal");
+        const loginForm = document.getElementById("auth-login");
+        const signupForm = document.getElementById("auth-signup");
+        const authTitle = document.getElementById("auth-title");
+        const authSubtitle = document.getElementById("auth-subtitle");
+
+        const setAuthMode = (mode) => {
+            const isLogin = mode === "login";
+            loginForm.classList.toggle("hidden", !isLogin);
+            signupForm.classList.toggle("hidden", isLogin);
+            authTitle.textContent = isLogin ? "Welcome Back" : "Create Your Account";
+            authSubtitle.textContent = isLogin ? "Log in to continue" : "Sign up in seconds";
+        };
+
+        const openAuth = (mode) => {
+            setAuthMode(mode);
+            authModal.classList.remove("hidden");
+            authModal.classList.add("flex");
+        };
+
+        const closeAuth = () => {
+            authModal.classList.add("hidden");
+            authModal.classList.remove("flex");
+        };
+
+        document.querySelectorAll("[data-auth-open]").forEach((el) => {
+            el.addEventListener("click", () => openAuth(el.dataset.authOpen));
+        });
+        document.querySelectorAll("[data-auth-close]").forEach((el) => {
+            el.addEventListener("click", closeAuth);
+        });
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") closeAuth();
+        });
+    </script>
 </body>
 </html>

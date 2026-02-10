@@ -1,11 +1,12 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, jsonify
+from db import get_db_connection
 
 app = Flask(__name__)
 
 @app.route('/')
 def root():
     # Redirect root to login for the prototype flow
-    return render_template('login.html')
+    return render_template('dashboard.html')
 
 @app.route('/login')
 def login():
