@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 
 {% block content %}
+<header class="h-12 flex items-center justify-between px-6 flex-shrink-0">
+    <h1 class="text-xl font-bold text-gray-900">(Chat Title)</h1>
+    <div class="flex items-center gap-3">
+        <button class="h-10 w-10 rounded-lg text-slate-600 hover:bg-gray-100 transition-colors flex items-center justify-center" title="Notifications">
+            <i class="fa-solid fa-ellipsis"></i>
+        </button>
+    </div>
+</header>
 <div class="flex h-full">
     
     <!-- Sources Panel (Left) -->

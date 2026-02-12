@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!--Google Fonts Icon-->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
     <!-- Custom Config for specific colors -->
     <script>
         tailwind.config = {
@@ -62,16 +63,79 @@
         .sidebar-collapsed #auth-section,
         .sidebar-collapsed #user-section { padding: 0.5rem; }
         .sidebar-collapsed .sidebar-auth-buttons button { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        .sidebar-collapsed .sidebar-theme { display: none; }
+        #convo-caret { opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; }
+        #convo-toggle:hover #convo-caret,
+        #convo-toggle:focus-visible #convo-caret { opacity: 1; }
+        
+        body.theme-light { font-family: "Manrope", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        body.theme-dark { background-color: #0b1220; color: #e2e8f0; font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        body.theme-dark .sidebar { background-color: #0f172a; border-color: #1f2937; }
+        body.theme-dark .bg-white { background-color: #0f172a !important; }
+        body.theme-dark .bg-slate-50 { background-color: #0b1220 !important; }
+        body.theme-dark .bg-gray-50 { background-color: #111827 !important; }
+        body.theme-dark .bg-gray-100 { background-color: #1f2937 !important; }
+        body.theme-dark .bg-brand-50 { background-color: rgba(139, 92, 246, 0.16) !important; }
+        body.theme-dark .bg-brand-100 { background-color: rgba(139, 92, 246, 0.24) !important; }
+        body.theme-dark .bg-purple-100 { background-color: rgba(139, 92, 246, 0.22) !important; }
+        body.theme-dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.12) !important; }
+        body.theme-dark .bg-red-400 { background-color: #dc2626 !important; }
+        body.theme-dark .hover\:bg-gray-50:hover { background-color: #1f2937 !important; }
+        body.theme-dark .hover\:bg-gray-100:hover { background-color: #1f2937 !important; }
+        body.theme-dark .hover\:bg-brand-50:hover { background-color: rgba(139, 92, 246, 0.24) !important; }
+        body.theme-dark .hover\:bg-brand-100:hover { background-color: rgba(139, 92, 246, 0.32) !important; }
+        body.theme-dark .border-gray-100 { border-color: #1f2937 !important; }
+        body.theme-dark .border-gray-200 { border-color: #334155 !important; }
+        body.theme-dark .border-slate-100 { border-color: #334155 !important; }
+        body.theme-dark .border-slate-200 { border-color: #334155 !important; }
+        body.theme-dark .border-brand-200 { border-color: rgba(139, 92, 246, 0.36) !important; }
+        body.theme-dark .border-brand-300 { border-color: rgba(139, 92, 246, 0.45) !important; }
+        body.theme-dark .border-red-500 { border-color: rgba(239, 68, 68, 0.65) !important; }
+        body.theme-dark .text-slate-900 { color: #f1f5f9 !important; }
+        body.theme-dark .text-slate-800 { color: #e2e8f0 !important; }
+        body.theme-dark .text-slate-700 { color: #cbd5e1 !important; }
+        body.theme-dark .text-slate-600 { color: #cbd5e1 !important; }
+        body.theme-dark .text-slate-500 { color: #94a3b8 !important; }
+        body.theme-dark .text-gray-900 { color: #f1f5f9 !important; }
+        body.theme-dark .text-gray-800 { color: #e2e8f0 !important; }
+        body.theme-dark .text-gray-700 { color: #cbd5e1 !important; }
+        body.theme-dark .text-gray-600 { color: #cbd5e1 !important; }
+        body.theme-dark .text-gray-500 { color: #94a3b8 !important; }
+        body.theme-dark .text-gray-400 { color: #64748b !important; }
+        body.theme-dark .text-purple-600 { color: #c4b5fd !important; }
+        body.theme-dark .text-brand-700 { color: #c4b5fd !important; }
+        body.theme-dark .text-brand-800 { color: #ddd6fe !important; }
+        body.theme-dark .text-brand-900 { color: #ede9fe !important; }
+        body.theme-dark input::placeholder { color: #64748b; }
+        body.theme-dark input { color: #e2e8f0; }
+        body.theme-dark .shadow-sm,
+        body.theme-dark .shadow-md,
+        body.theme-dark .shadow-2xl { box-shadow: 0 10px 25px rgba(2, 6, 23, 0.45) !important; }
+        body.theme-dark button.bg-white,
+        body.theme-dark a.bg-white,
+        body.theme-dark .bg-white.border { background-color: #111827 !important; }
+        body.theme-dark button[class*="bg-brand-50"] { color: #ddd6fe !important; }
+        body.theme-dark button[class*="bg-brand-600"] { background-color: #7c3aed !important; }
+        body.theme-dark button[class*="bg-brand-600"]:hover { background-color: #6d28d9 !important; }
+        body.theme-dark [class*="rounded-full"].bg-brand-100 { background-color: rgba(139, 92, 246, 0.3) !important; }
+        body.theme-dark [class*="rounded-full"] { background-color: rgba(139, 92, 246, 0.3) !important; }
+        body.theme-dark .theme-option { border-color: #334155 !important; background-color: #0f172a !important; color: #cbd5e1; }
+        body.theme-dark .theme-option:hover { background-color: #1f2937 !important; }
+        body.theme-dark .theme-option.active { border-color: #8b5cf6 !important; color: #ddd6fe; background-color: rgba(139, 92, 246, 0.12) !important; }
+        body.theme-dark .convo-history-list { background: #111827; border-color: #334155; }
+        body.theme-dark .convo-history-item { color: #94a3b8; }
+        body.theme-dark .convo-history-item:hover { background: #1f2937; color: #e2e8f0; }
+        body.theme-dark .convo-history-dot { background: #64748b; }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800 font-sans h-screen flex overflow-hidden">
+<body class="theme-light bg-slate-50 text-slate-800 leading-normal tracking-normal text-justify font-sans text-base h-screen flex overflow-hidden">
 
     <!-- Sidebar -->
     <aside id="sidebar" class="sidebar w-64 bg-white border-r border-gray-200 flex flex-col h-full flex-shrink-0 transition-all duration-300">
         <div class="flex-1 flex flex-col overflow-hidden">
             <!-- Logo & Toggle -->
             <div class="h-16 flex items-center justify-center px-4 border-b border-gray-100 flex-shrink-0">
-                <a href="/dashboard" class="sidebar-brand text-2xl font-bold tracking-tight text-brand-700 flex items-center gap-2 flex-1 min-w-0">
+                <a href="/dashboard" class="sidebar-brand text-xl font-bold tracking-tight text-brand-700 flex items-center gap-2 flex-1 min-w-0">
                     <img src="/static/images/favicon.png" alt="Logo" class="sidebar-logo h-9 w-9 flex-shrink-0"/>
                     <span class="sidebar-label truncate">InsightHub</span>
                 </a>
@@ -82,41 +146,41 @@
                 </button>
             </div>
 
-            <!-- New Chat Button -->
-            <div class="p-4 flex-shrink-0">
-                <button class="sidebar-new-chat w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-brand-500 text-white font-medium hover:bg-brand-700 transition-colors">
-                    <i class="fa-solid fa-plus"></i>
-                    <span class="sidebar-label">New Chat</span>
-                </button>
-            </div>
-
-            <!-- Search Bar -->
-            <div class="px-4 pb-4 flex-shrink-0 sidebar-search">
-                <div class="relative">
-                    <input type="text" placeholder="Search conversations..." 
-                           class="w-full pl-4 pr-10 py-2 rounded-lg border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all text-sm">
-                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
-                        search
-                    </span>
-                </div>
-            </div>
-
             <div class="border-t border-gray-100"></div>
 
             <!-- Main Nav - Scrollable -->
-            <nav class="p-4 space-y-2 flex-1 overflow-y-auto">
-                <a href="/dashboard" class="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors {{ 'bg-brand-50 text-brand-700 font-medium' if active_page == 'dashboard' else 'text-gray-500 hover:bg-gray-50 hover:text-gray-900' }}">
+            <nav class="p-4 space-y-1 flex-1 overflow-y-auto">
+                <!-- Search Bar -->
+                <div class="space-y-1 sidebar-search">
+                    <div class="relative">
+                        <input type="text" placeholder="Search conversations..." 
+                            class="w-full h-12 pl-4 pr-10 py-2 rounded-lg border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all text-sm">
+                        <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xl">
+                            search
+                        </span>
+                    </div>
+                </div>
+
+                <!--New Chat Button-->
+                <div class="space-y-1">
+                    <button class="sidebar-new-chat w-full flex items-center gap-3 px-4 py-2 rounded-lg text-base font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors">
+                        <i class="fa-solid fa-square-plus text-2xl w-6 flex-shrink-0"></i>
+                        <span class="sidebar-label">New Chat</span>
+                    </button>
+                </div>
+
+                <a href="/dashboard" class="flex items-center gap-3 px-4 py-2 rounded-lg transition-colors {{ 'bg-brand-50 text-brand-700 font-medium' if active_page == 'dashboard' else 'text-gray-500 hover:bg-gray-100 hover:text-gray-900' }}">
                     <i class="fa-solid fa-house text-lg w-6 flex-shrink-0"></i>
                     <span class="sidebar-label">Dashboard</span>
                 </a>
                 
                 <div class="space-y-1">
-                    <button type="button" id="convo-toggle" class="w-full justify-center align-self-center flex items-center gap-3 px-4 py-3 rounded-lg transition-colors {{ 'bg-brand-50 text-brand-700 font-medium' if active_page == 'chat' else 'text-gray-500 hover:bg-gray-50 hover:text-gray-900' }}">
+                    <button type="button" id="convo-toggle" class="w-full justify-center align-self-center flex items-center gap-3 px-4 py-2 rounded-lg transition-colors group {{ 'bg-brand-50 text-brand-700 font-medium' if active_page == 'chat' else 'text-gray-500 hover:bg-gray-100 hover:text-gray-900' }}">
                         <i class="fa-solid fa-comments text-lg w-6 flex-shrink-0 "></i>
                         <span class="sidebar-label flex-1 text-left">Conversations</span>
-                        <i id="convo-caret" class="fa-solid fa-chevron-down text-sm transition-transform sidebar-label"></i>
+                        <i id="convo-caret" class="fa-solid fa-chevron-down text-xs transition-transform sidebar-label"></i>
                     </button>
-                    <div id="convo-submenu" class="pl-4 pr-3 space-y-1">
+                    <div id="convo-submenu" class="pl-3 pr-3 space-y-1">
                         <!-- Conversation History -->
                         <a href="/chat" class="block px-3 py-2 text-sm text-slate-600 hover:text-slate-900 hover:bg-gray-100 rounded-md truncate">
                             Introduction to Machine Learning
@@ -134,12 +198,27 @@
                             Database Optimization Tips
                         </a>
                     </div>
-                </div>
             </nav>
         </div>
 
         <!-- Sidebar Footer -->
         <div class="border-t border-gray-100 flex-shrink-0">
+            <div class="sidebar-theme p-4 border-b border-gray-100">
+                <p class="sidebar-label text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Theme</p>
+                <div class="grid grid-cols-2 gap-2">
+                    <label id="theme-light-option" class="theme-option active flex items-center justify-center gap-2 cursor-pointer rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
+                        <input type="radio" id="theme-light" name="theme-mode" value="light" class="sr-only" checked>
+                        <i class="fa-regular fa-sun"></i>
+                        <span class="sidebar-label">Light</span>
+                    </label>
+                    <label id="theme-dark-option" class="theme-option flex items-center justify-center gap-2 cursor-pointer rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
+                        <input type="radio" id="theme-dark" name="theme-mode" value="dark" class="sr-only">
+                        <i class="fa-regular fa-moon"></i>
+                        <span class="sidebar-label">Dark</span>
+                    </label>
+                </div>
+            </div>
+
             <!-- User Section (when logged in) -->
             <div id="user-section" class="p-4 hidden">
                 <div class="flex items-center gap-3">
@@ -157,7 +236,7 @@
             </div>
 
             <!-- Auth Buttons (when not logged in) -->
-            <div id="auth-section" class="p-4">
+            <div id="auth-section" class="p-4 ">
                 <div class="sidebar-auth-buttons flex flex-col gap-2">
                     <button data-auth-open="login" class="w-full px-4 py-2.5 text-sm font-semibold text-brand-700 bg-brand-50 rounded-lg hover:bg-brand-100 transition-colors flex items-center justify-center gap-2">
                         <i class="fa-solid fa-right-to-bracket"></i>
@@ -174,19 +253,6 @@
 
     <!-- Main Content Wrapper -->
     <div class="flex-1 flex flex-col h-full min-w-0">
-        <!-- Header (Simplified) -->
-        <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 flex-shrink-0">
-            <h1 class="text-xl font-bold text-gray-900">Welcome to InsightHub</h1>
-            <div class="flex items-center gap-3">
-                <button class="h-10 w-10 rounded-lg text-slate-600 hover:bg-gray-100 transition-colors flex items-center justify-center" title="Notifications">
-                    <i class="fa-solid fa-bell"></i>
-                </button>
-                <button class="h-10 w-10 rounded-lg text-slate-600 hover:bg-gray-100 transition-colors flex items-center justify-center" title="Help">
-                    <i class="fa-solid fa-circle-question"></i>
-                </button>
-            </div>
-        </header>
-
         <!-- Page Content Injection -->
         <main class="flex-1 overflow-auto bg-slate-50 relative">
             {% block content %}{% endblock %}
@@ -226,7 +292,8 @@
                         <span>OR</span>
                         <div class="h-px flex-1 bg-slate-200"></div>
                     </div>
-                    <button type="button" class="w-full rounded-xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                    <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
+                        <i class="fa-brands fa-google text-sm"></i>
                         Continue with Google
                     </button>
                     <p class="text-xs text-slate-500 text-center">
@@ -257,7 +324,8 @@
                         <span>OR</span>
                         <div class="h-px flex-1 bg-slate-200"></div>
                     </div>
-                    <button type="button" class="w-full rounded-xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
+                    <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
+                        <i class="fa-brands fa-google text-sm"></i>
                         Continue with Google
                     </button>
                     <p class="text-xs text-slate-500 text-center">
@@ -310,6 +378,7 @@
 
         const SIDEBAR_STATE_KEY = "insighthub.sidebarCollapsed";
         const CONVO_STATE_KEY = "insighthub.convoOpen";
+        const THEME_STATE_KEY = "insighthub.theme";
 
         // Sidebar toggle
         const sidebarToggle = document.getElementById("sidebar-toggle");
@@ -318,10 +387,32 @@
         const convoToggle = document.getElementById("convo-toggle");
         const convoSubmenu = document.getElementById("convo-submenu");
         const convoCaret = document.getElementById("convo-caret");
+        const themeLightRadio = document.getElementById("theme-light");
+        const themeDarkRadio = document.getElementById("theme-dark");
+        const themeLightOption = document.getElementById("theme-light-option");
+        const themeDarkOption = document.getElementById("theme-dark-option");
 
         const syncConvoCaret = () => {
             const isOpen = !convoSubmenu.classList.contains("hidden");
             convoCaret.classList.toggle("rotate-180", isOpen);
+        };
+
+        const syncThemeOptions = (theme) => {
+            const isDark = theme === "dark";
+            themeLightOption.classList.toggle("active", !isDark);
+            themeDarkOption.classList.toggle("active", isDark);
+            themeLightRadio.checked = !isDark;
+            themeDarkRadio.checked = isDark;
+        };
+
+        const applyTheme = (theme, persist = true) => {
+            const nextTheme = theme === "dark" ? "dark" : "light";
+            document.body.classList.toggle("theme-dark", nextTheme === "dark");
+            document.body.classList.toggle("theme-light", nextTheme !== "dark");
+            syncThemeOptions(nextTheme);
+            if (persist) {
+                localStorage.setItem(THEME_STATE_KEY, nextTheme);
+            }
         };
 
         // Restore persisted UI state on refresh
@@ -336,6 +427,9 @@
         } else if (savedConvoOpen === "true") {
             convoSubmenu.classList.remove("hidden");
         }
+
+        const savedTheme = localStorage.getItem(THEME_STATE_KEY);
+        applyTheme(savedTheme === "dark" ? "dark" : "light", false);
         syncConvoCaret();
 
         sidebarToggle.addEventListener("click", () => {
@@ -350,6 +444,13 @@
             const isHidden = convoSubmenu.classList.toggle("hidden");
             localStorage.setItem(CONVO_STATE_KEY, (!isHidden).toString());
             syncConvoCaret();
+        });
+
+        themeLightRadio.addEventListener("change", () => {
+            if (themeLightRadio.checked) applyTheme("light");
+        });
+        themeDarkRadio.addEventListener("change", () => {
+            if (themeDarkRadio.checked) applyTheme("dark");
         });
 
         // Simulate login state (for demo purposes)
