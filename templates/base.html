@@ -10,7 +10,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!--Google Fonts Icon-->
+    <!-- Google Fonts Icon -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
     <!-- Custom Config for specific colors -->
@@ -22,6 +22,9 @@
                         brand: {
                             50: '#f5f3ff',
                             100: '#ede9fe',
+                            200: '#ddd6fe',
+                            300: '#c4b5fd',
+                            400: '#a78bfa',
                             500: '#8b5cf6',
                             600: '#7c3aed',
                             700: '#6d28d9',
@@ -50,7 +53,6 @@
         .sidebar-collapsed .sidebar-auth-buttons { flex-direction: column; gap: 0.5rem; }
         .sidebar-collapsed .sidebar-auth-buttons button span { display: none; }
         .sidebar-collapsed .sidebar-new-chat { padding: 0.5rem; min-height: 2.25rem; border-radius: 0.5rem; }
-        .sidebar-collapsed .sidebar-new-chat i { font-size: 0.9rem; }
         .sidebar-collapsed nav { padding: 0.5rem; }
         .sidebar-collapsed nav > a,
         .sidebar-collapsed #convo-toggle {
@@ -59,7 +61,8 @@
             border-radius: 0.5rem;
         }
         .sidebar-collapsed nav > a i,
-        .sidebar-collapsed #convo-toggle i { font-size: 0.9rem; width: auto; }
+        .sidebar-collapsed nav > button i
+        .sidebar-collapsed #convo-toggle i { font-size: 1.25rem; width: auto; }
         .sidebar-collapsed #auth-section,
         .sidebar-collapsed #user-section { padding: 0.5rem; }
         .sidebar-collapsed .sidebar-auth-buttons button { padding-top: 0.5rem; padding-bottom: 0.5rem; }
@@ -68,7 +71,7 @@
         #convo-toggle:hover #convo-caret,
         #convo-toggle:focus-visible #convo-caret { opacity: 1; }
         
-        body.theme-light { font-family: "Manrope", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        body.theme-light { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         body.theme-dark { background-color: #0b1220; color: #e2e8f0; font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         body.theme-dark .sidebar { background-color: #0f172a; border-color: #1f2937; }
         body.theme-dark .bg-white { background-color: #0f172a !important; }
@@ -126,6 +129,7 @@
         body.theme-dark .convo-history-item { color: #94a3b8; }
         body.theme-dark .convo-history-item:hover { background: #1f2937; color: #e2e8f0; }
         body.theme-dark .convo-history-dot { background: #64748b; }
+        .auth-input-error { border-color: #ef4444 !important; }
     </style>
 </head>
 <body class="theme-light bg-slate-50 text-slate-800 leading-normal tracking-normal text-justify font-sans text-base h-screen flex overflow-hidden">
@@ -162,9 +166,9 @@
                 </div>
 
                 <!--New Chat Button-->
-                <div class="space-y-1">
+                <div class="space-y-1 pt-5">
                     <button class="sidebar-new-chat w-full flex items-center gap-3 px-4 py-2 rounded-lg text-base font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors">
-                        <i class="fa-solid fa-square-plus text-2xl w-6 flex-shrink-0"></i>
+                        <i class="fa-solid fa-square-plus text-xl w-6 flex-shrink-0"></i>
                         <span class="sidebar-label">New Chat</span>
                     </button>
                 </div>
@@ -254,7 +258,7 @@
     <!-- Main Content Wrapper -->
     <div class="flex-1 flex flex-col h-full min-w-0">
         <!-- Page Content Injection -->
-        <main class="flex-1 overflow-auto bg-slate-50 relative">
+        <main class="flex-1 overflow-auto bg-white relative">
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -265,24 +269,31 @@
         <div class="relative z-10 w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl border border-slate-100">
             <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
                 <div>
-                    <h3 class="text-lg font-bold text-slate-900" id="auth-title">Welcome Back</h3>
-                    <p class="text-xs text-slate-500" id="auth-subtitle">Log in to continue</p>
+                    <h3 class="text-2xl text-brand-600 font-bold" id="auth-title">Welcome Back</h3>
+                    <p class="text-sm text-slate-400" id="auth-subtitle">Log in to continue</p>
                 </div>
-                <button class="h-9 w-9 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors" data-auth-close>
-                    <i class="fa-solid fa-xmark"></i>
+                <button class="h-10 w-10 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors" data-auth-close>
+                    <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
 
-            <div class="px-6 py-5">
+            <div class="px-6 py-4">
                 <!-- Login -->
-                <form id="auth-login" class="space-y-4">
+                <form id="auth-login" class="space-y-5">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Email</label>
-                        <input type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <label class="block text-base font-semibold text-slate-600 mb-1">Email</label>
+                        <input id="login-email" type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <span id="login-email-error" class="hidden mt-1 text-xs text-red-500">Please enter a valid email.</span>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Password</label>
-                        <input type="password" placeholder="********" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <label class="block text-base font-semibold text-slate-600 mb-1">Password</label>
+                        <div class="relative">
+                            <input id="login-password" type="password" placeholder="********" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700" data-target="login-password" aria-label="Show password">
+                                <i class="fa-solid fa-eye"></i>
+                            </button>
+                        </div>
+                        <span id="login-password-error" class="hidden mt-1 text-xs text-red-500">Please enter your password.</span>
                     </div>
                     <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
                         Log In
@@ -305,16 +316,36 @@
                 <!-- Signup -->
                 <form id="auth-signup" class="space-y-4 hidden">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Name</label>
-                        <input type="text" placeholder="Your name" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <label class="block text-sm font-semibold text-slate-600 mb-1">Name</label>
+                        <input id="signup-name" type="text" placeholder="Your name" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <span id="signup-name-error" class="hidden mt-1 text-xs text-red-500">You need to provide a user name.</span>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Email</label>
-                        <input type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <label class="block text-sm font-semibold text-slate-600 mb-1">Email</label>
+                        <input id="signup-email" type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <span id="signup-email-error" class="hidden mt-1 text-xs text-red-500">Please enter a valid email.</span>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Password</label>
-                        <input type="password" placeholder="Create a password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <label class="block text-sm font-semibold text-slate-600 mb-1">Password</label>
+                        <div class="relative">
+                            <input id="signup-password" type="password" placeholder="Create a password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700" data-target="signup-password" aria-label="Show password">
+                                <i class="fa-solid fa-eye"></i>
+                            </button>
+                        </div>
+                        <span id="signup-password-error" class="hidden mt-1 text-xs text-red-500">Please enter your password.</span>
+                        <span id="signup-password-strength-error" class="hidden mt-1 text-xs text-red-500">Password must be at least 8 characters and include uppercase, lowercase, number, and special character.</span>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-slate-600 mb-1">Confirm Password</label>
+                        <div class="relative">
+                            <input id="signup-confirm-password" type="password" placeholder="Confirm your password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700" data-target="signup-confirm-password" aria-label="Show password">
+                                <i class="fa-solid fa-eye"></i>
+                            </button>
+                        </div>
+                        <span id="signup-confirm-password-error" class="hidden mt-1 text-xs text-red-500">Please confirm your password.</span>
+                        <span id="signup-password-match-error" class="hidden mt-1 text-xs text-red-500">Passwords do not match.</span>
                     </div>
                     <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
                         Sign Up
@@ -345,9 +376,44 @@
         const authSubtitle = document.getElementById("auth-subtitle");
         const userSection = document.getElementById("user-section");
         const authSection = document.getElementById("auth-section");
+        
+        const clearFormErrors = (formId) => {
+            document.querySelectorAll(`#${formId} span[id$='-error']`).forEach((el) => {
+                el.classList.add("hidden");
+            });
+            document.querySelectorAll(`#${formId} input`).forEach((input) => {
+                input.classList.remove("auth-input-error");
+            });
+        };
+
+        const resetAuthFormState = (formId) => {
+            const form = document.getElementById(formId);
+            if (!form) return;
+            form.reset();
+            clearFormErrors(formId);
+            form.querySelectorAll("input[type='text']").forEach((input) => {
+                if (input.id.toLowerCase().includes("password")) {
+                    input.type = "password";
+                }
+            });
+        };
+
+        const resetPasswordToggleIcons = () => {
+            document.querySelectorAll(".auth-password-toggle").forEach((button) => {
+                button.innerHTML = '<i class="fa-solid fa-eye"></i>';
+                button.setAttribute("aria-label", "Show password");
+            });
+        };
+
+        const resetAuthForms = () => {
+            resetAuthFormState("auth-login");
+            resetAuthFormState("auth-signup");
+            resetPasswordToggleIcons();
+        };
 
         // Toggle between login/signup
         const setAuthMode = (mode) => {
+            resetAuthForms();
             const isLogin = mode === "login";
             loginForm.classList.toggle("hidden", !isLogin);
             signupForm.classList.toggle("hidden", isLogin);
@@ -362,6 +428,7 @@
         };
 
         const closeAuth = () => {
+            resetAuthForms();
             authModal.classList.add("hidden");
             authModal.classList.remove("flex");
         };
@@ -374,6 +441,113 @@
         });
         document.addEventListener("keydown", (e) => {
             if (e.key === "Escape") closeAuth();
+        });
+        
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+        
+        const showError = (input, errorId, show) => {
+            const error = document.getElementById(errorId);
+            if (!error) return;
+            error.classList.toggle("hidden", !show);
+            if (input) {
+                input.classList.toggle("auth-input-error", show);
+            }
+        };
+
+        document.querySelectorAll(".auth-password-toggle").forEach((button) => {
+            button.addEventListener("click", () => {
+                const input = document.getElementById(button.dataset.target);
+                if (!input) return;
+
+                const isHidden = input.type === "password";
+                input.type = isHidden ? "text" : "password";
+                button.innerHTML = isHidden
+                    ? '<i class="fa-solid fa-eye-slash"></i>'
+                    : '<i class="fa-solid fa-eye"></i>';
+                button.setAttribute("aria-label", isHidden ? "Hide password" : "Show password");
+            });
+        });
+
+        loginForm.addEventListener("submit", (e) => {
+            e.preventDefault();
+            clearFormErrors("auth-login");
+
+            const emailInput = document.getElementById("login-email");
+            const passwordInput = document.getElementById("login-password");
+            const email = emailInput.value.trim();
+            const password = passwordInput.value;
+            let isValid = true;
+
+            if (!email) {
+                showError(emailInput, "login-email-error", true);
+                document.getElementById("login-email-error").textContent = "Please enter your email.";
+                isValid = false;
+            } else if (!emailRegex.test(email)) {
+                showError(emailInput, "login-email-error", true);
+                document.getElementById("login-email-error").textContent = "Please enter a valid email.";
+                isValid = false;
+            }
+
+            if (!password.trim()) {
+                showError(passwordInput, "login-password-error", true);
+                isValid = false;
+            }
+
+            if (isValid) {
+                closeAuth();
+            }
+        });
+
+        signupForm.addEventListener("submit", (e) => {
+            e.preventDefault();
+            clearFormErrors("auth-signup");
+
+            const nameInput = document.getElementById("signup-name");
+            const emailInput = document.getElementById("signup-email");
+            const passwordInput = document.getElementById("signup-password");
+            const confirmPasswordInput = document.getElementById("signup-confirm-password");
+
+            const name = nameInput.value.trim();
+            const email = emailInput.value.trim();
+            const password = passwordInput.value;
+            const confirmPassword = confirmPasswordInput.value;
+            let isValid = true;
+
+            if (!name) {
+                showError(nameInput, "signup-name-error", true);
+                isValid = false;
+            }
+
+            if (!email) {
+                showError(emailInput, "signup-email-error", true);
+                document.getElementById("signup-email-error").textContent = "Please enter your email.";
+                isValid = false;
+            } else if (!emailRegex.test(email)) {
+                showError(emailInput, "signup-email-error", true);
+                document.getElementById("signup-email-error").textContent = "Please enter a valid email.";
+                isValid = false;
+            }
+
+            if (!password.trim()) {
+                showError(passwordInput, "signup-password-error", true);
+                isValid = false;
+            } else if (!strongPasswordRegex.test(password)) {
+                showError(passwordInput, "signup-password-strength-error", true);
+                isValid = false;
+            }
+
+            if (!confirmPassword.trim()) {
+                showError(confirmPasswordInput, "signup-confirm-password-error", true);
+                isValid = false;
+            } else if (password !== confirmPassword) {
+                showError(confirmPasswordInput, "signup-password-match-error", true);
+                isValid = false;
+            }
+
+            if (isValid) {
+                closeAuth();
+            }
         });
 
         const SIDEBAR_STATE_KEY = "insighthub.sidebarCollapsed";
