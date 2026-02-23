@@ -70,12 +70,69 @@
         #convo-caret { opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; }
         #convo-toggle:hover #convo-caret,
         #convo-toggle:focus-visible #convo-caret { opacity: 1; }
+
+        /* ========== CUSTOM PLACEHOLDER STYLES ========== */
+        .custom-placeholder {
+            opacity: 1;
+            visibility: visible;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+        }
+        
+        .password-placeholder {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        
+        .password-placeholder i {
+            color: #94a3b8;
+        }
+        
+        /* ========== INPUT ERROR STATE ========== */
+        .auth-input-error {
+            border-color: #ef4444 !important;
+            background-color: #fef2f2 !important;
+        }
+        
+        .auth-input-error:focus {
+            ring-color: #ef4444 !important;
+            border-color: #ef4444 !important;
+        }
+        
+        /* ========== PASSWORD STRENGTH DROPDOWN ========== */
+        #password-strength-dropdown {
+            animation: slideDown 0.2s ease-out;
+        }
+        
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        #password-strength-dropdown.hidden {
+            display: none;
+        }
+        
+        #password-strength-dropdown ul li {
+            transition: all 0.2s ease;
+        }
+        
+        #password-strength-dropdown ul li i {
+            transition: all 0.2s ease;
+        }
         
         body.theme-light { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         body.theme-dark { background-color: #0b1220; color: #e2e8f0; font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
         body.theme-dark .sidebar { background-color: #0f172a; border-color: #1f2937; }
         body.theme-dark .bg-white { background-color: #0f172a !important; }
         body.theme-dark .bg-slate-50 { background-color: #0b1220 !important; }
+        body.theme-dark .bg-slate-100 { background-color: #1f2937 !important; }
         body.theme-dark .bg-gray-50 { background-color: #111827 !important; }
         body.theme-dark .bg-gray-100 { background-color: #1f2937 !important; }
         body.theme-dark .bg-brand-50 { background-color: rgba(139, 92, 246, 0.16) !important; }
@@ -89,7 +146,7 @@
         body.theme-dark .hover\:bg-brand-100:hover { background-color: rgba(139, 92, 246, 0.32) !important; }
         body.theme-dark .border-gray-100 { border-color: #1f2937 !important; }
         body.theme-dark .border-gray-200 { border-color: #334155 !important; }
-        body.theme-dark .border-slate-100 { border-color: #334155 !important; }
+        body.theme-dark .border-slate-100 { border-color: #1f2937 !important; }
         body.theme-dark .border-slate-200 { border-color: #334155 !important; }
         body.theme-dark .border-brand-200 { border-color: rgba(139, 92, 246, 0.36) !important; }
         body.theme-dark .border-brand-300 { border-color: rgba(139, 92, 246, 0.45) !important; }
@@ -99,6 +156,7 @@
         body.theme-dark .text-slate-700 { color: #cbd5e1 !important; }
         body.theme-dark .text-slate-600 { color: #cbd5e1 !important; }
         body.theme-dark .text-slate-500 { color: #94a3b8 !important; }
+        body.theme-dark .text-slate-400 { color: #94a3b8 !important; }
         body.theme-dark .text-gray-900 { color: #f1f5f9 !important; }
         body.theme-dark .text-gray-800 { color: #e2e8f0 !important; }
         body.theme-dark .text-gray-700 { color: #cbd5e1 !important; }
@@ -129,6 +187,13 @@
         body.theme-dark .convo-history-item { color: #94a3b8; }
         body.theme-dark .convo-history-item:hover { background: #1f2937; color: #e2e8f0; }
         body.theme-dark .convo-history-dot { background: #64748b; }
+        /* Custom styles for auth modal in dark theme */
+        body.theme-dark .custom-placeholder { color: #64748b !important; }
+        body.theme-dark .password-placeholder i { color: #64748b !important; }
+        body.theme-dark .auth-input-error { border-color: #dc2626 !important; background-color: rgba(239, 68, 68, 0.12) !important; }
+        /* Password strength dropdown dark theme */
+        body.theme-dark #password-strength-dropdown { background-color: #1f2937 !important; border-color: #334155 !important; }
+        body.theme-dark #password-strength-dropdown p { color: #cbd5e1 !important; }
         .auth-input-error { border-color: #ef4444 !important; }
     </style>
 </head>
@@ -263,292 +328,10 @@
         </main>
     </div>
 
-    <!-- Auth Modal -->
-    <div id="auth-modal" class="fixed inset-0 z-50 hidden items-center justify-center">
-        <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" data-auth-close></div>
-        <div class="relative z-10 w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl border border-slate-100">
-            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                <div>
-                    <h3 class="text-2xl text-brand-600 font-bold" id="auth-title">Welcome Back</h3>
-                    <p class="text-sm text-slate-400" id="auth-subtitle">Log in to continue</p>
-                </div>
-                <button class="h-10 w-10 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors" data-auth-close>
-                    <i class="fa-solid fa-xmark text-xl"></i>
-                </button>
-            </div>
-
-            <div class="px-6 py-4">
-                <!-- Login -->
-                <form id="auth-login" class="space-y-5">
-                    <div>
-                        <label class="block text-base font-semibold text-slate-600 mb-1">Email</label>
-                        <input id="login-email" type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                        <span id="login-email-error" class="hidden mt-1 text-xs text-red-500">Please enter a valid email.</span>
-                    </div>
-                    <div>
-                        <label class="block text-base font-semibold text-slate-600 mb-1">Password</label>
-                        <div class="relative">
-                            <input id="login-password" type="password" placeholder="********" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                            <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700" data-target="login-password" aria-label="Show password">
-                                <i class="fa-solid fa-eye"></i>
-                            </button>
-                        </div>
-                        <span id="login-password-error" class="hidden mt-1 text-xs text-red-500">Please enter your password.</span>
-                    </div>
-                    <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
-                        Log In
-                    </button>
-                    <div class="flex items-center gap-3 text-xs text-slate-400">
-                        <div class="h-px flex-1 bg-slate-200"></div>
-                        <span>OR</span>
-                        <div class="h-px flex-1 bg-slate-200"></div>
-                    </div>
-                    <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
-                        <i class="fa-brands fa-google text-sm"></i>
-                        Continue with Google
-                    </button>
-                    <p class="text-xs text-slate-500 text-center">
-                        New here?
-                        <button type="button" class="text-brand-700 font-semibold" data-auth-open="signup">Create an account</button>
-                    </p>
-                </form>
-
-                <!-- Signup -->
-                <form id="auth-signup" class="space-y-4 hidden">
-                    <div>
-                        <label class="block text-sm font-semibold text-slate-600 mb-1">Name</label>
-                        <input id="signup-name" type="text" placeholder="Your name" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                        <span id="signup-name-error" class="hidden mt-1 text-xs text-red-500">You need to provide a user name.</span>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-slate-600 mb-1">Email</label>
-                        <input id="signup-email" type="email" placeholder="you@example.com" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                        <span id="signup-email-error" class="hidden mt-1 text-xs text-red-500">Please enter a valid email.</span>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-slate-600 mb-1">Password</label>
-                        <div class="relative">
-                            <input id="signup-password" type="password" placeholder="Create a password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                            <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700" data-target="signup-password" aria-label="Show password">
-                                <i class="fa-solid fa-eye"></i>
-                            </button>
-                        </div>
-                        <span id="signup-password-error" class="hidden mt-1 text-xs text-red-500">Please enter your password.</span>
-                        <span id="signup-password-strength-error" class="hidden mt-1 text-xs text-red-500">Password must be at least 8 characters and include uppercase, lowercase, number, and special character.</span>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-slate-600 mb-1">Confirm Password</label>
-                        <div class="relative">
-                            <input id="signup-confirm-password" type="password" placeholder="Confirm your password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                            <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700" data-target="signup-confirm-password" aria-label="Show password">
-                                <i class="fa-solid fa-eye"></i>
-                            </button>
-                        </div>
-                        <span id="signup-confirm-password-error" class="hidden mt-1 text-xs text-red-500">Please confirm your password.</span>
-                        <span id="signup-password-match-error" class="hidden mt-1 text-xs text-red-500">Passwords do not match.</span>
-                    </div>
-                    <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
-                        Sign Up
-                    </button>
-                    <div class="flex items-center gap-3 text-xs text-slate-400">
-                        <div class="h-px flex-1 bg-slate-200"></div>
-                        <span>OR</span>
-                        <div class="h-px flex-1 bg-slate-200"></div>
-                    </div>
-                    <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
-                        <i class="fa-brands fa-google text-sm"></i>
-                        Continue with Google
-                    </button>
-                    <p class="text-xs text-slate-500 text-center">
-                        Already have an account?
-                        <button type="button" class="text-brand-700 font-semibold" data-auth-open="login">Log in</button>
-                    </p>
-                </form>
-            </div>
-        </div>
-    </div>
+    {% include "partials/auth_modal.html" %}
 
     <script>
-        const authModal = document.getElementById("auth-modal");
-        const loginForm = document.getElementById("auth-login");
-        const signupForm = document.getElementById("auth-signup");
-        const authTitle = document.getElementById("auth-title");
-        const authSubtitle = document.getElementById("auth-subtitle");
-        const userSection = document.getElementById("user-section");
-        const authSection = document.getElementById("auth-section");
-        
-        const clearFormErrors = (formId) => {
-            document.querySelectorAll(`#${formId} span[id$='-error']`).forEach((el) => {
-                el.classList.add("hidden");
-            });
-            document.querySelectorAll(`#${formId} input`).forEach((input) => {
-                input.classList.remove("auth-input-error");
-            });
-        };
-
-        const resetAuthFormState = (formId) => {
-            const form = document.getElementById(formId);
-            if (!form) return;
-            form.reset();
-            clearFormErrors(formId);
-            form.querySelectorAll("input[type='text']").forEach((input) => {
-                if (input.id.toLowerCase().includes("password")) {
-                    input.type = "password";
-                }
-            });
-        };
-
-        const resetPasswordToggleIcons = () => {
-            document.querySelectorAll(".auth-password-toggle").forEach((button) => {
-                button.innerHTML = '<i class="fa-solid fa-eye"></i>';
-                button.setAttribute("aria-label", "Show password");
-            });
-        };
-
-        const resetAuthForms = () => {
-            resetAuthFormState("auth-login");
-            resetAuthFormState("auth-signup");
-            resetPasswordToggleIcons();
-        };
-
-        // Toggle between login/signup
-        const setAuthMode = (mode) => {
-            resetAuthForms();
-            const isLogin = mode === "login";
-            loginForm.classList.toggle("hidden", !isLogin);
-            signupForm.classList.toggle("hidden", isLogin);
-            authTitle.textContent = isLogin ? "Welcome Back" : "Create Your Account";
-            authSubtitle.textContent = isLogin ? "Log in to continue" : "Sign up in seconds";
-        };
-
-        const openAuth = (mode) => {
-            setAuthMode(mode);
-            authModal.classList.remove("hidden");
-            authModal.classList.add("flex");
-        };
-
-        const closeAuth = () => {
-            resetAuthForms();
-            authModal.classList.add("hidden");
-            authModal.classList.remove("flex");
-        };
-
-        document.querySelectorAll("[data-auth-open]").forEach((el) => {
-            el.addEventListener("click", () => openAuth(el.dataset.authOpen));
-        });
-        document.querySelectorAll("[data-auth-close]").forEach((el) => {
-            el.addEventListener("click", closeAuth);
-        });
-        document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape") closeAuth();
-        });
-        
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
-        
-        const showError = (input, errorId, show) => {
-            const error = document.getElementById(errorId);
-            if (!error) return;
-            error.classList.toggle("hidden", !show);
-            if (input) {
-                input.classList.toggle("auth-input-error", show);
-            }
-        };
-
-        document.querySelectorAll(".auth-password-toggle").forEach((button) => {
-            button.addEventListener("click", () => {
-                const input = document.getElementById(button.dataset.target);
-                if (!input) return;
-
-                const isHidden = input.type === "password";
-                input.type = isHidden ? "text" : "password";
-                button.innerHTML = isHidden
-                    ? '<i class="fa-solid fa-eye-slash"></i>'
-                    : '<i class="fa-solid fa-eye"></i>';
-                button.setAttribute("aria-label", isHidden ? "Hide password" : "Show password");
-            });
-        });
-
-        loginForm.addEventListener("submit", (e) => {
-            e.preventDefault();
-            clearFormErrors("auth-login");
-
-            const emailInput = document.getElementById("login-email");
-            const passwordInput = document.getElementById("login-password");
-            const email = emailInput.value.trim();
-            const password = passwordInput.value;
-            let isValid = true;
-
-            if (!email) {
-                showError(emailInput, "login-email-error", true);
-                document.getElementById("login-email-error").textContent = "Please enter your email.";
-                isValid = false;
-            } else if (!emailRegex.test(email)) {
-                showError(emailInput, "login-email-error", true);
-                document.getElementById("login-email-error").textContent = "Please enter a valid email.";
-                isValid = false;
-            }
-
-            if (!password.trim()) {
-                showError(passwordInput, "login-password-error", true);
-                isValid = false;
-            }
-
-            if (isValid) {
-                closeAuth();
-            }
-        });
-
-        signupForm.addEventListener("submit", (e) => {
-            e.preventDefault();
-            clearFormErrors("auth-signup");
-
-            const nameInput = document.getElementById("signup-name");
-            const emailInput = document.getElementById("signup-email");
-            const passwordInput = document.getElementById("signup-password");
-            const confirmPasswordInput = document.getElementById("signup-confirm-password");
-
-            const name = nameInput.value.trim();
-            const email = emailInput.value.trim();
-            const password = passwordInput.value;
-            const confirmPassword = confirmPasswordInput.value;
-            let isValid = true;
-
-            if (!name) {
-                showError(nameInput, "signup-name-error", true);
-                isValid = false;
-            }
-
-            if (!email) {
-                showError(emailInput, "signup-email-error", true);
-                document.getElementById("signup-email-error").textContent = "Please enter your email.";
-                isValid = false;
-            } else if (!emailRegex.test(email)) {
-                showError(emailInput, "signup-email-error", true);
-                document.getElementById("signup-email-error").textContent = "Please enter a valid email.";
-                isValid = false;
-            }
-
-            if (!password.trim()) {
-                showError(passwordInput, "signup-password-error", true);
-                isValid = false;
-            } else if (!strongPasswordRegex.test(password)) {
-                showError(passwordInput, "signup-password-strength-error", true);
-                isValid = false;
-            }
-
-            if (!confirmPassword.trim()) {
-                showError(confirmPasswordInput, "signup-confirm-password-error", true);
-                isValid = false;
-            } else if (password !== confirmPassword) {
-                showError(confirmPasswordInput, "signup-password-match-error", true);
-                isValid = false;
-            }
-
-            if (isValid) {
-                closeAuth();
-            }
-        });
+        {% include "partials/auth_modal_script.html" %}
 
         const SIDEBAR_STATE_KEY = "insighthub.sidebarCollapsed";
         const CONVO_STATE_KEY = "insighthub.convoOpen";

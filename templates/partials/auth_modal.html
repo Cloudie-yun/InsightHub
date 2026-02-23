@@ -1,0 +1,176 @@
+<!-- Auth Modal -->
+<div id="auth-modal" class="fixed inset-0 z-50 hidden items-center justify-center">
+    <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" data-auth-close></div>
+    <div class="relative z-10 w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl border border-slate-100">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+            <div>
+                <h3 class="text-2xl text-brand-600 font-bold" id="auth-title">Welcome Back</h3>
+                <p class="text-sm text-slate-400" id="auth-subtitle">Log in to continue</p>
+            </div>
+            <button class="h-10 w-10 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors" data-auth-close>
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+        </div>
+
+        <div class="px-6 py-4">
+            <!-- Login -->
+            <form id="auth-login" class="space-y-5">
+                <div>
+                    <label class="block text-base font-semibold text-slate-600 mb-1">Email</label>
+                    <div class="relative">
+                        <input id="login-email" type="email" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
+                        <span class="custom-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none transition-all duration-200">
+                            you@example.com
+                        </span>
+                    </div>
+                    <span id="login-email-error" class="hidden mt-1 text-sm text-red-500">Please enter a valid email.</span>
+                </div>
+                <div>
+                    <label class="block text-base font-semibold text-slate-600 mb-1">Password</label>
+                    <div class="relative">
+                        <input id="login-password" type="password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
+                        <span class="custom-placeholder password-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                        </span>
+                        <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 z-10" data-target="login-password" aria-label="Show password">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                    <span id="login-password-error" class="hidden mt-1 text-sm text-red-500">Please enter your password.</span>
+                </div>
+                <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
+                    Log In
+                </button>
+                <div class="flex items-center gap-3 text-xs text-slate-400">
+                    <div class="h-px flex-1 bg-slate-200"></div>
+                    <span>OR</span>
+                    <div class="h-px flex-1 bg-slate-200"></div>
+                </div>
+                <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
+                    <i class="fa-brands fa-google text-sm"></i>
+                    Continue with Google
+                </button>
+                <p class="text-xs text-slate-500 text-center">
+                    New here?
+                    <button type="button" class="text-brand-700 font-semibold" data-auth-open="signup">Create an account</button>
+                </p>
+            </form>
+
+            <!-- Signup -->
+            <form id="auth-signup" class="space-y-4 hidden">
+                <div>
+                    <label class="block text-sm font-semibold text-slate-600 mb-1">Name</label>
+                    <div class="relative">
+                        <input id="signup-name" type="text" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
+                        <span class="custom-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none transition-all duration-200">
+                            Your name
+                        </span>
+                    </div>
+                    <span id="signup-name-error" class="hidden mt-1 text-sm text-red-500">You need to provide a user name.</span>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-600 mb-1">Email</label>
+                    <div class="relative">
+                        <input id="signup-email" type="email" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
+                        <span class="custom-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none transition-all duration-200">
+                            you@example.com
+                        </span>
+                    </div>
+                    <span id="signup-email-error" class="hidden mt-1 text-sm text-red-500">Please enter a valid email.</span>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-600 mb-1">Password</label>
+                    <div class="relative">
+                        <input id="signup-password" type="password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
+                        <span class="custom-placeholder password-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                        </span>
+                        <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 z-10" data-target="signup-password" aria-label="Show password">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                        
+                        <!-- Password Strength Dropdown -->
+                        <div id="password-strength-dropdown" class="hidden absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-20">
+                            <p class="text-sm font-semibold text-slate-600 mb-3">Password must contain:</p>
+                            <ul class="space-y-1">
+                                <li id="pwd-length" class="flex items-center gap-2 text-sm text-slate-500">
+                                    <i class="fa-solid fa-xmark text-red-500 w-3"></i>
+                                    <span>At least 8 characters</span>
+                                </li>
+                                <li id="pwd-uppercase" class="flex items-center gap-2 text-sm text-slate-500">
+                                    <i class="fa-solid fa-xmark text-red-500 w-3"></i>
+                                    <span>At least one uppercase letter</span>
+                                </li>
+                                <li id="pwd-lowercase" class="flex items-center gap-2 text-sm text-slate-500">
+                                    <i class="fa-solid fa-xmark text-red-500 w-3"></i>
+                                    <span>At least one lowercase letter</span>
+                                </li>
+                                <li id="pwd-number" class="flex items-center gap-2 text-sm text-slate-500">
+                                    <i class="fa-solid fa-xmark text-red-500 w-3"></i>
+                                    <span>At least one number</span>
+                                </li>
+                                <li id="pwd-special" class="flex items-center gap-2 text-sm text-slate-500">
+                                    <i class="fa-solid fa-xmark text-red-500 w-3"></i>
+                                    <span>At least one special character</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    <span id="signup-password-error" class="hidden mt-1 text-sm text-red-500">Please enter your password.</span>
+                    <span id="signup-password-strength-error" class="hidden mt-1 text-sm text-red-500">Password must be at least 8 characters and include uppercase, lowercase, number, and special character.</span>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-600 mb-1">Confirm Password</label>
+                    <div class="relative">
+                        <input id="signup-confirm-password" type="password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
+                        <span class="custom-placeholder password-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                            <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
+                        </span>
+                        <button type="button" class="auth-password-toggle absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 z-10" data-target="signup-confirm-password" aria-label="Show password">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                    <span id="signup-confirm-password-error" class="hidden mt-1 text-sm text-red-500">Please confirm your password.</span>
+                    <span id="signup-password-match-error" class="hidden mt-1 text-sm text-red-500">Passwords do not match.</span>
+                </div>
+                <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
+                    Sign Up
+                </button>
+                <div class="flex items-center gap-3 text-xs text-slate-400">
+                    <div class="h-px flex-1 bg-slate-200"></div>
+                    <span>OR</span>
+                    <div class="h-px flex-1 bg-slate-200"></div>
+                </div>
+                <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-100 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
+                    <i class="fa-brands fa-google text-sm"></i>
+                    Continue with Google
+                </button>
+                <p class="text-xs text-slate-500 text-center">
+                    Already have an account?
+                    <button type="button" class="text-brand-700 font-semibold" data-auth-open="login">Log in</button>
+                </p>
+            </form>
+        </div>
+    </div>
+</div>
