@@ -323,104 +323,13 @@
     <!-- Main Content Wrapper -->
     <div class="flex-1 flex flex-col h-full min-w-0">
         <!-- Page Content Injection -->
-        <main class="flex-1 overflow-auto bg-slate-50 relative">
+        <main class="flex-1 overflow-auto bg-slate-50 relative min-w-0">
             {% block content %}{% endblock %}
         </main>
     </div>
 
     {% include "partials/auth_modal.html" %}
 
-    <script>
-        {% include "partials/auth_modal_script.html" %}
-
-        const SIDEBAR_STATE_KEY = "insighthub.sidebarCollapsed";
-        const CONVO_STATE_KEY = "insighthub.convoOpen";
-        const THEME_STATE_KEY = "insighthub.theme";
-
-        // Sidebar toggle
-        const sidebarToggle = document.getElementById("sidebar-toggle");
-
-        // Conversations submenu toggle
-        const convoToggle = document.getElementById("convo-toggle");
-        const convoSubmenu = document.getElementById("convo-submenu");
-        const convoCaret = document.getElementById("convo-caret");
-        const themeLightRadio = document.getElementById("theme-light");
-        const themeDarkRadio = document.getElementById("theme-dark");
-        const themeLightOption = document.getElementById("theme-light-option");
-        const themeDarkOption = document.getElementById("theme-dark-option");
-
-        const syncConvoCaret = () => {
-            const isOpen = !convoSubmenu.classList.contains("hidden");
-            convoCaret.classList.toggle("rotate-180", isOpen);
-        };
-
-        const syncThemeOptions = (theme) => {
-            const isDark = theme === "dark";
-            themeLightOption.classList.toggle("active", !isDark);
-            themeDarkOption.classList.toggle("active", isDark);
-            themeLightRadio.checked = !isDark;
-            themeDarkRadio.checked = isDark;
-        };
-
-        const applyTheme = (theme, persist = true) => {
-            const nextTheme = theme === "dark" ? "dark" : "light";
-            document.body.classList.toggle("theme-dark", nextTheme === "dark");
-            document.body.classList.toggle("theme-light", nextTheme !== "dark");
-            syncThemeOptions(nextTheme);
-            if (persist) {
-                localStorage.setItem(THEME_STATE_KEY, nextTheme);
-            }
-        };
-
-        // Restore persisted UI state on refresh
-        const isSidebarCollapsed = localStorage.getItem(SIDEBAR_STATE_KEY) === "true";
-        if (isSidebarCollapsed) {
-            document.body.classList.add("sidebar-collapsed");
-        }
-
-        const savedConvoOpen = localStorage.getItem(CONVO_STATE_KEY);
-        if (savedConvoOpen === "false") {
-            convoSubmenu.classList.add("hidden");
-        } else if (savedConvoOpen === "true") {
-            convoSubmenu.classList.remove("hidden");
-        }
-
-        const savedTheme = localStorage.getItem(THEME_STATE_KEY);
-        applyTheme(savedTheme === "dark" ? "dark" : "light", false);
-        syncConvoCaret();
-
-        sidebarToggle.addEventListener("click", () => {
-            document.body.classList.toggle("sidebar-collapsed");
-            localStorage.setItem(
-                SIDEBAR_STATE_KEY,
-                document.body.classList.contains("sidebar-collapsed")
-            );
-        });
-
-        convoToggle.addEventListener("click", () => {
-            const isHidden = convoSubmenu.classList.toggle("hidden");
-            localStorage.setItem(CONVO_STATE_KEY, (!isHidden).toString());
-            syncConvoCaret();
-        });
-
-        themeLightRadio.addEventListener("change", () => {
-            if (themeLightRadio.checked) applyTheme("light");
-        });
-        themeDarkRadio.addEventListener("change", () => {
-            if (themeDarkRadio.checked) applyTheme("dark");
-        });
-
-        // Simulate login state (for demo purposes)
-        // Set to true to show user section, false to show auth buttons
-        const isLoggedIn = false;
-
-        if (isLoggedIn) {
-            userSection.classList.remove("hidden");
-            authSection.classList.add("hidden");
-        } else {
-            userSection.classList.add("hidden");
-            authSection.classList.remove("hidden");
-        }
-    </script>
+    <script src="/static/script/base.js"></script>
 </body>
 </html>

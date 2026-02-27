@@ -44,6 +44,9 @@
                         </button>
                     </div>
                     <span id="login-password-error" class="hidden mt-1 text-sm text-red-500">Please enter your password.</span>
+                    <div class="flex justify-end mt-2">
+                        <a href="/forgot-password" class="text-xs text-brand-700 font-semibold hover:text-brand-800 transition-colors">Forgot password?</a>
+                    </div>
                 </div>
                 <button type="submit" class="w-full rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
                     Log In
@@ -53,11 +56,11 @@
                     <span>OR</span>
                     <div class="h-px flex-1 bg-slate-200"></div>
                 </div>
-                <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
+                <button type="button" class="w-full py-3 text-sm font-semibold border-2 border-brand-500 text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
                     <i class="fa-brands fa-google text-sm"></i>
                     Continue with Google
                 </button>
-                <p class="text-xs text-slate-500 text-center">
+                <p class="text-sm text-slate-500 text-center">
                     New here?
                     <button type="button" class="text-brand-700 font-semibold" data-auth-open="signup">Create an account</button>
                 </p>
@@ -107,23 +110,23 @@
                         <div id="password-strength-dropdown" class="hidden absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-xl shadow-lg p-4 z-20">
                             <p class="text-sm font-semibold text-slate-600 mb-3">Password must contain:</p>
                             <ul class="space-y-1">
-                                <li id="pwd-length" class="flex items-center gap-2 text-sm text-slate-500">
+                                <li id="pwd-length" class="flex items-center gap-2 text-sm text-slate-600">
                                     <i class="fa-solid fa-xmark text-red-500 w-3"></i>
                                     <span>At least 8 characters</span>
                                 </li>
-                                <li id="pwd-uppercase" class="flex items-center gap-2 text-sm text-slate-500">
+                                <li id="pwd-uppercase" class="flex items-center gap-2 text-sm text-slate-600">
                                     <i class="fa-solid fa-xmark text-red-500 w-3"></i>
                                     <span>At least one uppercase letter</span>
                                 </li>
-                                <li id="pwd-lowercase" class="flex items-center gap-2 text-sm text-slate-500">
+                                <li id="pwd-lowercase" class="flex items-center gap-2 text-sm text-slate-600">
                                     <i class="fa-solid fa-xmark text-red-500 w-3"></i>
                                     <span>At least one lowercase letter</span>
                                 </li>
-                                <li id="pwd-number" class="flex items-center gap-2 text-sm text-slate-500">
+                                <li id="pwd-number" class="flex items-center gap-2 text-sm text-slate-600">
                                     <i class="fa-solid fa-xmark text-red-500 w-3"></i>
                                     <span>At least one number</span>
                                 </li>
-                                <li id="pwd-special" class="flex items-center gap-2 text-sm text-slate-500">
+                                <li id="pwd-special" class="flex items-center gap-2 text-sm text-slate-600">
                                     <i class="fa-solid fa-xmark text-red-500 w-3"></i>
                                     <span>At least one special character</span>
                                 </li>
@@ -162,11 +165,11 @@
                     <span>OR</span>
                     <div class="h-px flex-1 bg-slate-200"></div>
                 </div>
-                <button type="button" class="w-full py-3 text-sm font-semibold text-brand-700 bg-slate-100 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
+                <button type="button" class="w-full py-3 text-sm font-semibold border-2 border-brand-500 text-brand-700 bg-slate-50 rounded-lg hover:bg-brand-50 transition-colors flex items-center justify-center gap-2">
                     <i class="fa-brands fa-google text-sm"></i>
                     Continue with Google
                 </button>
-                <p class="text-xs text-slate-500 text-center">
+                <p class="text-sm text-slate-500 text-center">
                     Already have an account?
                     <button type="button" class="text-brand-700 font-semibold" data-auth-open="login">Log in</button>
                 </p>
