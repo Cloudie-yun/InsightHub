@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex flex-col h-full">
+    <div class="px-8 py-4 border-b border-gray-200 bg-white flex justify-between">
+        <div class="flex items-center gap-2 text-gray-500">
+            <a href="/chat" class="hover:text-brand-600"><i class="fa-solid fa-arrow-left"></i> Back to Chat</a>
+            <span>/</span>
+            <span class="text-brand-700 font-bold">Machine Learning Concepts</span>
+        </div>
+        <div class="flex gap-2">
+            <button class="h-8 w-8 bg-white border rounded text-gray-500"><i class="fa-solid fa-pen"></i></button>
+            <button class="h-8 w-8 bg-white border rounded text-gray-500"><i class="fa-solid fa-download"></i></button>
+        </div>
+    </div>
+
+    <!-- Mind Map Visualization Area -->
+    <div class="flex-1 bg-slate-50 relative overflow-hidden flex items-center justify-center">
+        
+        <!-- Zoom Controls -->
+        <div class="absolute bottom-8 right-8 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
+            <button class="p-2 hover:bg-gray-100 text-gray-600"><i class="fa-solid fa-plus"></i></button>
+            <div class="px-2 py-1 text-xs text-center border-t border-b border-gray-100 font-bold text-gray-400">100%</div>
+            <button class="p-2 hover:bg-gray-100 text-gray-600"><i class="fa-solid fa-minus"></i></button>
+        </div>
+
+        <!-- Static CSS implementation of the specific tree in input_file_3.png -->
+        <div class="relative w-[800px] h-[500px]">
+            
+            <!-- Root Node -->
+            <div class="absolute left-10 top-1/2 -translate-y-1/2 bg-white border-2 border-brand-300 shadow-md text-brand-900 rounded-xl px-6 py-4 font-bold z-10 w-48 text-center">
+                Supervised vs Unsupervised
+            </div>
+
+            <!-- Connectors (SVGs) -->
+            <svg class="absolute inset-0 w-full h-full pointer-events-none z-0">
+                <!-- Curve to Top -->
+                <path d="M 210 250 C 300 250, 300 150, 400 150" stroke="#000" stroke-width="2" fill="none" />
+                <!-- Curve to Middle -->
+                <path d="M 210 250 L 400 250" stroke="#000" stroke-width="2" fill="none" />
+                <!-- Curve to Bottom -->
+                <path d="M 210 250 C 300 250, 300 350, 400 350" stroke="#000" stroke-width="2" fill="none" />
+            </svg>
+
+            <!-- Child Node 1 -->
+            <div class="absolute left-[400px] top-[130px] bg-white border-l-4 border-green-400 shadow-md rounded-lg px-6 py-3 font-medium text-green-800 z-10 w-48">
+                Supervised Learning
+            </div>
+
+            <!-- Child Node 2 -->
+            <div class="absolute left-[400px] top-[230px] bg-white border-l-4 border-red-400 shadow-md rounded-lg px-6 py-3 font-medium text-red-800 z-10 w-48">
+                Unsupervised Learning
+            </div>
+
+            <!-- Child Node 3 -->
+            <div class="absolute left-[400px] top-[330px] bg-white border-l-4 border-yellow-400 shadow-md rounded-lg px-6 py-3 font-medium text-yellow-800 z-10 w-48">
+                Key Differences
+            </div>
+
+        </div>
+
+    </div>
+</div>
+{% endblock %}

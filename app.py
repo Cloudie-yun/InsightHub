@@ -1,10 +1,98 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, jsonify, redirect, url_for, send_from_directory, abort
+from db import get_db_connection
+from pathlib import Path
+import subprocess
 
 app = Flask(__name__)
+UPLOADS_DIR = Path(app.root_path) / "uploads"
+PREVIEW_DIR = UPLOADS_DIR / ".preview"
+PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
-@app.route("/")
-def index():
-    return render_template("index.html")
 
-if __name__ == "__main__":
-    app.run(debug=True)
+def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
+    # Try docx2pdf first (uses Word on Windows), then fallback to LibreOffice.
+    try:
+        from docx2pdf import convert as docx2pdf_convert
+        docx2pdf_convert(str(source_path), str(output_path))
+        return output_path.exists()
+    except Exception:
+        pass
+
+    soffice_cmd = [
+        "soffice",
+        "--headless",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        str(output_path.parent),
+        str(source_path),
+    ]
+    try:
+        subprocess.run(soffice_cmd, check=True, capture_output=True)
+    except Exception:
+        return False
+
+    libreoffice_output = output_path.parent / f"{source_path.stem}.pdf"
+    if libreoffice_output.exists() and libreoffice_output != output_path:
+        libreoffice_output.replace(output_path)
+    return output_path.exists()
+
+
+def get_preview_pdf_path(file_path: Path) -> Path:
+    return PREVIEW_DIR / f"{file_path.stem}.pdf"
+
+@app.route('/')
+def root():
+    return render_template('dashboard.html', active_page='dashboard')
+
+@app.route('/dashboard')
+def dashboard():
+    return render_template('dashboard.html', active_page='dashboard')
+
+@app.route('/chat')
+def chat():
+    return render_template('chat.html', active_page='chat')
+
+@app.route('/flashcards')
+def flashcards():
+    return render_template('flashcards.html', active_page='study')
+
+@app.route('/mindmap')
+def mindmap():
+    return render_template('mindmap.html', active_page='study')
+
+@app.route('/uploads/<path:filename>')
+def uploaded_file(filename):
+    file_path = UPLOADS_DIR / filename
+    if not file_path.exists() or not file_path.is_file():
+        abort(404)
+    return send_from_directory(UPLOADS_DIR, filename, as_attachment=False)
+
+
+@app.route('/uploads/preview/<path:filename>')
+def uploaded_file_preview(filename):
+    file_path = UPLOADS_DIR / filename
+    if not file_path.exists() or not file_path.is_file():
+        abort(404)
+
+    suffix = file_path.suffix.lower()
+    if suffix == ".pdf":
+        return send_from_directory(UPLOADS_DIR, filename, as_attachment=False)
+
+    if suffix != ".docx":
+        abort(415, description="Preview is only supported for PDF and DOCX files.")
+
+    preview_pdf_path = get_preview_pdf_path(file_path)
+    needs_convert = (
+        not preview_pdf_path.exists()
+        or preview_pdf_path.stat().st_mtime < file_path.stat().st_mtime
+    )
+    if needs_convert:
+        converted = convert_docx_to_pdf(file_path, preview_pdf_path)
+        if not converted:
+            abort(500, description="Could not convert DOCX to PDF for preview.")
+
+    return send_from_directory(PREVIEW_DIR, preview_pdf_path.name, as_attachment=False)
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)

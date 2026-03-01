@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex flex-col h-full">
+    <!-- Header/Breadcrumb -->
+    <div class="px-8 py-4 border-b border-gray-200 bg-white">
+        <div class="flex items-center gap-2 text-gray-500">
+            <a href="/chat" class="hover:text-brand-600"><i class="fa-solid fa-arrow-left"></i> Back to Chat</a>
+            <span>/</span>
+            <span class="text-brand-700 font-bold">Machine Learning Flashcards</span>
+        </div>
+    </div>
+
+    <!-- Card Area -->
+    <div class="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50 relative">
+        
+        <!-- Controls Top Right -->
+        <div class="absolute top-8 right-8 flex gap-2">
+            <button class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm"><i class="fa-solid fa-pen-to-square"></i></button>
+            <button class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm"><i class="fa-solid fa-floppy-disk"></i></button>
+            <button class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm"><i class="fa-solid fa-download"></i></button>
+        </div>
+
+        <!-- Main Card -->
+        <div class="flex items-center gap-8 w-full max-w-4xl justify-center">
+            
+            <!-- Left Arrow -->
+            <button class="h-12 w-12 rounded-full border-2 border-brand-700 text-brand-700 flex items-center justify-center text-xl hover:bg-brand-50 transition">
+                <i class="fa-solid fa-arrow-left"></i>
+            </button>
+
+            <!-- Card -->
+            <div class="bg-white w-full h-96 rounded-3xl shadow-xl border-2 border-brand-200 flex flex-col items-center justify-center p-12 text-center relative group cursor-pointer perspective">
+                <div class="text-xs text-gray-400 absolute top-4 uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-full">Press Space to Flip</div>
+                
+                <h2 class="text-3xl font-bold text-brand-800">What is supervised learning?</h2>
+                
+                <!-- Decorative bottom border line from image -->
+                <div class="absolute bottom-0 left-0 w-full h-2 bg-gradient-to-r from-transparent via-brand-300 to-transparent"></div>
+            </div>
+
+            <!-- Right Arrow -->
+            <button class="h-12 w-12 rounded-full border-2 border-brand-700 text-brand-700 flex items-center justify-center text-xl hover:bg-brand-50 transition">
+                <i class="fa-solid fa-arrow-right"></i>
+            </button>
+        </div>
+
+        <!-- Pagination Dots -->
+        <div class="flex gap-2 mt-8">
+            <div class="w-8 h-2 bg-brand-600 rounded-full"></div>
+            <div class="w-2 h-2 bg-gray-300 rounded-full"></div>
+            <div class="w-2 h-2 bg-gray-300 rounded-full"></div>
+            <div class="w-2 h-2 bg-gray-300 rounded-full"></div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
