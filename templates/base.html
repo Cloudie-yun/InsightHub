@@ -20,182 +20,25 @@
                 extend: {
                     colors: {
                         brand: {
-                            50: '#f5f3ff',
-                            100: '#ede9fe',
-                            200: '#ddd6fe',
-                            300: '#c4b5fd',
-                            400: '#a78bfa',
-                            500: '#8b5cf6',
-                            600: '#7c3aed',
-                            700: '#6d28d9',
-                            900: '#4c1d95',
+                        50: '#fdf8ff',
+                        100: '#f7eeff',
+                        200: '#eedcff',
+                        300: '#ddbeff',
+                        400: '#c493fc',
+                        500: '#a96af4',
+                        600: '#9147e8',
+                        700: '#7a2ed0',
+                        800: '#6223aa',
+                        900: '#481a7d',
+                        950: '#2d0f52',
                         }
                     }
                 }
             }
         }
     </script>
-    <style>
-        /* Custom Scrollbar for sleek look */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #f1f1f1; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-        .sidebar-collapsed .sidebar { width: 58px; }
-        .sidebar-collapsed .sidebar-brand { display: none;}
-        .sidebar-collapsed .sidebar-label { opacity: 0; width: 0; height: 0; overflow: hidden; }
-        .sidebar-collapsed .sidebar-search { display: none; }
-        .sidebar-collapsed .sidebar-new-chat span { display: none; }
-        .sidebar-collapsed #convo-submenu { display: none; }
-        .sidebar-collapsed #sidebar-toggle { align-self: center; height: 2rem; width: 2rem; }
-        .sidebar-collapsed .sidebar-user-info { display: none; }
-        .sidebar-collapsed .sidebar-auth-buttons { flex-direction: column; gap: 0.5rem; }
-        .sidebar-collapsed .sidebar-auth-buttons button span { display: none; }
-        .sidebar-collapsed .sidebar-new-chat { padding: 0.5rem; min-height: 2.25rem; border-radius: 0.5rem; }
-        .sidebar-collapsed nav { padding: 0.5rem; }
-        .sidebar-collapsed nav > a,
-        .sidebar-collapsed #convo-toggle {
-            justify-content: center;
-            gap: 0;
-            border-radius: 0.5rem;
-        }
-        .sidebar-collapsed nav > a i,
-        .sidebar-collapsed nav > button i
-        .sidebar-collapsed #convo-toggle i { font-size: 1.25rem; width: auto; }
-        .sidebar-collapsed #auth-section,
-        .sidebar-collapsed #user-section { padding: 0.5rem; }
-        .sidebar-collapsed .sidebar-auth-buttons button { padding-top: 0.5rem; padding-bottom: 0.5rem; }
-        .sidebar-collapsed .sidebar-theme { display: none; }
-        #convo-caret { opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; }
-        #convo-toggle:hover #convo-caret,
-        #convo-toggle:focus-visible #convo-caret { opacity: 1; }
-
-        /* ========== CUSTOM PLACEHOLDER STYLES ========== */
-        .custom-placeholder {
-            opacity: 1;
-            visibility: visible;
-            transition: opacity 0.2s ease, visibility 0.2s ease;
-        }
-        
-        .password-placeholder {
-            display: flex;
-            align-items: center;
-            gap: 0.25rem;
-        }
-        
-        .password-placeholder i {
-            color: #94a3b8;
-        }
-        
-        /* ========== INPUT ERROR STATE ========== */
-        .auth-input-error {
-            border-color: #ef4444 !important;
-            background-color: #fef2f2 !important;
-        }
-        
-        .auth-input-error:focus {
-            ring-color: #ef4444 !important;
-            border-color: #ef4444 !important;
-        }
-        
-        /* ========== PASSWORD STRENGTH DROPDOWN ========== */
-        #password-strength-dropdown {
-            animation: slideDown 0.2s ease-out;
-        }
-        
-        @keyframes slideDown {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        #password-strength-dropdown.hidden {
-            display: none;
-        }
-        
-        #password-strength-dropdown ul li {
-            transition: all 0.2s ease;
-        }
-        
-        #password-strength-dropdown ul li i {
-            transition: all 0.2s ease;
-        }
-        
-        body.theme-light { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-        body.theme-dark { background-color: #0b1220; color: #e2e8f0; font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-        body.theme-dark .sidebar { background-color: #0f172a; border-color: #1f2937; }
-        body.theme-dark .bg-white { background-color: #0f172a !important; }
-        body.theme-dark .bg-slate-50 { background-color: #0b1220 !important; }
-        body.theme-dark .bg-slate-100 { background-color: #1f2937 !important; }
-        body.theme-dark .bg-gray-50 { background-color: #111827 !important; }
-        body.theme-dark .bg-gray-100 { background-color: #1f2937 !important; }
-        body.theme-dark .bg-brand-50 { background-color: rgba(139, 92, 246, 0.16) !important; }
-        body.theme-dark .bg-brand-100 { background-color: rgba(139, 92, 246, 0.24) !important; }
-        body.theme-dark .bg-purple-100 { background-color: rgba(139, 92, 246, 0.22) !important; }
-        body.theme-dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.12) !important; }
-        body.theme-dark .bg-red-400 { background-color: #dc2626 !important; }
-        body.theme-dark .hover\:bg-gray-50:hover { background-color: #1f2937 !important; }
-        body.theme-dark .hover\:bg-gray-100:hover { background-color: #1f2937 !important; }
-        body.theme-dark .hover\:bg-brand-50:hover { background-color: rgba(139, 92, 246, 0.24) !important; }
-        body.theme-dark .hover\:bg-brand-100:hover { background-color: rgba(139, 92, 246, 0.32) !important; }
-        body.theme-dark .border-gray-100 { border-color: #1f2937 !important; }
-        body.theme-dark .border-gray-200 { border-color: #334155 !important; }
-        body.theme-dark .border-slate-100 { border-color: #1f2937 !important; }
-        body.theme-dark .border-slate-200 { border-color: #334155 !important; }
-        body.theme-dark .border-brand-200 { border-color: rgba(139, 92, 246, 0.36) !important; }
-        body.theme-dark .border-brand-300 { border-color: rgba(139, 92, 246, 0.45) !important; }
-        body.theme-dark .border-red-500 { border-color: rgba(239, 68, 68, 0.65) !important; }
-        body.theme-dark .text-slate-900 { color: #f1f5f9 !important; }
-        body.theme-dark .text-slate-800 { color: #e2e8f0 !important; }
-        body.theme-dark .text-slate-700 { color: #cbd5e1 !important; }
-        body.theme-dark .text-slate-600 { color: #cbd5e1 !important; }
-        body.theme-dark .text-slate-500 { color: #94a3b8 !important; }
-        body.theme-dark .text-slate-400 { color: #94a3b8 !important; }
-        body.theme-dark .text-gray-900 { color: #f1f5f9 !important; }
-        body.theme-dark .text-gray-800 { color: #e2e8f0 !important; }
-        body.theme-dark .text-gray-700 { color: #cbd5e1 !important; }
-        body.theme-dark .text-gray-600 { color: #cbd5e1 !important; }
-        body.theme-dark .text-gray-500 { color: #94a3b8 !important; }
-        body.theme-dark .text-gray-400 { color: #64748b !important; }
-        body.theme-dark .text-purple-600 { color: #c4b5fd !important; }
-        body.theme-dark .text-brand-700 { color: #c4b5fd !important; }
-        body.theme-dark .text-brand-800 { color: #ddd6fe !important; }
-        body.theme-dark .text-brand-900 { color: #ede9fe !important; }
-        body.theme-dark input::placeholder { color: #64748b; }
-        body.theme-dark input { color: #e2e8f0; }
-        body.theme-dark .shadow-sm,
-        body.theme-dark .shadow-md,
-        body.theme-dark .shadow-2xl { box-shadow: 0 10px 25px rgba(2, 6, 23, 0.45) !important; }
-        body.theme-dark button.bg-white,
-        body.theme-dark a.bg-white,
-        body.theme-dark .bg-white.border { background-color: #111827 !important; }
-        body.theme-dark button[class*="bg-brand-50"] { color: #ddd6fe !important; }
-        body.theme-dark button[class*="bg-brand-600"] { background-color: #7c3aed !important; }
-        body.theme-dark button[class*="bg-brand-600"]:hover { background-color: #6d28d9 !important; }
-        body.theme-dark [class*="rounded-full"].bg-brand-100 { background-color: rgba(139, 92, 246, 0.3) !important; }
-        body.theme-dark [class*="rounded-full"] { background-color: rgba(139, 92, 246, 0.3) !important; }
-        body.theme-dark .theme-option { border-color: #334155 !important; background-color: #0f172a !important; color: #cbd5e1; }
-        body.theme-dark .theme-option:hover { background-color: #1f2937 !important; }
-        body.theme-dark .theme-option.active { border-color: #8b5cf6 !important; color: #ddd6fe; background-color: rgba(139, 92, 246, 0.12) !important; }
-        body.theme-dark .convo-history-list { background: #111827; border-color: #334155; }
-        body.theme-dark .convo-history-item { color: #94a3b8; }
-        body.theme-dark .convo-history-item:hover { background: #1f2937; color: #e2e8f0; }
-        body.theme-dark .convo-history-dot { background: #64748b; }
-        /* Custom styles for auth modal in dark theme */
-        body.theme-dark .custom-placeholder { color: #64748b !important; }
-        body.theme-dark .password-placeholder i { color: #64748b !important; }
-        body.theme-dark .auth-input-error { border-color: #dc2626 !important; background-color: rgba(239, 68, 68, 0.12) !important; }
-        /* Password strength dropdown dark theme */
-        body.theme-dark #password-strength-dropdown { background-color: #1f2937 !important; border-color: #334155 !important; }
-        body.theme-dark #password-strength-dropdown p { color: #cbd5e1 !important; }
-        .auth-input-error { border-color: #ef4444 !important; }
-    </style>
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/static/styles/base.css">
 </head>
 <body class="theme-light bg-slate-50 text-slate-800 leading-normal tracking-normal text-justify font-sans text-base h-screen flex overflow-hidden">
 
@@ -291,7 +134,7 @@
             <!-- User Section (when logged in) -->
             <div id="user-section" class="p-4 hidden">
                 <div class="flex items-center gap-3">
-                    <div class="h-10 w-10 rounded-full bg-brand-100 text-brand-600 flex items-center justify-center font-bold text-lg border-2 border-white shadow-sm flex-shrink-0">
+                    <div class="h-10 w-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-lg border-2 border-white shadow-sm flex-shrink-0">
                         Y
                     </div>
                     <div class="sidebar-user-info flex-1 min-w-0">

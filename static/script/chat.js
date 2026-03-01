@@ -26,11 +26,13 @@ const toolboxDocEmpty = document.getElementById("toolbox-doc-empty");
 const toolboxDocTitle = document.getElementById("toolbox-doc-title");
 const toolboxDocOpen = document.getElementById("toolbox-doc-open");
 const toolboxDocBack = document.getElementById("toolbox-doc-back");
+const chatMessages = document.getElementById("chat-messages");
+const promptRail = document.getElementById("prompt-rail");
+const promptRailNodes = document.getElementById("prompt-rail-nodes");
 
 let dragging = false;
 let resizing = false;
 let dragOffsetX = 0;
-let dragOffsetY = 0;
 let resizeStartX = 0;
 let resizeStartWidth = 320;
 let dockSide = "left";
@@ -38,6 +40,9 @@ let isPanelCollapsed = false;
 let expandedPanelWidth = 320;
 let isToolboxDocumentMode = false;
 let widthBeforeDocumentMode = null;
+let promptScrollTicking = false;
+let promptAnchors = [];
+const promptNodeButtons = new Map();
 const PANEL_STORAGE_KEY = "chat.toolsPanelState";
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -47,6 +52,7 @@ const PANEL_MIN_WIDTH = 260;
 const PANEL_MAX_WIDTH = 620;
 const getCurrentPanelWidth = () => (isPanelCollapsed ? PANEL_COLLAPSED_WIDTH : expandedPanelWidth);
 const getUploadUrl = (fileName) => `/uploads/${encodeURIComponent(fileName)}`;
+const getPreviewUrl = (fileName) => `/uploads/preview/${encodeURIComponent(fileName)}`;
 const getMaxAllowedPanelWidth = () => Math.min(PANEL_MAX_WIDTH, workspace.clientWidth - 120);
 
 const savePanelState = () => {
@@ -241,6 +247,8 @@ const openToolboxDocument = (fileName) => {
     expandedPanelWidth = clamp(getMaxAllowedPanelWidth(), PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
     const fileUrl = getUploadUrl(fileName);
     const isPdf = fileName.toLowerCase().endsWith(".pdf");
+    const isDocx = fileName.toLowerCase().endsWith(".docx");
+    const previewUrl = isPdf ? fileUrl : (isDocx ? getPreviewUrl(fileName) : null);
     isToolboxDocumentMode = true;
 
     applyPanelCollapseState();
@@ -250,12 +258,12 @@ const openToolboxDocument = (fileName) => {
         toolboxDocTitle.textContent = fileName;
     }
     if (toolboxDocOpen) {
-        toolboxDocOpen.href = fileUrl;
+        toolboxDocOpen.href = previewUrl || fileUrl;
     }
 
-    if (isPdf) {
+    if (previewUrl) {
         if (toolboxDocFrame) {
-            toolboxDocFrame.src = fileUrl;
+            toolboxDocFrame.src = previewUrl;
             toolboxDocFrame.classList.remove("hidden");
         }
         toolboxDocEmpty?.classList.add("hidden");
@@ -305,7 +313,94 @@ const initializeDocumentViewer = () => {
     toolboxDocBack?.addEventListener("click", closeToolboxDocument);
 };
 
+const updatePromptRailDockSide = () => {
+    if (!promptRail) return;
+    promptRail.classList.remove("left-3", "right-3");
+    promptRail.classList.add(dockSide === "right" ? "left-3" : "right-3");
+};
+
+const setActivePromptNode = (promptId) => {
+    promptNodeButtons.forEach((button, id) => {
+        const isActive = id === promptId;
+        button.classList.toggle("active", isActive);
+        if (isActive) {
+            button.scrollIntoView({ block: "nearest" });
+        }
+    });
+};
+
+const syncActivePromptNodeFromScroll = () => {
+    if (!chatMessages || !promptAnchors.length) return;
+    const messagesRect = chatMessages.getBoundingClientRect();
+    const railTargetY = messagesRect.top + Math.min(messagesRect.height * 0.35, 220);
+    let nearestPromptId = promptAnchors[0]?.dataset.promptId || null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    promptAnchors.forEach((anchor) => {
+        const anchorDistance = Math.abs(anchor.getBoundingClientRect().top - railTargetY);
+        if (anchorDistance < nearestDistance) {
+            nearestDistance = anchorDistance;
+            nearestPromptId = anchor.dataset.promptId;
+        }
+    });
+
+    if (nearestPromptId) {
+        setActivePromptNode(nearestPromptId);
+    }
+};
+
+const initializePromptRail = () => {
+    if (!chatMessages || !promptRailNodes || !promptRail) return;
+    promptAnchors = Array.from(chatMessages.querySelectorAll("[data-prompt-id]"));
+    if (!promptAnchors.length) {
+        promptRail.classList.add("hidden");
+        return;
+    }
+
+    promptRail.classList.remove("hidden");
+    promptRailNodes.innerHTML = "";
+    promptNodeButtons.clear();
+
+    promptAnchors.forEach((anchor, index) => {
+        const promptId = anchor.dataset.promptId || `${index + 1}`;
+        const promptText = anchor.querySelector(".bg-brand-100")?.textContent?.trim() || `Prompt ${index + 1}`;
+        const nodeButton = document.createElement("button");
+        nodeButton.type = "button";
+        nodeButton.className = "prompt-rail-node";
+        nodeButton.textContent = `${index + 1}`;
+        nodeButton.dataset.promptId = promptId;
+        nodeButton.title = promptText;
+        nodeButton.setAttribute("aria-label", `Jump to prompt ${index + 1}`);
+        nodeButton.addEventListener("click", () => {
+            anchor.scrollIntoView({ behavior: "smooth", block: "center" });
+            setActivePromptNode(promptId);
+        });
+        promptRailNodes.appendChild(nodeButton);
+        promptNodeButtons.set(promptId, nodeButton);
+    });
+
+    chatMessages.addEventListener("scroll", () => {
+        if (promptScrollTicking) return;
+        promptScrollTicking = true;
+        window.requestAnimationFrame(() => {
+            syncActivePromptNodeFromScroll();
+            promptScrollTicking = false;
+        });
+    }, { passive: true });
+
+    updatePromptRailDockSide();
+    syncActivePromptNodeFromScroll();
+};
+
 const updateConversationOffset = () => {
+    updatePromptRailDockSide();
+
+    if (isPanelCollapsed) {
+        chatMain.style.paddingLeft = "0px";
+        chatMain.style.paddingRight = "0px";
+        return;
+    }
+
     const reserved = getCurrentPanelWidth() + (PANEL_GUTTER * 3);
     if (dockSide === "left") {
         chatMain.style.paddingLeft = `${reserved}px`;
@@ -324,13 +419,11 @@ const snapPanelToSide = (side) => {
     const workspaceRect = workspace.getBoundingClientRect();
     const panelRect = panel.getBoundingClientRect();
     const panelWidth = getCurrentPanelWidth();
-    const panelTop = panel.offsetTop || PANEL_GUTTER;
-    const maxTop = Math.max(PANEL_GUTTER, workspaceRect.height - panelRect.height - PANEL_GUTTER);
     const snappedLeft = side === "right"
         ? Math.max(PANEL_GUTTER, workspaceRect.width - panelWidth - PANEL_GUTTER)
         : PANEL_GUTTER;
     panel.style.left = `${snappedLeft}px`;
-    panel.style.top = `${clamp(panelTop, PANEL_GUTTER, maxTop)}px`;
+    panel.style.top = `${PANEL_GUTTER}px`;
     updateConversationOffset();
 };
 
@@ -359,7 +452,6 @@ dragHandle.addEventListener("mousedown", (event) => {
     panel.classList.remove("duration-200");
     const panelRect = panel.getBoundingClientRect();
     dragOffsetX = event.clientX - panelRect.left;
-    dragOffsetY = event.clientY - panelRect.top;
 });
     
 resizeHandle.addEventListener("mousedown", (event) => {
@@ -376,9 +468,8 @@ window.addEventListener("mousemove", (event) => {
         const workspaceRect = workspace.getBoundingClientRect();
         const panelRect = panel.getBoundingClientRect();
         const nextLeft = clamp(event.clientX - workspaceRect.left - dragOffsetX, PANEL_GUTTER, workspaceRect.width - panelRect.width - PANEL_GUTTER);
-        const nextTop = clamp(event.clientY - workspaceRect.top - dragOffsetY, PANEL_GUTTER, workspaceRect.height - panelRect.height - PANEL_GUTTER);
         panel.style.left = `${nextLeft}px`;
-        panel.style.top = `${nextTop}px`;
+        panel.style.top = `${PANEL_GUTTER}px`;
         return;
     }
 
@@ -423,6 +514,9 @@ window.addEventListener("resize", () => {
 loadPanelState();
 initializeSourceSelectionButtons();
 initializeDocumentViewer();
+initializePromptRail();
 applyPanelCollapseState();
 updateSectionLayout();
 snapPanelToSide(dockSide);
+window.requestAnimationFrame(() => snapPanelToSide(dockSide));
+window.addEventListener("load", () => snapPanelToSide(dockSide));

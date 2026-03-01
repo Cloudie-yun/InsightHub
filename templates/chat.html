@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="pt-3 h-full flex flex-col">
-    <header class="h-7 px-6 bg-slate-50 flex items-center justify-between flex-shrink-0">
+<div class="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
+    <header class="h-11 px-6 bg-slate-50 flex items-center justify-between flex-shrink-0">
         <h1 class="text-base font-semibold text-slate-800 truncate">Introduction to Machine Learning</h1>
-        <button class="h-6 w-6 rounded-lg text-slate-500 hover:bg-gray-100 hover:text-slate-700 transition-colors flex items-center justify-center" title="More actions">
+        <button class="h-7 w-7 rounded-lg text-slate-500 hover:bg-gray-100 hover:text-slate-700 transition-colors flex items-center justify-center" title="More actions">
             <i class="fa-solid fa-ellipsis"></i>
         </button>
     </header>
 
-    <div id="chat-workspace" class="flex-1 min-h-0 relative bg-slate-50">
+    <div id="chat-workspace" class="flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
         <!-- Floating Sources / Study Aid Tool -->
-        <aside id="floating-tools-panel" class="hidden md:flex absolute z-20 left-4 top-4 h-[calc(100%-2rem)] max-h-[760px] bg-white border border-gray-200 rounded-2xl shadow-xl flex-col overflow-hidden transition-[left,top,width] duration-200 ease-out" style="width: 320px;">
-            <div id="floating-tools-drag-handle" class="h-12 px-4 border-b border-gray-100 bg-slate-50 flex items-center justify-between cursor-move select-none">
+        <aside id="floating-tools-panel" class="hidden md:flex absolute z-20 left-4 top-2 bottom-2 h-auto max-h-none bg-white border border-gray-200 rounded-2xl shadow-xl flex-col overflow-hidden transition-[left,width] duration-200 ease-out" style="width: 320px;">         
+            <div id="floating-tools-drag-handle" class="h-12 px-4 border-b border-gray-200 flex items-center justify-between cursor-move select-none">
                 <div id="floating-tools-title-container" class="flex items-center gap-2 text-sm font-semibold text-slate-700">
                     <i class="fa-solid fa-grip-lines text-slate-400"></i>
                     <span id="floating-tools-title">Tools</span>
@@ -120,12 +120,12 @@
         </aside>
         
         <!-- Main Conversation -->
-        <section id="chat-main" class="relative h-full min-w-0 flex flex-col bg-slate-50 transition-[padding] duration-200 ease-out">
-            <div id="chat-conversation-panel" class="flex-1 min-w-0 flex flex-col">
-                <div class="flex-1 overflow-y-auto p-5 space-y-5 max-w-5xl w-full min-h-0 mx-auto">
+        <section id="chat-main" class="relative h-full min-h-0 min-w-0 flex flex-col bg-slate-50 transition-[padding] duration-200 ease-out">
+            <div id="chat-conversation-panel" class="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+                <div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto p-5 pb-36 space-y-5 max-w-5xl w-full mx-auto">
                     <div class="flex justify-end">
                         <div class="relative group max-w-xl pb-[32px]">
-                            <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[15px] leading-6">
+                            <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
                                 Can you explain the difference between supervised and unsupervised learning?
                             </div>
                             <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
@@ -141,11 +141,63 @@
 
                     <div class="w-full flex justify-center">
                         <div class="w-full max-w-4xl">
-                            <div class="text-gray-800 py-1 px-1 text-[15px] leading-6">
-                                <p class="mb-2">Based on your document <strong>'Machine Learning Fundamentals.pdf'</strong>, supervised learning uses labeled data where the algorithm learns from input-output pairs.</p>
-                                <p class="mb-2">In contrast, unsupervised learning works with unlabeled data, where the algorithm identifies patterns and structures on its own.</p>
+                            <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
+                                <p class="mb-3">Based on your document <strong>'Machine Learning Fundamentals.pdf'</strong>, supervised learning uses labeled data where the algorithm learns from input-output pairs. The model is trained to predict the output from the input data, and its performance is evaluated based on how accurately it can make these predictions on new, unseen data.</p>
+                                </p>
+                                <p>In contrast, unsupervised learning works with unlabeled data, where the algorithm identifies patterns and structures on its own.</p>
                             </div>
-                            <div class="mt-1 px-1 flex items-center gap-1">
+                            <div class="mt-1 flex items-center gap-1">
+                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
+                                    <i class="fa-solid fa-clone"></i>
+                                </button>
+                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Helpful">
+                                    <i class="fa-regular fa-thumbs-up"></i>
+                                </button>
+                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Not helpful">
+                                    <i class="fa-regular fa-thumbs-down"></i>
+                                </button>
+                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Regenerate">
+                                    <i class="fa-solid fa-rotate-right"></i>
+                                </button>
+                                <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-8 w-8 rounded-md text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors" title="Create study aid">
+                                    <i class="fa-solid fa-lightbulb"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prompt to Ask -->
+                    <div class="flex justify-end">
+                        <div class="relative group max-w-xl pb-[32px]">
+                            <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
+                                What are some common algorithms used in supervised learning?
+                            </div>
+                            <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
+                                    <i class="fa-solid fa-clone"></i>
+                                </button>
+                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors" title="Edit">
+                                    <i class="fa-solid fa-pen"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="w-full flex justify-center">
+                        <div class="w-full max-w-4xl">
+                            <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
+                                <p class="mb-3">Some common algorithms used in supervised learning include:</p>
+                                <ul class="list-disc list-inside mb-2">
+                                    <li><strong>Linear Regression</strong>: Used for predicting continuous values.</li>
+                                    <li><strong>Logistic Regression</strong>: Used for binary classification tasks.</li>
+                                    <li><strong>Support Vector Machines (SVM)</strong>: Effective for high-dimensional spaces.</li>
+                                    <li><strong>Decision Trees</strong>: Simple and interpretable models for classification and regression.</li>
+                                    <li><strong>Random Forests</strong>: An ensemble of decision trees that improves accuracy and reduces overfitting.</li>
+                                    <li><strong>Neural Networks</strong>: Powerful models that can capture complex relationships in data, especially with large datasets.</li>
+                                </ul>
+                                <p>The choice of algorithm depends on the specific problem, the size and nature of the dataset, and the desired balance between interpretability and performance.</p>
+                            </div>
+                            <div class="mt-1 flex items-center gap-1">
                                 <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
                                     <i class="fa-solid fa-clone"></i>
                                 </button>
@@ -165,19 +217,19 @@
                         </div>
                     </div>
                 </div>
-                <div class="flex-shrink-0 px-6 pb-5 pt-3 bg-slate-50">
+                <div id="chat-input-area" class="sticky bottom-0 z-10 px-6 pb-3 pt-5 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
                     <div class="max-w-4xl mx-auto">
                         <div class="flex flex-wrap gap-2 mb-3">
-                            <button class="bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">What is Machine Learning?</button>
-                            <button class="bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">Explain Regression</button>
+                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">What is Machine Learning?</button>
+                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">Explain Regression</button>
                         </div>
-                        <div class="bg-white/95 border border-gray-200 rounded-full p-2 flex items-center shadow-lg backdrop-blur-sm focus-within:ring-2 focus-within:ring-brand-500 transition-shadow">
+                        <div class="chat-input-container bg-white/95 border border-gray-200 rounded-full p-2 flex items-center shadow-lg backdrop-blur-sm focus-within:ring-2 focus-within:ring-brand-500 transition-shadow">
                             <input type="text" placeholder="Ask any question..." class="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 px-4 py-2 text-gray-700 placeholder-gray-400">
                             <button class="bg-brand-600 text-white h-10 w-10 rounded-full flex items-center justify-center hover:bg-brand-700 transition">
                                 <i class="fa-solid fa-arrow-up"></i>
                             </button>
                         </div>
-                        <p class="mt-2 text-center text-[11px] text-gray-400">
+                        <p class="chat-disclaimer mt-2 text-center text-[13px] text-gray-500">
                             AI may make mistakes. Please double-check details with your sources and do not rely on AI alone.
                         </p>
                     </div>
