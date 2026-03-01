@@ -95,4 +95,4 @@ def uploaded_file_preview(filename):
     return send_from_directory(PREVIEW_DIR, preview_pdf_path.name, as_attachment=False)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True)
