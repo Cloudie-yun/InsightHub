@@ -1,6 +1,7 @@
 const authModal = document.getElementById("auth-modal");
 const loginForm = document.getElementById("auth-login");
 const signupForm = document.getElementById("auth-signup");
+const forgotForm = document.getElementById("auth-forgot");
 const authTitle = document.getElementById("auth-title");
 const authSubtitle = document.getElementById("auth-subtitle");
 const userSection = document.getElementById("user-section");
@@ -87,6 +88,7 @@ const resetPasswordToggleIcons = () => {
 const resetAuthForms = () => {
     resetAuthFormState("auth-login");
     resetAuthFormState("auth-signup");
+    resetAuthFormState("auth-forgot");
     resetPasswordToggleIcons();
     
     // Reset password strength dropdown
@@ -95,16 +97,32 @@ const resetAuthForms = () => {
         dropdown.classList.add('hidden');
         resetPasswordStrengthIndicators();
     }
+
+    resetForgotPasswordStep();
 };
 
 // ========== AUTH MODAL CONTROLS ==========
 const setAuthMode = (mode) => {
     resetAuthForms();
     const isLogin = mode === "login";
+    const isSignup = mode === "signup";
+    const isForgot = mode === "forgot";
+
     loginForm.classList.toggle("hidden", !isLogin);
-    signupForm.classList.toggle("hidden", isLogin);
-    authTitle.textContent = isLogin ? "Welcome Back" : "Create Your Account";
-    authSubtitle.textContent = isLogin ? "Log in to continue" : "Sign up in seconds";
+    signupForm.classList.toggle("hidden", !isSignup);
+    forgotForm.classList.toggle("hidden", !isForgot);
+
+    if (isLogin) {
+        authTitle.textContent = "Welcome Back";
+        authSubtitle.textContent = "Log in to continue";
+    } else if (isSignup) {
+        authTitle.textContent = "Create Your Account";
+        authSubtitle.textContent = "Sign up in seconds";
+    } else {
+        authTitle.textContent = "Forgot Password";
+        authSubtitle.textContent = "Enter your email to verify your account";
+    }
+
     setTimeout(initCustomPlaceholders, 10);
 };
 
@@ -143,6 +161,32 @@ const showError = (input, errorId, show) => {
     if (input) {
         input.classList.toggle("auth-input-error", show);
     }
+};
+
+// ========== FORGOT PASSWORD FLOW ==========
+const forgotEmailInput = document.getElementById("forgot-email");
+const forgotCodeInput = document.getElementById("forgot-code");
+const forgotCodeStep = document.getElementById("forgot-code-step");
+const forgotSubmitBtn = document.getElementById("forgot-submit-btn");
+const codeRegex = /^\d{6}$/;
+
+const resetForgotPasswordStep = () => {
+    if (!forgotCodeStep || !forgotSubmitBtn) return;
+    forgotCodeStep.classList.add("hidden");
+    forgotSubmitBtn.textContent = "Send Verification Code";
+
+    if (forgotCodeInput) {
+        forgotCodeInput.value = "";
+        hideAllErrorsForInput(forgotCodeInput);
+    }
+};
+
+const showForgotPasswordCodeStep = () => {
+    if (!forgotCodeStep || !forgotSubmitBtn) return;
+    forgotCodeStep.classList.remove("hidden");
+    forgotSubmitBtn.textContent = "Verify Code";
+    authSubtitle.textContent = "Enter the 6-digit code sent to your email";
+    setTimeout(initCustomPlaceholders, 10);
 };
 
 const hideAllErrorsForInput = (input) => {
@@ -355,6 +399,40 @@ signupConfirmPasswordInput.addEventListener('input', () => {
     }
 });
 
+// ========== REAL-TIME VALIDATION - FORGOT PASSWORD ==========
+forgotEmailInput.addEventListener('focus', () => {
+    hideAllErrorsForInput(forgotEmailInput);
+});
+
+forgotEmailInput.addEventListener('input', () => {
+    const email = forgotEmailInput.value.trim();
+
+    if (email.length === 0) {
+        hideAllErrorsForInput(forgotEmailInput);
+    } else if (!emailRegex.test(email)) {
+        showError(forgotEmailInput, "forgot-email-error", true);
+        document.getElementById("forgot-email-error").textContent = "Please enter a valid email.";
+    } else {
+        hideAllErrorsForInput(forgotEmailInput);
+    }
+});
+
+forgotCodeInput.addEventListener('focus', () => {
+    hideAllErrorsForInput(forgotCodeInput);
+});
+
+forgotCodeInput.addEventListener('input', () => {
+    forgotCodeInput.value = forgotCodeInput.value.replace(/\D/g, "").slice(0, 6);
+
+    if (forgotCodeInput.value.length === 0) {
+        hideAllErrorsForInput(forgotCodeInput);
+    } else if (!codeRegex.test(forgotCodeInput.value)) {
+        showError(forgotCodeInput, "forgot-code-error", true);
+    } else {
+        hideAllErrorsForInput(forgotCodeInput);
+    }
+});
+
 // ========== LOGIN FORM SUBMISSION ==========
 loginForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -429,6 +507,45 @@ signupForm.addEventListener("submit", (e) => {
 
     if (isValid) {
         console.log("Signup successful:", { name, email });
+        closeAuth();
+    }
+});
+
+// ========== FORGOT PASSWORD FORM SUBMISSION ==========
+forgotForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    clearFormErrors("auth-forgot");
+
+    const email = forgotEmailInput.value.trim();
+    const isCodeStepVisible = !forgotCodeStep.classList.contains("hidden");
+    let isValid = true;
+
+    if (!email) {
+        showError(forgotEmailInput, "forgot-email-error", true);
+        document.getElementById("forgot-email-error").textContent = "Please enter your email.";
+        isValid = false;
+    } else if (!emailRegex.test(email)) {
+        showError(forgotEmailInput, "forgot-email-error", true);
+        document.getElementById("forgot-email-error").textContent = "Please enter a valid email.";
+        isValid = false;
+    }
+
+    if (!isValid) return;
+
+    if (!isCodeStepVisible) {
+        console.log("Forgot password code requested:", { email });
+        showForgotPasswordCodeStep();
+        return;
+    }
+
+    const code = forgotCodeInput.value.trim();
+    if (!codeRegex.test(code)) {
+        showError(forgotCodeInput, "forgot-code-error", true);
+        isValid = false;
+    }
+
+    if (isValid) {
+        console.log("Forgot password code verified:", { email, code });
         closeAuth();
     }
 });
