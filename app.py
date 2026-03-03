@@ -1,7 +1,9 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, send_from_directory, abort
+from flask import Flask, render_template, jsonify, request, send_from_directory, abort
 from db import get_db_connection
 from pathlib import Path
 import subprocess
+import psycopg2
+from werkzeug.security import generate_password_hash
 
 app = Flask(__name__)
 UPLOADS_DIR = Path(app.root_path) / "uploads"
@@ -60,6 +62,59 @@ def flashcards():
 @app.route('/mindmap')
 def mindmap():
     return render_template('mindmap.html', active_page='study')
+
+
+@app.route('/api/auth/signup', methods=['POST'])
+def signup():
+    data = request.get_json(silent=True) or {}
+
+    username = (data.get('username') or '').strip()
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+
+    if not username:
+        return jsonify({'error': 'Username is required.'}), 400
+    if not email:
+        return jsonify({'error': 'Email is required.'}), 400
+    if not password:
+        return jsonify({'error': 'Password is required.'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            password_hash = generate_password_hash(password)
+            cur.execute(
+                """
+                INSERT INTO users (username, email, auth_provider, password_hash)
+                VALUES (%s, %s, 'local', %s)
+                RETURNING user_id, username, email, created_at
+                """,
+                (username, email, password_hash),
+            )
+            created_user = cur.fetchone()
+        conn.commit()
+    except psycopg2.IntegrityError:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'An account with this email already exists.'}), 409
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to create account right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return jsonify({
+        'message': 'Signup successful.',
+        'user': {
+            'user_id': str(created_user[0]),
+            'username': created_user[1],
+            'email': created_user[2],
+            'created_at': created_user[3].isoformat() if created_user[3] else None,
+        },
+    }), 201
 
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):

@@ -464,7 +464,7 @@ loginForm.addEventListener("submit", (e) => {
 });
 
 // ========== SIGNUP FORM SUBMISSION ==========
-signupForm.addEventListener("submit", (e) => {
+signupForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearFormErrors("auth-signup");
 
@@ -505,9 +505,39 @@ signupForm.addEventListener("submit", (e) => {
         isValid = false;
     }
 
-    if (isValid) {
-        console.log("Signup successful:", { name, email });
+    if (!isValid) return;
+
+    try {
+        const response = await fetch("/api/auth/signup", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                username: name,
+                email,
+                password,
+            }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            if (response.status === 409) {
+                showError(signupEmailInput, "signup-email-error", true);
+                document.getElementById("signup-email-error").textContent = payload.error || "An account with this email already exists.";
+                return;
+            }
+
+            showError(signupEmailInput, "signup-email-error", true);
+            document.getElementById("signup-email-error").textContent = payload.error || "Signup failed. Please try again.";
+            return;
+        }
+
+        console.log("Signup successful:", payload.user);
         closeAuth();
+    } catch (error) {
+        showError(signupEmailInput, "signup-email-error", true);
+        document.getElementById("signup-email-error").textContent = "Network error. Please try again.";
     }
 });
 
