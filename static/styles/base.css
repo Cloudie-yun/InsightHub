@@ -106,6 +106,8 @@ body.theme-dark .bg-slate-50 { background-color: #1e1e1e !important; }
 body.theme-dark .bg-slate-100 { background-color: #2a2a2a !important; }
 body.theme-dark .bg-gray-50 { background-color: #222222 !important; }
 body.theme-dark .bg-gray-100 { background-color: #2a2a2a !important; }
+body.theme-dark .bg-gray-200 { background-color: #2a2a2a !important; }
+body.theme-dark .bg-gray-300 { background-color: #2a2a2a !important; }
 body.theme-dark .bg-brand-50 { background-color: rgba(160, 140, 200, 0.08) !important; }
 body.theme-dark .bg-brand-100 { background-color: rgba(160, 140, 200, 0.13) !important; }
 body.theme-dark .bg-purple-100 { background-color: rgba(160, 140, 200, 0.11) !important; }
@@ -114,8 +116,9 @@ body.theme-dark .bg-red-400 { background-color: #a03030 !important; }
 body.theme-dark .hover\:bg-gray-50:hover { background-color: #2c2c2c !important; }
 body.theme-dark .hover\:bg-gray-100:hover { background-color: #303030 !important; }
 body.theme-dark .hover\:bg-slate-100:hover { background-color: #2c2c2c !important; }
-body.theme-dark .hover\:bg-brand-50:hover { background-color: rgba(160, 140, 200, 0.10) !important; }
-body.theme-dark .hover\:bg-brand-100:hover { background-color: rgba(160, 140, 200, 0.16) !important; }
+body.theme-dark .hover\:bg-brand-50:hover { background-color: rgba(160, 140, 200, 0.1) !important; }
+body.theme-dark .hover\:bg-brand-100:hover { background-color: rgba(168, 158, 237, 8%) !important; }
+body.theme-dark .border-white { border-color: #252525 !important; }
 body.theme-dark .border-gray-100 { border-color: #2e2e2e !important; }
 body.theme-dark .border-gray-200 { border-color: #353535 !important; }
 body.theme-dark .border-slate-100 { border-color: #2e2e2e !important; }
@@ -159,6 +162,7 @@ body.theme-dark .convo-history-list { background: #232323; border-color: #2f2f2f
 body.theme-dark .convo-history-item { color: #aaaaaa; }
 body.theme-dark .convo-history-item:hover { background: #2c2c2c; color: #c9c9c9; }
 body.theme-dark .convo-history-dot { background: #5a5a5a; }
+
 /* Authentication Modals Style */
 body.theme-dark .custom-placeholder { color: #6a6a6a !important; }
 body.theme-dark .password-placeholder i { color: #6a6a6a !important; }
@@ -166,6 +170,9 @@ body.theme-dark .auth-input-error { border-color: #a03030 !important; background
 body.theme-dark #password-strength-dropdown { background-color: #2c2c2c !important; border-color: #353535 !important; }
 body.theme-dark #password-strength-dropdown p { color: #aaaaaa !important; }
 .auth-input-error { border-color: #ef4444 !important; }
+
+/* Email Alert */
+body.theme-dark #email-verify-reminder { background-color: rgba(180, 130, 0, 0.10) !important; border-color: rgba(180, 130, 0, 0.25) !important; color: #c9a84c !important; }
 
 /* Input bar gradient backdrop */
 body.theme-dark #chat-input-area {

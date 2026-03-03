@@ -462,7 +462,7 @@ forgotCodeInput.addEventListener('input', () => {
 });
 
 // ========== LOGIN FORM SUBMISSION ==========
-loginForm.addEventListener("submit", (e) => {
+loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearFormErrors("auth-login");
 
@@ -485,9 +485,41 @@ loginForm.addEventListener("submit", (e) => {
         isValid = false;
     }
 
-    if (isValid) {
-        console.log("Login successful:", { email });
+    if (!isValid) return;
+
+    try {
+        const response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                email,
+                password,
+            }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            if (response.status === 401) {
+                showError(loginPasswordInput, "login-password-error", true);
+                document.getElementById("login-password-error").textContent = payload.error || "Invalid email or password.";
+                return;
+            }
+
+            showError(loginEmailInput, "login-email-error", true);
+            document.getElementById("login-email-error").textContent = payload.error || "Login failed. Please try again.";
+            return;
+        }
+
+        setAuthUiState({
+            ...payload.user,
+            email_verified: Boolean(payload.user?.email_verified),
+        });
         closeAuth();
+    } catch (error) {
+        showError(loginEmailInput, "login-email-error", true);
+        document.getElementById("login-email-error").textContent = "Network error. Please try again.";
     }
 });
 

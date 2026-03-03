@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import psycopg2
 from psycopg2 import errors
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
@@ -182,6 +182,51 @@ def signup():
         if conn is not None:
             conn.rollback()
         return jsonify({'error': 'Unable to create account right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+
+    if not email:
+        return jsonify({'error': 'Email is required.'}), 400
+    if not password:
+        return jsonify({'error': 'Password is required.'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, username, email, created_at, email_verified, password_hash, auth_provider
+                FROM users
+                WHERE email = %s
+                """,
+                (email,),
+            )
+            user_row = cur.fetchone()
+
+        if not user_row:
+            return jsonify({'error': 'Invalid email or password.'}), 401
+
+        if user_row[6] != 'local':
+            return jsonify({'error': 'This account uses a different sign-in method.'}), 400
+
+        password_hash = user_row[5] or ''
+        if not password_hash or not check_password_hash(password_hash, password):
+            return jsonify({'error': 'Invalid email or password.'}), 401
+
+        session["user_id"] = str(user_row[0])
+        user_payload = serialize_user_row(user_row[:5])
+        return jsonify({'message': 'Login successful.', 'user': user_payload}), 200
+    except Exception:
+        return jsonify({'error': 'Unable to log in right now.'}), 500
     finally:
         if conn is not None:
             conn.close()
