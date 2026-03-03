@@ -1,1 +1,8 @@
 .env
+
+# Create/edit .gitignore file
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
