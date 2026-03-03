@@ -6,3 +6,12 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
+# Documents
+uploads/
+*.pdf
+*.docx
+*.pptx
+*.jpg
+*.png
+*.jpeg
