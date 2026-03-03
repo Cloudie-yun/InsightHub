@@ -132,23 +132,32 @@
             </div>
 
             <!-- User Section (when logged in) -->
-            <div id="user-section" class="p-4 hidden">
+            <div id="user-section" class="p-4 {% if not auth_user %}hidden{% endif %}">
                 <div class="flex items-center gap-3">
-                    <div class="h-10 w-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-lg border-2 border-white shadow-sm flex-shrink-0">
-                        Y
+                    <div id="sidebar-user-avatar" class="relative h-10 w-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-lg border-2 border-white shadow-sm flex-shrink-0">
+                        <span id="sidebar-user-avatar-initial">{{ (auth_user.username[:1] if auth_user and auth_user.username else "U") | upper }}</span>
+                        <span id="email-verify-badge" title="Profile not ready: email not verified" class="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-amber-500 text-white text-[10px] items-center justify-center shadow-sm {% if not auth_user or auth_user.email_verified %}hidden{% endif %}">
+                            <i class="fa-solid fa-exclamation"></i>
+                        </span>
                     </div>
                     <div class="sidebar-user-info flex-1 min-w-0">
-                        <div class="text-sm font-bold text-gray-900 truncate">Yunite</div>
-                        <div class="text-xs text-gray-500 truncate">yunite@gmail.com</div>
+                        <div id="sidebar-user-name" class="text-sm font-bold text-gray-900 truncate">{{ auth_user.username if auth_user else "" }}</div>
+                        <div id="sidebar-user-email" class="text-xs text-gray-500 truncate">{{ auth_user.email if auth_user else "" }}</div>
                     </div>
                     <button class="sidebar-label h-8 w-8 rounded-lg text-slate-500 hover:bg-gray-100 transition-colors flex items-center justify-center" title="Settings">
                         <i class="fa-solid fa-gear"></i>
                     </button>
                 </div>
+                <div id="email-verify-reminder" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 {% if not auth_user or auth_user.email_verified %}hidden{% endif %}">
+                    <div class="flex items-start gap-2">
+                        <i class="fa-solid fa-triangle-exclamation mt-0.5"></i>
+                        <span>Please check your email to verify your account.</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Auth Buttons (when not logged in) -->
-            <div id="auth-section" class="p-4 ">
+            <div id="auth-section" class="p-4 {% if auth_user %}hidden{% endif %}">
                 <div class="sidebar-auth-buttons flex flex-col gap-2">
                     <button data-auth-open="login" class="w-full px-4 py-2.5 text-sm font-semibold text-brand-700 bg-brand-50 rounded-lg hover:bg-brand-100 transition-colors flex items-center justify-center gap-2">
                         <i class="fa-solid fa-right-to-bracket"></i>
@@ -173,6 +182,9 @@
 
     {% include "partials/auth_modal.html" %}
 
+    <script>
+        window.__AUTH_USER__ = {{ auth_user|tojson }};
+    </script>
     <script src="/static/script/base.js"></script>
 </body>
 </html>

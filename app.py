@@ -1,11 +1,17 @@
-from flask import Flask, render_template, jsonify, request, send_from_directory, abort
+from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session
 from db import get_db_connection
 from pathlib import Path
 import subprocess
 import psycopg2
+from psycopg2 import errors
 from werkzeug.security import generate_password_hash
+from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
+import os
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 UPLOADS_DIR = Path(app.root_path) / "uploads"
 PREVIEW_DIR = UPLOADS_DIR / ".preview"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,6 +48,55 @@ def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
 
 def get_preview_pdf_path(file_path: Path) -> Path:
     return PREVIEW_DIR / f"{file_path.stem}.pdf"
+
+
+def serialize_user_row(user_row):
+    if not user_row:
+        return None
+
+    return {
+        "user_id": str(user_row[0]),
+        "username": user_row[1],
+        "email": user_row[2],
+        "created_at": user_row[3].isoformat() if user_row[3] else None,
+        "email_verified": bool(user_row[4]),
+    }
+
+
+def get_current_user():
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, username, email, created_at, email_verified
+                FROM users
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            user_row = cur.fetchone()
+
+        if not user_row:
+            session.pop("user_id", None)
+            return None
+
+        return serialize_user_row(user_row)
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.context_processor
+def inject_auth_user():
+    return {"auth_user": get_current_user()}
 
 @app.route('/')
 def root():
@@ -88,16 +143,41 @@ def signup():
                 """
                 INSERT INTO users (username, email, auth_provider, password_hash)
                 VALUES (%s, %s, 'local', %s)
-                RETURNING user_id, username, email, created_at
+                RETURNING user_id, username, email, created_at, email_verified
                 """,
                 (username, email, password_hash),
             )
             created_user = cur.fetchone()
+
+            verification_token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(verification_token.encode("utf-8")).hexdigest()
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+            cur.execute(
+                """
+                INSERT INTO user_verification_tokens (user_id, purpose, token_hash, expires_at)
+                VALUES (%s, 'email_verify', %s, %s)
+                """,
+                (created_user[0], token_hash, expires_at),
+            )
         conn.commit()
-    except psycopg2.IntegrityError:
+        session["user_id"] = str(created_user[0])
+        user_payload = serialize_user_row(created_user)
+
+        return jsonify({
+            'message': 'Signup successful. Please check your email to verify your account.',
+            'user': user_payload,
+            'verification_required': not user_payload["email_verified"],
+        }), 201
+    except errors.UniqueViolation:
         if conn is not None:
             conn.rollback()
         return jsonify({'error': 'An account with this email already exists.'}), 409
+    except psycopg2.IntegrityError as e:
+        # Other integrity issues, like CHECK constraint failures
+        if conn is not None:
+            conn.rollback()
+        print("Integrity error:", e)
+        return jsonify({'error': 'Invalid signup data.'}), 400
     except Exception:
         if conn is not None:
             conn.rollback()
@@ -105,16 +185,6 @@ def signup():
     finally:
         if conn is not None:
             conn.close()
-
-    return jsonify({
-        'message': 'Signup successful.',
-        'user': {
-            'user_id': str(created_user[0]),
-            'username': created_user[1],
-            'email': created_user[2],
-            'created_at': created_user[3].isoformat() if created_user[3] else None,
-        },
-    }), 201
 
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):

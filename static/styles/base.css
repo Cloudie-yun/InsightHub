@@ -29,6 +29,15 @@
 .sidebar-collapsed #user-section { padding: 0.5rem; }
 .sidebar-collapsed .sidebar-auth-buttons button { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 .sidebar-collapsed .sidebar-theme { display: none; }
+#email-verify-badge {
+    display: none;
+}
+.sidebar-collapsed #email-verify-reminder {
+    display: none;
+}
+.sidebar-collapsed #email-verify-badge:not(.hidden) {
+    display: flex;
+}
 #convo-caret { opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; }
 #convo-toggle:hover #convo-caret,
 #convo-toggle:focus-visible #convo-caret { opacity: 1; }

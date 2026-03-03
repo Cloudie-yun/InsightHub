@@ -6,6 +6,11 @@ const authTitle = document.getElementById("auth-title");
 const authSubtitle = document.getElementById("auth-subtitle");
 const userSection = document.getElementById("user-section");
 const authSection = document.getElementById("auth-section");
+const sidebarUserAvatarInitial = document.getElementById("sidebar-user-avatar-initial");
+const sidebarUserName = document.getElementById("sidebar-user-name");
+const sidebarUserEmail = document.getElementById("sidebar-user-email");
+const emailVerifyReminder = document.getElementById("email-verify-reminder");
+const emailVerifyBadge = document.getElementById("email-verify-badge");
 
 // ========== CUSTOM PLACEHOLDER MANAGEMENT ==========
 const initCustomPlaceholders = () => {
@@ -169,6 +174,29 @@ const forgotCodeInput = document.getElementById("forgot-code");
 const forgotCodeStep = document.getElementById("forgot-code-step");
 const forgotSubmitBtn = document.getElementById("forgot-submit-btn");
 const codeRegex = /^\d{6}$/;
+
+const setAuthUiState = (user) => {
+    const isLoggedIn = Boolean(user && user.user_id);
+    userSection.classList.toggle("hidden", !isLoggedIn);
+    authSection.classList.toggle("hidden", isLoggedIn);
+
+    if (!isLoggedIn) {
+        if (emailVerifyReminder) emailVerifyReminder.classList.add("hidden");
+        if (emailVerifyBadge) emailVerifyBadge.classList.add("hidden");
+        return;
+    }
+
+    const username = (user.username || "").trim();
+    const email = (user.email || "").trim();
+    const initial = username ? username.charAt(0).toUpperCase() : "U";
+    const isVerified = Boolean(user.email_verified);
+
+    if (sidebarUserAvatarInitial) sidebarUserAvatarInitial.textContent = initial;
+    sidebarUserName.textContent = username || "User";
+    sidebarUserEmail.textContent = email;
+    if (emailVerifyReminder) emailVerifyReminder.classList.toggle("hidden", isVerified);
+    if (emailVerifyBadge) emailVerifyBadge.classList.toggle("hidden", isVerified);
+};
 
 const resetForgotPasswordStep = () => {
     if (!forgotCodeStep || !forgotSubmitBtn) return;
@@ -534,6 +562,10 @@ signupForm.addEventListener("submit", async (e) => {
         }
 
         console.log("Signup successful:", payload.user);
+        setAuthUiState({
+            ...payload.user,
+            email_verified: Boolean(payload.user?.email_verified),
+        });
         closeAuth();
     } catch (error) {
         showError(signupEmailInput, "signup-email-error", true);
@@ -657,14 +689,5 @@ themeDarkRadio.addEventListener("change", () => {
     if (themeDarkRadio.checked) applyTheme("dark");
 });
 
-// Simulate login state (for demo purposes)
-// Set to true to show user section, false to show auth buttons
-const isLoggedIn = false;
-
-if (isLoggedIn) {
-    userSection.classList.remove("hidden");
-    authSection.classList.add("hidden");
-} else {
-    userSection.classList.add("hidden");
-    authSection.classList.remove("hidden");
-}
+const serverAuthUser = window.__AUTH_USER__ || null;
+setAuthUiState(serverAuthUser);
