@@ -3,15 +3,7 @@
 # Create/edit .gitignore file
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
 
 # Documents
-/uploads/
-*.pdf
-*.docx
-*.pptx
-*.jpg
-*.png
-*.jpeg
+uploads/
+
