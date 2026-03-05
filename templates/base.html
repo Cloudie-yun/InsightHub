@@ -42,6 +42,11 @@
 </head>
 <body class="theme-light bg-slate-50 text-slate-800 leading-normal tracking-normal text-justify font-sans text-base h-screen flex overflow-hidden">
 
+    <!--Toast Container -->
+    <div id="toast-container"
+        class="fixed top-5 left-1/2 -translate-x-1/2 hidden bg-green-500 text-white px-4 py-2 rounded-lg shadow-md z-50">
+    </div>
+
     <!-- Sidebar -->
     <aside id="sidebar" class="sidebar w-64 bg-white border-r border-gray-200 flex flex-col h-full flex-shrink-0 transition-all duration-300">
         <div class="flex-1 flex flex-col overflow-hidden">
@@ -132,27 +137,31 @@
             </div>
 
             <!-- User Section (when logged in) -->
-            <div id="user-section" class="p-4 {% if not auth_user %}hidden{% endif %}">
-                <div class="flex items-center gap-3">
+            <div id="user-section" class="relative p-4 {% if not auth_user %}hidden{% endif %}">
+                <button id="user-menu-toggle" type="button" aria-expanded="false" class="w-full flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-100 transition-colors">
                     <div id="sidebar-user-avatar" class="relative h-10 w-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-lg border-2 border-white shadow-sm flex-shrink-0">
                         <span id="sidebar-user-avatar-initial">{{ (auth_user.username[:1] if auth_user and auth_user.username else "U") | upper }}</span>
                         <span id="email-verify-badge" title="Profile not ready: email not verified" class="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-amber-500 text-white text-[10px] items-center justify-center shadow-sm {% if not auth_user or auth_user.email_verified %}hidden{% endif %}">
                             <i class="fa-solid fa-exclamation"></i>
                         </span>
                     </div>
-                    <div class="sidebar-user-info flex-1 min-w-0">
+                    <div class="sidebar-user-info flex-1 min-w-0 text-left">
                         <div id="sidebar-user-name" class="text-sm font-bold text-gray-900 truncate">{{ auth_user.username if auth_user else "" }}</div>
                         <div id="sidebar-user-email" class="text-xs text-gray-500 truncate">{{ auth_user.email if auth_user else "" }}</div>
                     </div>
-                    <button class="sidebar-label h-8 w-8 rounded-lg text-slate-500 hover:bg-gray-100 transition-colors flex items-center justify-center" title="Settings">
-                        <i class="fa-solid fa-gear"></i>
+                    <span class="sidebar-label h-8 w-8 rounded-lg text-slate-500 flex items-center justify-center">
+                        <i id="user-menu-caret" class="fa-solid fa-chevron-up text-xs transition-transform"></i>
+                    </span>
+                </button>
+                <div id="user-menu-dropdown" class="hidden absolute bottom-full left-4 right-4 mb-2 rounded-xl border border-gray-300 bg-white shadow-md overflow-hidden z-30">
+                    <button id="user-edit-profile-btn" type="button" class="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-gray-100 transition-colors flex items-center gap-2">
+                        <i class="fa-solid fa-user-pen w-4"></i>
+                        <span>Edit Profile</span>
                     </button>
-                </div>
-                <div id="email-verify-reminder" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 {% if not auth_user or auth_user.email_verified %}hidden{% endif %}">
-                    <div class="flex items-start gap-2">
-                        <i class="fa-solid fa-triangle-exclamation mt-0.5"></i>
-                        <span>Please check your email to verify your account.</span>
-                    </div>
+                    <button id="user-logout-btn" type="button" class="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors flex items-center gap-2">
+                        <i class="fa-solid fa-right-from-bracket w-4"></i>
+                        <span>Log Out</span>
+                    </button>
                 </div>
             </div>
 
@@ -176,11 +185,54 @@
     <div class="flex-1 flex flex-col h-full min-w-0">
         <!-- Page Content Injection -->
         <main class="flex-1 overflow-auto bg-slate-50 relative min-w-0">
+            <div id="password-reset-banner" class="hidden sticky top-0 z-30 border-b border-sky-200 bg-sky-50 text-sky-800">
+                <div class="flex items-center gap-3 px-4 py-2">
+                    <i class="fa-solid fa-shield-halved text-sm"></i>
+                    <p class="flex-1 text-sm font-medium">
+                        You signed in through a password reset link. For security, please change your password now.
+                    </p>
+                    <button id="password-reset-change-btn" type="button" class="text-xs font-semibold underline underline-offset-2 hover:text-sky-900">
+                        Change password
+                    </button>
+                    <button id="password-reset-close-btn" type="button" class="h-7 w-7 rounded-full hover:bg-sky-100 transition-colors" aria-label="Dismiss password reset reminder">
+                        <i class="fa-solid fa-xmark text-sm"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="email-verify-banner" class="hidden sticky top-0 z-20 border-b border-amber-200 bg-amber-50 text-amber-800">
+                <div class="flex items-center gap-3 px-4 py-2">
+                    <i class="fa-solid fa-triangle-exclamation text-sm"></i>
+                    <div class="email-verify-marquee flex-1">
+                        <div class="email-verify-marquee-track text-sm font-medium">
+                            Please verify your email to unlock your full InsightHub experience. If your link expired, click resend verification email.
+                        </div>
+                    </div>
+                    <button id="email-verify-resend-btn" type="button" class="text-xs font-semibold underline underline-offset-2 hover:text-amber-900 disabled:opacity-60 disabled:no-underline">
+                        Resend email
+                    </button>
+                    <span id="email-verify-resend-status" class="text-xs font-semibold"></span>
+                </div>
+            </div>
             {% block content %}{% endblock %}
         </main>
     </div>
 
     {% include "partials/auth_modal.html" %}
+    <div id="email-verify-result-modal" class="fixed inset-0 z-50 hidden items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" data-email-verify-close></div>
+        <div class="relative z-10 w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl border border-slate-100 p-6">
+            <div class="h-14 w-14 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-4">
+                <i id="email-verify-result-icon" class="fa-solid fa-circle-check text-2xl"></i>
+            </div>
+            <h3 id="email-verify-result-title" class="text-xl text-slate-900 font-bold text-center">Email Verified</h3>
+            <p id="email-verify-result-text" class="text-sm text-slate-500 text-center mt-2">
+                Congratulations, your email has been verified. Please enjoy InsightHub.
+            </p>
+            <button id="email-verify-result-btn" type="button" class="w-full mt-6 rounded-xl bg-brand-600 text-white font-semibold py-3 hover:bg-brand-700 transition-colors">
+                Continue to Dashboard
+            </button>
+        </div>
+    </div>
 
     <script>
         window.__AUTH_USER__ = {{ auth_user|tojson }};

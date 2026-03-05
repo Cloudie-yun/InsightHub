@@ -1,5 +1,6 @@
-from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session
+from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session, redirect, url_for
 from db import get_db_connection
+from email_service import send_email
 from pathlib import Path
 import subprocess
 import psycopg2
@@ -9,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 import os
+from urllib.parse import urljoin
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -98,6 +100,99 @@ def get_current_user():
 def inject_auth_user():
     return {"auth_user": get_current_user()}
 
+
+def build_external_url(path: str) -> str:
+    app_base_url = os.getenv("APP_BASE_URL", "").strip()
+    if app_base_url:
+        return urljoin(app_base_url.rstrip("/") + "/", path.lstrip("/"))
+    return urljoin(request.url_root, path.lstrip("/"))
+
+
+def send_signup_verification_email(to_email: str, username: str, token: str) -> None:
+    verify_url = build_external_url(f"/api/auth/verify-email?token={token}")
+    subject = "Verify your InsightHub email"
+
+    text_body = (
+        f"Hi {username},\n\n"
+        "Thanks for signing up for InsightHub.\n"
+        "Please verify your email by clicking the link below:\n\n"
+        f"{verify_url}\n\n"
+        "This link expires in 24 hours.\n\n"
+        "If you did not create this account, you can ignore this email."
+    )
+
+    html_body = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px;">
+        <div style="max-width: 500px; margin: auto; background: white; padding: 30px; border-radius: 8px;">
+          <h2 style="color: #2c3e50;">Welcome to InsightHub</h2>
+          <p>Hi {username},</p>
+          <p>Thanks for signing up for InsightHub.</p>
+          <p>Please verify your email by clicking the button below:</p>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="{verify_url}" 
+               style="background-color: #4f46e5; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 6px; display: inline-block;">
+              Verify Email
+            </a>
+          </div>
+
+          <p style="font-size: 12px; color: #666;">
+            This link expires in 24 hours.<br>
+            If you did not create this account, you can safely ignore this email.
+          </p>
+        </div>
+      </body>
+    </html>
+    """
+
+    send_email(to_email, subject, text_body, html_body)
+
+
+def send_forgot_password_link_email(to_email: str, username: str, token: str) -> None:
+    reset_url = build_external_url(f"/api/auth/forgot-password/verify?token={token}")
+    subject = "Reset your InsightHub password"
+
+    text_body = (
+        f"Hi {username},\n\n"
+        "We received a request to reset your InsightHub password.\n"
+        "Please open the link below to continue:\n\n"
+        f"{reset_url}\n\n"
+        "This link expires in 30 minutes and can only be used once.\n\n"
+        "If you did not request this, you can ignore this email."
+    )
+
+    html_body = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; padding: 20px;">
+        <div style="max-width: 500px; margin: auto; background: white; padding: 30px; border-radius: 8px;">
+          <h2 style="color: #2c3e50;">Password Reset Request</h2>
+
+          <p>Hi {username},</p>
+
+          <p>We received a request to reset your InsightHub password.</p>
+          <p>Please click the button below to continue:</p>
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="{reset_url}" 
+               style="background-color: #dc2626; color: white; padding: 12px 24px;
+                      text-decoration: none; border-radius: 6px; display: inline-block;">
+              Reset Password
+            </a>
+          </div>
+
+          <p style="font-size: 12px; color: #666;">
+            This link expires in 30 minutes and can only be used once.<br>
+            If you did not request this, you can safely ignore this email.
+          </p>
+        </div>
+      </body>
+    </html>
+    """
+
+    send_email(to_email, subject, text_body, html_body)
+
 @app.route('/')
 def root():
     return render_template('dashboard.html', active_page='dashboard')
@@ -162,11 +257,21 @@ def signup():
         conn.commit()
         session["user_id"] = str(created_user[0])
         user_payload = serialize_user_row(created_user)
+        email_sent = True
+        try:
+            send_signup_verification_email(email, username, verification_token)
+        except Exception:
+            email_sent = False
 
         return jsonify({
-            'message': 'Signup successful. Please check your email to verify your account.',
+            'message': (
+                'Signup successful. Please check your email to verify your account.'
+                if email_sent
+                else 'Signup successful, but we could not send the verification email right now.'
+            ),
             'user': user_payload,
             'verification_required': not user_payload["email_verified"],
+            'verification_email_sent': email_sent,
         }), 201
     except errors.UniqueViolation:
         if conn is not None:
@@ -182,6 +287,241 @@ def signup():
         if conn is not None:
             conn.rollback()
         return jsonify({'error': 'Unable to create account right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/verify-email', methods=['GET'])
+def verify_email():
+    token = (request.args.get("token") or "").strip()
+    if not token:
+        return redirect(url_for('dashboard', email_verified='invalid'))
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now_utc = datetime.now(timezone.utc)
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id
+                FROM user_verification_tokens
+                WHERE purpose = 'email_verify'
+                  AND token_hash = %s
+                  AND used_at IS NULL
+                  AND expires_at > %s
+                """,
+                (token_hash, now_utc),
+            )
+            token_row = cur.fetchone()
+
+            if not token_row:
+                return redirect(url_for('dashboard', email_verified='invalid'))
+
+            user_id = token_row[0]
+            cur.execute(
+                """
+                UPDATE users
+                SET email_verified = TRUE
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            cur.execute(
+                """
+                UPDATE user_verification_tokens
+                SET used_at = %s
+                WHERE user_id = %s
+                  AND purpose = 'email_verify'
+                  AND token_hash = %s
+                  AND used_at IS NULL
+                """,
+                (now_utc, user_id, token_hash),
+            )
+
+        conn.commit()
+        return redirect(url_for('dashboard', email_verified='success'))
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return redirect(url_for('dashboard', email_verified='error'))
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/resend-verification', methods=['POST'])
+def resend_verification():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to resend verification email.'}), 401
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, username, email, email_verified, auth_provider
+                FROM users
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            user_row = cur.fetchone()
+
+            if not user_row:
+                session.pop("user_id", None)
+                return jsonify({'error': 'User not found.'}), 404
+
+            if user_row[4] != 'local':
+                return jsonify({'error': 'This account uses a different sign-in method.'}), 400
+
+            if bool(user_row[3]):
+                return jsonify({'error': 'Your email is already verified.'}), 400
+
+            verification_token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(verification_token.encode("utf-8")).hexdigest()
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
+            cur.execute(
+                """
+                DELETE FROM user_verification_tokens
+                WHERE user_id = %s AND purpose = 'email_verify'
+                """,
+                (user_row[0],),
+            )
+            cur.execute(
+                """
+                INSERT INTO user_verification_tokens (user_id, purpose, token_hash, expires_at)
+                VALUES (%s, 'email_verify', %s, %s)
+                """,
+                (user_row[0], token_hash, expires_at),
+            )
+
+        conn.commit()
+
+        try:
+            send_signup_verification_email(user_row[2], user_row[1], verification_token)
+            return jsonify({'message': 'Verification email sent. Please check your inbox.'}), 200
+        except Exception:
+            return jsonify({'error': 'Unable to send verification email right now.'}), 500
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to resend verification right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/profile', methods=['POST'])
+def update_profile():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+
+    if not username:
+        return jsonify({'error': 'Username is required.'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET username = %s
+                WHERE user_id = %s
+                RETURNING user_id, username, email, created_at, email_verified
+                """,
+                (username, user_id),
+            )
+            updated_user = cur.fetchone()
+
+        if not updated_user:
+            if conn is not None:
+                conn.rollback()
+            session.pop("user_id", None)
+            return jsonify({'error': 'User not found.'}), 404
+
+        conn.commit()
+        return jsonify({'message': 'Profile updated.', 'user': serialize_user_row(updated_user)}), 200
+    except errors.UniqueViolation:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'That username is already taken.'}), 409
+    except psycopg2.IntegrityError:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Invalid profile data.'}), 400
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to update profile right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    session.pop("user_id", None)
+    return jsonify({'message': 'Logged out.'}), 200
+
+
+@app.route('/api/auth/change-password', methods=['POST'])
+def change_password():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    data = request.get_json(silent=True) or {}
+    new_password = data.get('new_password') or ''
+
+    if not new_password:
+        return jsonify({'error': 'New password is required.'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT auth_provider
+                FROM users
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                session.pop("user_id", None)
+                return jsonify({'error': 'User not found.'}), 404
+            if row[0] != 'local':
+                return jsonify({'error': 'This account uses a different sign-in method.'}), 400
+
+            password_hash = generate_password_hash(new_password)
+            cur.execute(
+                """
+                UPDATE users
+                SET password_hash = %s
+                WHERE user_id = %s
+                """,
+                (password_hash, user_id),
+            )
+        conn.commit()
+        return jsonify({'message': 'Password updated successfully.'}), 200
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to update password right now.'}), 500
     finally:
         if conn is not None:
             conn.close()
@@ -227,6 +567,127 @@ def login():
         return jsonify({'message': 'Login successful.', 'user': user_payload}), 200
     except Exception:
         return jsonify({'error': 'Unable to log in right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/forgot-password/request', methods=['POST'])
+def forgot_password_request():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+
+    if not email:
+        return jsonify({'error': 'Email is required.'}), 400
+
+    conn = None
+    reset_token = None
+    username = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, auth_provider, username
+                FROM users
+                WHERE email = %s
+                """,
+                (email,),
+            )
+            user_row = cur.fetchone()
+
+            if user_row and user_row[1] == 'local':
+                user_id = user_row[0]
+                username = user_row[2] or "there"
+                reset_token = secrets.token_urlsafe(32)
+                token_hash = hashlib.sha256(reset_token.encode("utf-8")).hexdigest()
+                expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+
+                cur.execute(
+                    """
+                    UPDATE user_verification_tokens
+                    SET used_at = %s
+                    WHERE user_id = %s
+                      AND purpose = 'password_reset'
+                      AND used_at IS NULL
+                    """,
+                    (datetime.now(timezone.utc), user_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO user_verification_tokens (user_id, purpose, token_hash, expires_at)
+                    VALUES (%s, 'password_reset', %s, %s)
+                    """,
+                    (user_id, token_hash, expires_at),
+                )
+        conn.commit()
+
+        if reset_token:
+            try:
+                send_forgot_password_link_email(email, username or "there", reset_token)
+            except Exception:
+                pass
+
+        # Always return generic success to avoid account enumeration.
+        return jsonify({
+            'message': 'If an account exists with this email, a reset link has been sent.'
+        }), 200
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to process request right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/forgot-password/verify', methods=['GET'])
+def forgot_password_verify():
+    token = (request.args.get("token") or "").strip()
+    if not token:
+        return redirect(url_for('dashboard', pwd_reset='invalid'))
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now_utc = datetime.now(timezone.utc)
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT u.user_id
+                FROM users u
+                JOIN user_verification_tokens t ON t.user_id = u.user_id
+                WHERE t.purpose = 'password_reset'
+                  AND t.token_hash = %s
+                  AND t.used_at IS NULL
+                  AND t.expires_at > %s
+                """,
+                (token_hash, now_utc),
+            )
+            row = cur.fetchone()
+            if not row:
+                return redirect(url_for('dashboard', pwd_reset='invalid'))
+
+            cur.execute(
+                """
+                UPDATE user_verification_tokens
+                SET used_at = %s
+                WHERE user_id = %s
+                  AND purpose = 'password_reset'
+                  AND token_hash = %s
+                  AND used_at IS NULL
+                """,
+                (now_utc, row[0], token_hash),
+            )
+            session["user_id"] = str(row[0])
+        conn.commit()
+        return redirect(url_for('dashboard', pwd_reset='success'))
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return redirect(url_for('dashboard', pwd_reset='error'))
     finally:
         if conn is not None:
             conn.close()
