@@ -10,6 +10,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Auth -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <!-- Google Fonts Icon -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
@@ -185,20 +187,6 @@
     <div class="flex-1 flex flex-col h-full min-w-0">
         <!-- Page Content Injection -->
         <main class="flex-1 overflow-auto bg-slate-50 relative min-w-0">
-            <div id="password-reset-banner" class="hidden sticky top-0 z-30 border-b border-sky-200 bg-sky-50 text-sky-800">
-                <div class="flex items-center gap-3 px-4 py-2">
-                    <i class="fa-solid fa-shield-halved text-sm"></i>
-                    <p class="flex-1 text-sm font-medium">
-                        You signed in through a password reset link. For security, please change your password now.
-                    </p>
-                    <button id="password-reset-change-btn" type="button" class="text-xs font-semibold underline underline-offset-2 hover:text-sky-900">
-                        Change password
-                    </button>
-                    <button id="password-reset-close-btn" type="button" class="h-7 w-7 rounded-full hover:bg-sky-100 transition-colors" aria-label="Dismiss password reset reminder">
-                        <i class="fa-solid fa-xmark text-sm"></i>
-                    </button>
-                </div>
-            </div>
             <div id="email-verify-banner" class="hidden sticky top-0 z-20 border-b border-amber-200 bg-amber-50 text-amber-800">
                 <div class="flex items-center gap-3 px-4 py-2">
                     <i class="fa-solid fa-triangle-exclamation text-sm"></i>

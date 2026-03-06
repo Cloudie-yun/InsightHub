@@ -10,13 +10,19 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 import os
+import re
 from urllib.parse import urljoin
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+import json
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 UPLOADS_DIR = Path(app.root_path) / "uploads"
 PREVIEW_DIR = UPLOADS_DIR / ".preview"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+STRONG_PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$")
 
 
 def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
@@ -107,6 +113,54 @@ def build_external_url(path: str) -> str:
         return urljoin(app_base_url.rstrip("/") + "/", path.lstrip("/"))
     return urljoin(request.url_root, path.lstrip("/"))
 
+
+def _sanitize_next_path(next_path: str) -> str:
+    if not next_path:
+        return "/dashboard"
+    next_path = next_path.strip()
+    if not next_path.startswith("/"):
+        return "/dashboard"
+    if next_path.startswith("//"):
+        return "/dashboard"
+    return next_path
+
+
+def _http_post_form(url: str, data: dict, timeout_seconds: int = 10) -> tuple[int, dict]:
+    encoded = urlencode(data).encode("utf-8")
+    req = Request(
+        url,
+        data=encoded,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=timeout_seconds) as resp:
+            payload = resp.read().decode("utf-8")
+            return resp.status, json.loads(payload) if payload else {}
+    except HTTPError as e:
+        try:
+            payload = e.read().decode("utf-8")
+            return e.code, json.loads(payload) if payload else {}
+        except Exception:
+            return e.code, {}
+    except (URLError, TimeoutError):
+        return 0, {}
+
+
+def _http_get_json(url: str, timeout_seconds: int = 10) -> tuple[int, dict]:
+    req = Request(url, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with urlopen(req, timeout=timeout_seconds) as resp:
+            payload = resp.read().decode("utf-8")
+            return resp.status, json.loads(payload) if payload else {}
+    except HTTPError as e:
+        try:
+            payload = e.read().decode("utf-8")
+            return e.code, json.loads(payload) if payload else {}
+        except Exception:
+            return e.code, {}
+    except (URLError, TimeoutError):
+        return 0, {}
 
 def send_signup_verification_email(to_email: str, username: str, token: str) -> None:
     verify_url = build_external_url(f"/api/auth/verify-email?token={token}")
@@ -228,6 +282,8 @@ def signup():
         return jsonify({'error': 'Email is required.'}), 400
     if not password:
         return jsonify({'error': 'Password is required.'}), 400
+    if not STRONG_PASSWORD_REGEX.match(password):
+        return jsonify({'error': 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'}), 400
 
     conn = None
     try:
@@ -255,6 +311,7 @@ def signup():
                 (created_user[0], token_hash, expires_at),
             )
         conn.commit()
+        session.pop("password_reset_user_id", None)
         session["user_id"] = str(created_user[0])
         user_payload = serialize_user_row(created_user)
         email_sent = True
@@ -473,6 +530,7 @@ def update_profile():
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     session.pop("user_id", None)
+    session.pop("password_reset_user_id", None)
     return jsonify({'message': 'Logged out.'}), 200
 
 
@@ -487,6 +545,8 @@ def change_password():
 
     if not new_password:
         return jsonify({'error': 'New password is required.'}), 400
+    if not STRONG_PASSWORD_REGEX.match(new_password):
+        return jsonify({'error': 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'}), 400
 
     conn = None
     try:
@@ -517,6 +577,7 @@ def change_password():
                 (password_hash, user_id),
             )
         conn.commit()
+        session.pop("password_reset_user_id", None)
         return jsonify({'message': 'Password updated successfully.'}), 200
     except Exception:
         if conn is not None:
@@ -563,6 +624,7 @@ def login():
             return jsonify({'error': 'Invalid email or password.'}), 401
 
         session["user_id"] = str(user_row[0])
+        session.pop("password_reset_user_id", None)
         user_payload = serialize_user_row(user_row[:5])
         return jsonify({'message': 'Login successful.', 'user': user_payload}), 200
     except Exception:
@@ -681,13 +743,73 @@ def forgot_password_verify():
                 """,
                 (now_utc, row[0], token_hash),
             )
-            session["user_id"] = str(row[0])
+            session.pop("password_reset_user_id", None)
+            session["password_reset_user_id"] = str(row[0])
         conn.commit()
-        return redirect(url_for('dashboard', pwd_reset='success'))
+        return redirect(url_for('dashboard', pwd_reset='verified'))
     except Exception:
         if conn is not None:
             conn.rollback()
         return redirect(url_for('dashboard', pwd_reset='error'))
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/forgot-password/reset', methods=['POST'])
+def forgot_password_reset():
+    pending_reset_user_id = session.get("password_reset_user_id")
+    if not pending_reset_user_id:
+        return jsonify({'error': 'Your reset session is invalid or expired. Please request a new reset link.'}), 401
+
+    data = request.get_json(silent=True) or {}
+    new_password = data.get('new_password') or ''
+
+    if not new_password:
+        return jsonify({'error': 'New password is required.'}), 400
+    if not STRONG_PASSWORD_REGEX.match(new_password):
+        return jsonify({'error': 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, auth_provider
+                FROM users
+                WHERE user_id = %s
+                """,
+                (pending_reset_user_id,),
+            )
+            user_row = cur.fetchone()
+            if not user_row:
+                session.pop("password_reset_user_id", None)
+                return jsonify({'error': 'User not found.'}), 404
+            if user_row[1] != 'local':
+                session.pop("password_reset_user_id", None)
+                return jsonify({'error': 'This account uses a different sign-in method.'}), 400
+
+            password_hash = generate_password_hash(new_password)
+            cur.execute(
+                """
+                UPDATE users
+                SET password_hash = %s
+                WHERE user_id = %s
+                RETURNING user_id, username, email, created_at, email_verified
+                """,
+                (password_hash, pending_reset_user_id),
+            )
+            updated_user = cur.fetchone()
+
+        conn.commit()
+        session.pop("password_reset_user_id", None)
+        session["user_id"] = str(updated_user[0])
+        return jsonify({'message': 'Password updated successfully.', 'user': serialize_user_row(updated_user)}), 200
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to update password right now.'}), 500
     finally:
         if conn is not None:
             conn.close()

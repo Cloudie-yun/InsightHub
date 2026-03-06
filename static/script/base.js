@@ -2,6 +2,7 @@ const authModal = document.getElementById("auth-modal");
 const loginForm = document.getElementById("auth-login");
 const signupForm = document.getElementById("auth-signup");
 const forgotForm = document.getElementById("auth-forgot");
+const resetForm = document.getElementById("auth-reset");
 const authTitle = document.getElementById("auth-title");
 const authSubtitle = document.getElementById("auth-subtitle");
 const userSection = document.getElementById("user-section");
@@ -18,34 +19,43 @@ const emailVerifyBadge = document.getElementById("email-verify-badge");
 const emailVerifyBanner = document.getElementById("email-verify-banner");
 const emailVerifyResendBtn = document.getElementById("email-verify-resend-btn");
 const emailVerifyResendStatus = document.getElementById("email-verify-resend-status");
-const passwordResetBanner = document.getElementById("password-reset-banner");
-const passwordResetCloseBtn = document.getElementById("password-reset-close-btn");
-const passwordResetChangeBtn = document.getElementById("password-reset-change-btn");
 const emailVerifyResultModal = document.getElementById("email-verify-result-modal");
 const emailVerifyResultTitle = document.getElementById("email-verify-result-title");
 const emailVerifyResultText = document.getElementById("email-verify-result-text");
 const emailVerifyResultIcon = document.getElementById("email-verify-result-icon");
 const emailVerifyResultBtn = document.getElementById("email-verify-result-btn");
+const loginSubmitBtn = document.getElementById("login-submit-btn");
+const loginSubmitText = document.getElementById("login-submit-text");
+const loginSubmitSpinner = document.getElementById("login-submit-spinner");
 const signupSubmitBtn = document.getElementById("signup-submit-btn");
 const signupSubmitText = document.getElementById("signup-submit-text");
 const signupSubmitSpinner = document.getElementById("signup-submit-spinner");
+const resetSubmitBtn = document.getElementById("reset-submit-btn");
+const resetSubmitText = document.getElementById("reset-submit-text");
+const resetSubmitSpinner = document.getElementById("reset-submit-spinner");
 let currentAuthUser = null;
 let isUserMenuOpen = false;
 
 // ========== TOAST NOTIFICATIONS ==========
-document.addEventListener("DOMContentLoaded", () => {
-    const message = sessionStorage.getItem("toastMessage");
-    if (!message) return;
-
+const showToast = (message) => {
     const toast = document.getElementById("toast-container");
+    if (!toast || !message) return;
+
     toast.textContent = message;
     toast.classList.remove("hidden");
-
-    sessionStorage.removeItem("toastMessage");
 
     setTimeout(() => {
         toast.classList.add("hidden");
     }, 3000);
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+    const message = sessionStorage.getItem("toastMessage");
+    if (!message) return;
+
+    showToast(message);
+
+    sessionStorage.removeItem("toastMessage");
 });
 
 // ========== CUSTOM PLACEHOLDER MANAGEMENT ==========
@@ -130,17 +140,21 @@ const resetAuthForms = () => {
     resetAuthFormState("auth-login");
     resetAuthFormState("auth-signup");
     resetAuthFormState("auth-forgot");
+    resetAuthFormState("auth-reset");
     resetPasswordToggleIcons();
     
-    // Reset password strength dropdown
-    const dropdown = document.getElementById('password-strength-dropdown');
-    if (dropdown) {
-        dropdown.classList.add('hidden');
-        resetPasswordStrengthIndicators();
-    }
+    const signupDropdown = document.getElementById('password-strength-dropdown');
+    if (signupDropdown) signupDropdown.classList.add('hidden');
+    const resetDropdown = document.getElementById('reset-password-strength-dropdown');
+    if (resetDropdown) resetDropdown.classList.add('hidden');
+    resetPasswordStrengthIndicators("signup");
+    resetPasswordStrengthIndicators("reset");
 
     resetForgotPasswordStep();
+    setLoginSubmitLoading(false);
     setSignupSubmitLoading(false);
+    setForgotSubmitLoading(false);
+    setResetSubmitLoading(false);
 };
 
 const setSignupSubmitLoading = (isLoading) => {
@@ -149,6 +163,30 @@ const setSignupSubmitLoading = (isLoading) => {
     signupSubmitBtn.setAttribute("aria-busy", isLoading ? "true" : "false");
     signupSubmitText.textContent = isLoading ? "Signing you up..." : "Sign Up";
     signupSubmitSpinner.classList.toggle("hidden", !isLoading);
+};
+
+const setLoginSubmitLoading = (isLoading) => {
+    if (!loginSubmitBtn || !loginSubmitText || !loginSubmitSpinner) return;
+    loginSubmitBtn.disabled = isLoading;
+    loginSubmitBtn.setAttribute("aria-busy", isLoading ? "true" : "false");
+    loginSubmitText.textContent = isLoading ? "Logging you in..." : "Log In";
+    loginSubmitSpinner.classList.toggle("hidden", !isLoading);
+};
+
+const setForgotSubmitLoading = (isLoading) => {
+    if (!forgotSubmitBtn || !forgotSubmitText || !forgotSubmitSpinner) return;
+    forgotSubmitBtn.disabled = isLoading;
+    forgotSubmitBtn.setAttribute("aria-busy", isLoading ? "true" : "false");
+    forgotSubmitText.textContent = isLoading ? "Sending reset link..." : forgotSubmitDefaultText;
+    forgotSubmitSpinner.classList.toggle("hidden", !isLoading);
+};
+
+const setResetSubmitLoading = (isLoading) => {
+    if (!resetSubmitBtn || !resetSubmitText || !resetSubmitSpinner) return;
+    resetSubmitBtn.disabled = isLoading;
+    resetSubmitBtn.setAttribute("aria-busy", isLoading ? "true" : "false");
+    resetSubmitText.textContent = isLoading ? "Resetting password..." : "Reset Password";
+    resetSubmitSpinner.classList.toggle("hidden", !isLoading);
 };
 
 const setEmailVerifyResendStatus = (message, isError = false) => {
@@ -176,10 +214,12 @@ const setAuthMode = (mode) => {
     const isLogin = mode === "login";
     const isSignup = mode === "signup";
     const isForgot = mode === "forgot";
+    const isReset = mode === "reset";
 
     loginForm.classList.toggle("hidden", !isLogin);
     signupForm.classList.toggle("hidden", !isSignup);
     forgotForm.classList.toggle("hidden", !isForgot);
+    resetForm.classList.toggle("hidden", !isReset);
 
     if (isLogin) {
         authTitle.textContent = "Welcome Back";
@@ -187,6 +227,9 @@ const setAuthMode = (mode) => {
     } else if (isSignup) {
         authTitle.textContent = "Create Your Account";
         authSubtitle.textContent = "Sign up in seconds";
+    } else if (isReset) {
+        authTitle.textContent = "Reset Password";
+        authSubtitle.textContent = "Set a new password for your account";
     } else {
         authTitle.textContent = "Forgot Password";
         authSubtitle.textContent = "Enter your email to receive a reset link";
@@ -209,6 +252,13 @@ const closeAuth = () => {
 
 document.querySelectorAll("[data-auth-open]").forEach((el) => {
     el.addEventListener("click", () => openAuth(el.dataset.authOpen));
+});
+
+document.querySelectorAll("[data-google-auth]").forEach((el) => {
+    el.addEventListener("click", () => {
+        const next = window.location.pathname;
+        window.location.href = `/api/auth/google/start?next=${encodeURIComponent(next)}`;
+    });
 });
 
 document.querySelectorAll("[data-auth-close]").forEach((el) => {
@@ -280,7 +330,10 @@ const showError = (input, errorId, show) => {
 // ========== FORGOT PASSWORD FLOW ==========
 const forgotEmailInput = document.getElementById("forgot-email");
 const forgotSubmitBtn = document.getElementById("forgot-submit-btn");
+const forgotSubmitText = document.getElementById("forgot-submit-text");
+const forgotSubmitSpinner = document.getElementById("forgot-submit-spinner");
 const forgotSuccess = document.getElementById("forgot-success");
+let forgotSubmitDefaultText = "Send Reset Link";
 
 const setAuthUiState = (user) => {
     currentAuthUser = user || null;
@@ -412,7 +465,8 @@ if (emailVerifyResendBtn) {
 }
 
 const resetForgotPasswordStep = () => {
-    if (forgotSubmitBtn) forgotSubmitBtn.textContent = "Send Reset Link";
+    forgotSubmitDefaultText = "Send Reset Link";
+    if (forgotSubmitText) forgotSubmitText.textContent = forgotSubmitDefaultText;
     if (forgotSuccess) forgotSuccess.classList.add("hidden");
 };
 
@@ -428,6 +482,14 @@ const hideAllErrorsForInput = (input) => {
 const passwordStrengthDropdown = document.getElementById('password-strength-dropdown');
 const signupPasswordInput = document.getElementById('signup-password');
 const signupPasswordField = signupPasswordInput ? signupPasswordInput.closest('.relative') : null;
+const resetPasswordStrengthDropdown = document.getElementById('reset-password-strength-dropdown');
+const resetPasswordInput = document.getElementById('reset-password');
+const resetPasswordField = resetPasswordInput ? resetPasswordInput.closest('.relative') : null;
+
+const passwordRequirementIdsByFlow = {
+    signup: ['pwd-length', 'pwd-uppercase', 'pwd-lowercase', 'pwd-number', 'pwd-special'],
+    reset: ['reset-pwd-length', 'reset-pwd-uppercase', 'reset-pwd-lowercase', 'reset-pwd-number', 'reset-pwd-special'],
+};
 
 const updatePasswordStrengthIndicator = (requirement, isValid) => {
     const element = document.getElementById(requirement);
@@ -449,24 +511,25 @@ const updatePasswordStrengthIndicator = (requirement, isValid) => {
     }
 };
 
-const resetPasswordStrengthIndicators = () => {
-    ['pwd-length', 'pwd-uppercase', 'pwd-lowercase', 'pwd-number', 'pwd-special'].forEach(req => {
+const resetPasswordStrengthIndicators = (flow = "signup") => {
+    (passwordRequirementIdsByFlow[flow] || []).forEach(req => {
         updatePasswordStrengthIndicator(req, false);
     });
 };
 
-const checkPasswordStrength = (password) => {
+const checkPasswordStrength = (password, flow = "signup") => {
     const hasLength = password.length >= 8;
     const hasUppercase = /[A-Z]/.test(password);
     const hasLowercase = /[a-z]/.test(password);
     const hasNumber = /\d/.test(password);
     const hasSpecial = /[^A-Za-z\d]/.test(password);
-    
-    updatePasswordStrengthIndicator('pwd-length', hasLength);
-    updatePasswordStrengthIndicator('pwd-uppercase', hasUppercase);
-    updatePasswordStrengthIndicator('pwd-lowercase', hasLowercase);
-    updatePasswordStrengthIndicator('pwd-number', hasNumber);
-    updatePasswordStrengthIndicator('pwd-special', hasSpecial);
+
+    const requirementIds = passwordRequirementIdsByFlow[flow] || [];
+    updatePasswordStrengthIndicator(requirementIds[0], hasLength);
+    updatePasswordStrengthIndicator(requirementIds[1], hasUppercase);
+    updatePasswordStrengthIndicator(requirementIds[2], hasLowercase);
+    updatePasswordStrengthIndicator(requirementIds[3], hasNumber);
+    updatePasswordStrengthIndicator(requirementIds[4], hasSpecial);
     
     return hasLength && hasUppercase && hasLowercase && hasNumber && hasSpecial;
 };
@@ -480,6 +543,17 @@ if (signupPasswordField && passwordStrengthDropdown) {
 
     signupPasswordField.addEventListener('mouseleave', () => {
         passwordStrengthDropdown.classList.add('hidden');
+    });
+}
+
+if (resetPasswordField && resetPasswordStrengthDropdown) {
+    resetPasswordField.addEventListener('mouseenter', () => {
+        resetPasswordStrengthDropdown.classList.remove('hidden');
+        hideAllErrorsForInput(resetPasswordInput);
+    });
+
+    resetPasswordField.addEventListener('mouseleave', () => {
+        resetPasswordStrengthDropdown.classList.add('hidden');
     });
 }
 
@@ -537,6 +611,7 @@ loginPasswordInput.addEventListener('input', () => {
 const signupNameInput = document.getElementById("signup-name");
 const signupEmailInput = document.getElementById("signup-email");
 const signupConfirmPasswordInput = document.getElementById("signup-confirm-password");
+const resetConfirmPasswordInput = document.getElementById("reset-confirm-password");
 
 signupNameInput.addEventListener('focus', () => {
     hideAllErrorsForInput(signupNameInput);
@@ -548,6 +623,12 @@ signupEmailInput.addEventListener('focus', () => {
 
 signupConfirmPasswordInput.addEventListener('focus', () => {
     hideAllErrorsForInput(signupConfirmPasswordInput);
+});
+resetPasswordInput.addEventListener('focus', () => {
+    hideAllErrorsForInput(resetPasswordInput);
+});
+resetConfirmPasswordInput.addEventListener('focus', () => {
+    hideAllErrorsForInput(resetConfirmPasswordInput);
 });
 
 signupNameInput.addEventListener('input', () => {
@@ -580,9 +661,9 @@ signupPasswordInput.addEventListener('input', () => {
     
     if (password.length === 0) {
         hideAllErrorsForInput(signupPasswordInput);
-        resetPasswordStrengthIndicators();
+        resetPasswordStrengthIndicators("signup");
     } else {
-        const isStrong = checkPasswordStrength(password);
+        const isStrong = checkPasswordStrength(password, "signup");
         
         // Auto-hide dropdown when all requirements are met
         if (isStrong) {
@@ -616,6 +697,47 @@ signupConfirmPasswordInput.addEventListener('input', () => {
         showError(signupConfirmPasswordInput, "signup-password-match-error", true);
     } else {
         hideAllErrorsForInput(signupConfirmPasswordInput);
+    }
+});
+
+resetPasswordInput.addEventListener('input', () => {
+    const password = resetPasswordInput.value;
+    const confirmPassword = resetConfirmPasswordInput.value;
+
+    if (password.length === 0) {
+        hideAllErrorsForInput(resetPasswordInput);
+        resetPasswordStrengthIndicators("reset");
+    } else {
+        const isStrong = checkPasswordStrength(password, "reset");
+        if (isStrong) {
+            setTimeout(() => {
+                if (document.activeElement !== resetPasswordInput && resetPasswordStrengthDropdown) {
+                    resetPasswordStrengthDropdown.classList.add('hidden');
+                }
+            }, 1000);
+        }
+        hideAllErrorsForInput(resetPasswordInput);
+    }
+
+    if (confirmPassword.length > 0) {
+        if (password !== confirmPassword) {
+            showError(resetConfirmPasswordInput, "reset-password-match-error", true);
+        } else {
+            hideAllErrorsForInput(resetConfirmPasswordInput);
+        }
+    }
+});
+
+resetConfirmPasswordInput.addEventListener('input', () => {
+    const password = resetPasswordInput.value;
+    const confirmPassword = resetConfirmPasswordInput.value;
+
+    if (confirmPassword.length === 0) {
+        hideAllErrorsForInput(resetConfirmPasswordInput);
+    } else if (password !== confirmPassword) {
+        showError(resetConfirmPasswordInput, "reset-password-match-error", true);
+    } else {
+        hideAllErrorsForInput(resetConfirmPasswordInput);
     }
 });
 
@@ -663,6 +785,7 @@ loginForm.addEventListener("submit", async (e) => {
 
     if (!isValid) return;
 
+    setLoginSubmitLoading(true);
     try {
         const response = await fetch("/api/auth/login", {
             method: "POST",
@@ -696,6 +819,8 @@ loginForm.addEventListener("submit", async (e) => {
     } catch (error) {
         showError(loginEmailInput, "login-email-error", true);
         document.getElementById("login-email-error").textContent = "Network error. Please try again.";
+    } finally {
+        setLoginSubmitLoading(false);
     }
 });
 
@@ -805,6 +930,7 @@ forgotForm.addEventListener("submit", async (e) => {
 
     if (!isValid) return;
 
+    setForgotSubmitLoading(true);
     try {
         const response = await fetch("/api/auth/forgot-password/request", {
             method: "POST",
@@ -823,11 +949,74 @@ forgotForm.addEventListener("submit", async (e) => {
         }
 
         if (forgotSuccess) forgotSuccess.classList.remove("hidden");
-        if (forgotSubmitBtn) forgotSubmitBtn.textContent = "Resend Reset Link";
+        forgotSubmitDefaultText = "Resend Reset Link";
+        if (forgotSubmitText) forgotSubmitText.textContent = forgotSubmitDefaultText;
     } catch (error) {
         showError(forgotEmailInput, "forgot-email-error", true);
         document.getElementById("forgot-email-error").textContent =
             "Network error. Please try again.";
+    } finally {
+        setForgotSubmitLoading(false);
+    }
+});
+
+resetForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearFormErrors("auth-reset");
+
+    const password = resetPasswordInput.value;
+    const confirmPassword = resetConfirmPasswordInput.value;
+    let isValid = true;
+
+    if (!password.trim()) {
+        showError(resetPasswordInput, "reset-password-error", true);
+        isValid = false;
+    } else if (!strongPasswordRegex.test(password)) {
+        showError(resetPasswordInput, "reset-password-strength-error", true);
+        isValid = false;
+    }
+
+    if (!confirmPassword.trim()) {
+        showError(resetConfirmPasswordInput, "reset-confirm-password-error", true);
+        isValid = false;
+    } else if (password !== confirmPassword) {
+        showError(resetConfirmPasswordInput, "reset-password-match-error", true);
+        isValid = false;
+    }
+
+    if (!isValid) return;
+
+    setResetSubmitLoading(true);
+    try {
+        const response = await fetch("/api/auth/forgot-password/reset", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ new_password: password }),
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+            showError(resetPasswordInput, "reset-password-error", true);
+            document.getElementById("reset-password-error").textContent =
+                payload.error || "Unable to reset password. Please request a new reset link.";
+            return;
+        }
+
+        setAuthUiState({
+            ...payload.user,
+            email_verified: Boolean(payload.user?.email_verified),
+        });
+        closeAuth();
+        sessionStorage.setItem("toastMessage", "Password changed successfully. You are now logged in.");
+        window.location.href = "/dashboard";
+    } catch (error) {
+        showError(resetPasswordInput, "reset-password-error", true);
+        document.getElementById("reset-password-error").textContent =
+            "Network error. Please try again.";
+    } finally {
+        setResetSubmitLoading(false);
     }
 });
 
@@ -890,61 +1079,40 @@ syncConvoCaret();
 const params = new URLSearchParams(window.location.search);
 const emailVerifiedStatus = params.get("email_verified");
 const passwordResetStatus = params.get("pwd_reset");
+const googleAuthStatus = params.get("google_auth");
 if (emailVerifiedStatus) {
     openEmailVerifyResultModal(emailVerifiedStatus);
     params.delete("email_verified");
 }
-if (passwordResetStatus === "success" && passwordResetBanner) {
-    passwordResetBanner.classList.remove("hidden");
+if (googleAuthStatus === "success") {
+    showToast("Signed in with Google.");
+    params.delete("google_auth");
+} else if (googleAuthStatus === "conflict") {
+    showToast("This email already has a password sign-in. Please log in with email + password.");
+    openAuth("login");
+    params.delete("google_auth");
+} else if (googleAuthStatus === "error") {
+    showToast("Google sign-in failed. Please try again.");
+    openAuth("login");
+    params.delete("google_auth");
+}
+if (passwordResetStatus === "verified") {
+    openAuth("reset");
+} else if (passwordResetStatus === "invalid") {
+    openAuth("forgot");
+    showError(forgotEmailInput, "forgot-email-error", true);
+    document.getElementById("forgot-email-error").textContent =
+        "Reset link is invalid or expired. Request a new one.";
+} else if (passwordResetStatus === "error") {
+    openAuth("forgot");
+    showError(forgotEmailInput, "forgot-email-error", true);
+    document.getElementById("forgot-email-error").textContent =
+        "Unable to verify reset link right now. Please try again.";
 }
 params.delete("pwd_reset");
 const query = params.toString();
 const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
 window.history.replaceState({}, "", nextUrl);
-
-if (passwordResetCloseBtn && passwordResetBanner) {
-    passwordResetCloseBtn.addEventListener("click", () => {
-        passwordResetBanner.classList.add("hidden");
-    });
-}
-
-if (passwordResetChangeBtn) {
-    passwordResetChangeBtn.addEventListener("click", async () => {
-        const newPassword = window.prompt("Enter your new password:");
-        if (!newPassword) return;
-
-        if (!strongPasswordRegex.test(newPassword)) {
-            window.alert("Password must be at least 8 characters and include uppercase, lowercase, number, and special character.");
-            return;
-        }
-
-        const confirmPassword = window.prompt("Confirm your new password:");
-        if (newPassword !== confirmPassword) {
-            window.alert("Passwords do not match.");
-            return;
-        }
-
-        try {
-            const response = await fetch("/api/auth/change-password", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ new_password: newPassword }),
-            });
-            const payload = await response.json();
-            if (!response.ok) {
-                window.alert(payload.error || "Unable to change password right now.");
-                return;
-            }
-
-            if (passwordResetBanner) passwordResetBanner.classList.add("hidden");
-            window.alert("Password changed successfully.");
-        } catch (error) {
-            window.alert("Network error. Please try again.");
-        }
-    });
-}
 
 sidebarToggle.addEventListener("click", () => {
     setUserMenuOpen(false);
