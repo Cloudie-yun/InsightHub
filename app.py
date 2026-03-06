@@ -16,6 +16,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import json
+import logging
+
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -23,7 +25,6 @@ UPLOADS_DIR = Path(app.root_path) / "uploads"
 PREVIEW_DIR = UPLOADS_DIR / ".preview"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 STRONG_PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$")
-
 
 def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
     # Try docx2pdf first (uses Word on Windows), then fallback to LibreOffice.
@@ -125,6 +126,47 @@ def _sanitize_next_path(next_path: str) -> str:
     return next_path
 
 
+def _google_redirect_uri() -> str:
+    configured = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip()
+    if configured:
+        return configured
+    return build_external_url("/api/auth/google/callback")
+
+
+def _build_google_return_url(next_path: str, status: str) -> str:
+    safe_next = _sanitize_next_path(next_path)
+    separator = "&" if "?" in safe_next else "?"
+    return f"{safe_next}{separator}{urlencode({'google_auth': status})}"
+
+
+def _google_username_from_profile(name: str, email: str) -> str:
+    candidate = (name or "").strip()
+    if not candidate and email and "@" in email:
+        candidate = email.split("@", 1)[0]
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "", candidate)
+    if not cleaned:
+        cleaned = "user"
+    return cleaned[:50]
+
+
+def _pick_unique_username(cur, base_username: str) -> str:
+    base = (base_username or "user").strip()[:50] or "user"
+    cur.execute("SELECT 1 FROM users WHERE username = %s", (base,))
+    if not cur.fetchone():
+        return base
+
+    for _ in range(20):
+        suffix = secrets.token_hex(2)
+        max_base_len = max(1, 50 - len(suffix) - 1)
+        candidate = f"{base[:max_base_len]}_{suffix}"
+        cur.execute("SELECT 1 FROM users WHERE username = %s", (candidate,))
+        if not cur.fetchone():
+            return candidate
+
+    # Extremely unlikely fallback.
+    return f"user_{secrets.token_hex(4)}"
+
+
 def _http_post_form(url: str, data: dict, timeout_seconds: int = 10) -> tuple[int, dict]:
     encoded = urlencode(data).encode("utf-8")
     req = Request(
@@ -161,6 +203,147 @@ def _http_get_json(url: str, timeout_seconds: int = 10) -> tuple[int, dict]:
             return e.code, {}
     except (URLError, TimeoutError):
         return 0, {}
+
+
+@app.route('/api/auth/google/start', methods=['GET'])
+def google_auth_start():
+    google_client_id = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
+    google_client_secret = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip()
+    next_path = _sanitize_next_path(request.args.get("next") or "/dashboard")
+
+    if not google_client_id or not google_client_secret:
+        return redirect(_build_google_return_url(next_path, "error"))
+
+    oauth_state = secrets.token_urlsafe(32)
+    session["google_oauth_state"] = oauth_state
+    session["google_oauth_next"] = next_path
+
+    auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    auth_params = {
+        "client_id": google_client_id,
+        "redirect_uri": _google_redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": oauth_state,
+        "prompt": "select_account",
+    }
+    return redirect(f"{auth_url}?{urlencode(auth_params)}")
+
+
+@app.route('/api/auth/google/callback', methods=['GET'])
+def google_auth_callback():
+    error = (request.args.get("error") or "").strip()
+    code = (request.args.get("code") or "").strip()
+    returned_state = (request.args.get("state") or "").strip()
+
+    expected_state = session.pop("google_oauth_state", None)
+    next_path = _sanitize_next_path(session.pop("google_oauth_next", "/dashboard"))
+    logger = logging.getLogger(__name__)
+    
+    if error or not code or not expected_state or returned_state != expected_state:
+        logger.error("Google OAuth state error: error=%s code=%s expected_state=%s returned_state=%s",
+                    error, code, expected_state, returned_state)
+        return redirect(_build_google_return_url(next_path, "error"))
+
+    google_client_id = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
+    google_client_secret = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip()
+    if not google_client_id or not google_client_secret:
+        return redirect(_build_google_return_url(next_path, "error"))
+
+    token_status, token_payload = _http_post_form(
+        "https://oauth2.googleapis.com/token",
+        {
+            "code": code,
+            "client_id": google_client_id,
+            "client_secret": google_client_secret,
+            "redirect_uri": _google_redirect_uri(),
+            "grant_type": "authorization_code",
+        },
+    )
+    access_token = (token_payload or {}).get("access_token")
+    if token_status != 200 or not access_token:
+        logger.error("Google token exchange failed: status=%s payload=%s",
+                    token_status, token_payload)
+        return redirect(_build_google_return_url(next_path, "error"))
+
+    userinfo_status, userinfo_payload = _http_get_json(
+        f"https://openidconnect.googleapis.com/v1/userinfo?{urlencode({'access_token': access_token})}"
+    )
+    if userinfo_status != 200:
+        logger.error("Google userinfo fetch failed: status=%s payload=%s",
+                    userinfo_status, userinfo_payload)
+        return redirect(_build_google_return_url(next_path, "error"))
+
+    email = (userinfo_payload.get("email") or "").strip().lower()
+    if not email:
+        return redirect(_build_google_return_url(next_path, "error"))
+
+    email_verified = userinfo_payload.get("email_verified")
+    if isinstance(email_verified, str):
+        email_verified = email_verified.lower() == "true"
+    if not bool(email_verified):
+        logger.error("Google account email not verified: %s", email)
+        return redirect(_build_google_return_url(next_path, "error"))
+    profile_name = (userinfo_payload.get("name") or "").strip()
+    google_sub = (userinfo_payload.get("sub") or "").strip()
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, username, email, created_at, email_verified, auth_provider
+                FROM users
+                WHERE email = %s
+                """,
+                (email,),
+            )
+            user_row = cur.fetchone()
+
+            if user_row and user_row[5] != 'google':
+                return redirect(_build_google_return_url(next_path, "conflict"))
+
+            if not user_row:
+                base_username = _google_username_from_profile(profile_name, email)
+                username = _pick_unique_username(cur, base_username)
+                cur.execute(
+                    """
+                    INSERT INTO users (username, email, auth_provider, google_sub, password_hash, email_verified)
+                    VALUES (%s, %s, 'google', %s, NULL, TRUE)
+                    RETURNING user_id, username, email, created_at, email_verified
+                    """,
+                    (username, email, google_sub),
+                )
+                selected_user = cur.fetchone()
+            else:
+                if not bool(user_row[4]):
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET email_verified = TRUE
+                        WHERE user_id = %s
+                        RETURNING user_id, username, email, created_at, email_verified
+                        """,
+                        (user_row[0],),
+                    )
+                    selected_user = cur.fetchone()
+                else:
+                    selected_user = user_row[:5]
+        conn.commit()
+        session["user_id"] = str(selected_user[0])
+        session.pop("password_reset_user_id", None)
+        return redirect(_build_google_return_url(next_path, "success"))
+    except Exception as e:
+        logger.exception("Google OAuth callback failed")
+        if conn is not None:
+            conn.rollback()
+        return redirect(_build_google_return_url(next_path, "error"))
+    finally:
+        if conn is not None:
+            conn.close()
+
+print("Google client id:", os.getenv("GOOGLE_CLIENT_ID"))
+print("Google redirect:", _google_redirect_uri())
 
 def send_signup_verification_email(to_email: str, username: str, token: str) -> None:
     verify_url = build_external_url(f"/api/auth/verify-email?token={token}")

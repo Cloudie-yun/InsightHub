@@ -37,25 +37,139 @@ let currentAuthUser = null;
 let isUserMenuOpen = false;
 
 // ========== TOAST NOTIFICATIONS ==========
-const showToast = (message) => {
-    const toast = document.getElementById("toast-container");
-    if (!toast || !message) return;
+const toastContainer = document.getElementById("toast-container");
+const TOAST_DEFAULT_DURATION_MS = 4500;
+const TOAST_TYPE_CONFIG = {
+    info: {
+        title: "Info",
+        iconClass: "fa-solid fa-circle-info",
+        borderClass: "border-l-brand-500",
+        iconWrapClass: "bg-brand-100 text-brand-700",
+    },
+    success: {
+        title: "Success",
+        iconClass: "fa-solid fa-circle-check",
+        borderClass: "border-l-emerald-500",
+        iconWrapClass: "bg-emerald-100 text-emerald-700",
+    },
+    warning: {
+        title: "Warning",
+        iconClass: "fa-solid fa-triangle-exclamation",
+        borderClass: "border-l-amber-500",
+        iconWrapClass: "bg-amber-100 text-amber-700",
+    },
+    error: {
+        title: "Error",
+        iconClass: "fa-solid fa-circle-xmark",
+        borderClass: "border-l-red-500",
+        iconWrapClass: "bg-red-100 text-red-700",
+    },
+};
 
-    toast.textContent = message;
-    toast.classList.remove("hidden");
+const removeToast = (toastEl) => {
+    if (!toastEl || !toastEl.parentElement) return;
+    toastEl.classList.remove("opacity-100", "translate-y-0", "scale-100");
+    toastEl.classList.add("opacity-0", "-translate-y-2", "scale-[0.98]");
+    window.setTimeout(() => {
+        toastEl.remove();
+    }, 220);
+};
 
-    setTimeout(() => {
-        toast.classList.add("hidden");
-    }, 3000);
+const showToast = (input, options = {}) => {
+    if (!toastContainer) return;
+
+    const payload = typeof input === "string" ? { message: input, ...options } : (input || {});
+    const message = String(payload.message || "").trim();
+    if (!message) return;
+
+    const typeKey = TOAST_TYPE_CONFIG[payload.type] ? payload.type : "info";
+    const config = TOAST_TYPE_CONFIG[typeKey];
+    const title = String(payload.title || config.title);
+    const duration = Number(payload.duration || TOAST_DEFAULT_DURATION_MS);
+
+    const toastEl = document.createElement("article");
+    toastEl.className = [
+        "pointer-events-auto",
+        "relative",
+        "w-full",
+        "rounded-xl",
+        "border",
+        "border-slate-200",
+        "border-l-4",
+        config.borderClass,
+        "bg-white/95",
+        "backdrop-blur",
+        "shadow-lg",
+        "px-3",
+        "py-3",
+        "transition-all",
+        "duration-200",
+        "opacity-0",
+        "-translate-y-2",
+        "scale-[0.98]",
+    ].join(" ");
+
+    const rowEl = document.createElement("div");
+    rowEl.className = "flex items-start gap-3";
+
+    const iconWrapEl = document.createElement("div");
+    iconWrapEl.className = `mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${config.iconWrapClass}`;
+    const iconEl = document.createElement("i");
+    iconEl.className = `${config.iconClass} text-sm`;
+    iconWrapEl.appendChild(iconEl);
+
+    const contentEl = document.createElement("div");
+    contentEl.className = "min-w-0 flex-1";
+
+    const titleEl = document.createElement("p");
+    titleEl.className = "truncate text-sm font-semibold text-slate-900";
+    titleEl.textContent = title;
+
+    const messageEl = document.createElement("p");
+    messageEl.className = "mt-0.5 text-sm leading-5 text-slate-600";
+    messageEl.textContent = message;
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "mt-0.5 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors";
+    closeBtn.setAttribute("aria-label", "Dismiss notification");
+    closeBtn.innerHTML = '<i class="fa-solid fa-xmark text-xs"></i>';
+    closeBtn.addEventListener("click", () => removeToast(toastEl));
+
+    contentEl.appendChild(titleEl);
+    contentEl.appendChild(messageEl);
+    rowEl.appendChild(iconWrapEl);
+    rowEl.appendChild(contentEl);
+    rowEl.appendChild(closeBtn);
+    toastEl.appendChild(rowEl);
+    toastContainer.appendChild(toastEl);
+
+    window.requestAnimationFrame(() => {
+        toastEl.classList.remove("opacity-0", "-translate-y-2", "scale-[0.98]");
+        toastEl.classList.add("opacity-100", "translate-y-0", "scale-100");
+    });
+
+    if (Number.isFinite(duration) && duration > 0) {
+        window.setTimeout(() => removeToast(toastEl), duration);
+    }
+};
+
+window.toast = {
+    info: (message, opts = {}) => showToast({ type: "info", message, ...opts }),
+    success: (message, opts = {}) => showToast({ type: "success", message, ...opts }),
+    warning: (message, opts = {}) => showToast({ type: "warning", message, ...opts }),
+    error: (message, opts = {}) => showToast({ type: "error", message, ...opts }),
+    show: showToast,
 };
 
 document.addEventListener("DOMContentLoaded", () => {
     const message = sessionStorage.getItem("toastMessage");
-    if (!message) return;
-
-    showToast(message);
-
+    const type = sessionStorage.getItem("toastType") || "info";
+    if (message) {
+        showToast({ type, message });
+    }
     sessionStorage.removeItem("toastMessage");
+    sessionStorage.removeItem("toastType");
 });
 
 // ========== CUSTOM PLACEHOLDER MANAGEMENT ==========
@@ -428,6 +542,7 @@ if (userLogoutBtn) {
             setUserMenuOpen(false);
 
             sessionStorage.setItem("toastMessage", "You have logged out successfully.");
+            sessionStorage.setItem("toastType", "success");
 
             window.location.href = "/dashboard";
         } catch (error) {
@@ -1010,6 +1125,7 @@ resetForm.addEventListener("submit", async (e) => {
         });
         closeAuth();
         sessionStorage.setItem("toastMessage", "Password changed successfully. You are now logged in.");
+        sessionStorage.setItem("toastType", "success");
         window.location.href = "/dashboard";
     } catch (error) {
         showError(resetPasswordInput, "reset-password-error", true);
@@ -1085,14 +1201,19 @@ if (emailVerifiedStatus) {
     params.delete("email_verified");
 }
 if (googleAuthStatus === "success") {
-    showToast("Signed in with Google.");
+    showToast({ type: "success", title: "Signed In", message: "Signed in with Google." });
     params.delete("google_auth");
 } else if (googleAuthStatus === "conflict") {
-    showToast("This email already has a password sign-in. Please log in with email + password.");
+    showToast({
+        type: "warning",
+        title: "Use Existing Sign-In",
+        message: "This email already has a password sign-in. Please log in with email and password.",
+        duration: 6000,
+    });
     openAuth("login");
     params.delete("google_auth");
 } else if (googleAuthStatus === "error") {
-    showToast("Google sign-in failed. Please try again.");
+    showToast({ type: "error", title: "Google Sign-In Failed", message: "Please try again." });
     openAuth("login");
     params.delete("google_auth");
 }
