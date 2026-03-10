@@ -16,7 +16,7 @@
             <!-- Login -->
             <form id="auth-login" class="space-y-5">
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Email</label>
+                    <label for="login-email" class="block text-base font-semibold text-slate-600 mb-1">Email</label>
                     <div class="relative">
                         <input id="login-email" type="email" autocomplete="username" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none transition-all duration-200">
@@ -26,7 +26,7 @@
                     <span id="login-email-error" class="hidden mt-1 text-sm text-red-500">Please enter a valid email.</span>
                 </div>
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Password</label>
+                    <label for="login-password" class="block text-base font-semibold text-slate-600 mb-1">Password</label>
                     <div class="relative">
                         <input id="login-password" type="password" autocomplete="current-password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder password-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
@@ -72,7 +72,7 @@
             <!-- Signup -->
             <form id="auth-signup" class="space-y-4 hidden">
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Username</label>
+                    <label for="signup-name" class="block text-base font-semibold text-slate-600 mb-1">Username</label>
                     <div class="relative">
                         <input id="signup-name" type="text" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none transition-all duration-200">
@@ -82,7 +82,7 @@
                     <span id="signup-name-error" class="hidden mt-1 text-sm text-red-500">You need to provide a user name.</span>
                 </div>
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Email</label>
+                    <label for="signup-email" class="block text-base font-semibold text-slate-600 mb-1">Email</label>
                     <div class="relative">
                         <input id="signup-email" type="email" autocomplete="username" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none transition-all duration-200">
@@ -92,7 +92,7 @@
                     <span id="signup-email-error" class="hidden mt-1 text-sm text-red-500">Please enter a valid email.</span>
                 </div>
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Password</label>
+                    <label for="signup-password" class="block text-base font-semibold text-slate-600 mb-1">Password</label>
                     <div class="relative">
                         <input id="signup-password" type="password" autocomplete="new-password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder password-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
@@ -140,7 +140,7 @@
                     <span id="signup-password-strength-error" class="hidden mt-1 text-sm text-red-500">Password must be at least 8 characters and include uppercase, lowercase, number, and special character.</span>
                 </div>
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Confirm Password</label>
+                    <label for="signup-confirm-password" class="block text-base font-semibold text-slate-600 mb-1">Confirm Password</label>
                     <div class="relative">
                         <input id="signup-confirm-password" type="password" autocomplete="new-password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder password-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
@@ -182,7 +182,7 @@
             <!-- Forgot Password -->
             <form id="auth-forgot" class="space-y-5 hidden">
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Email</label>
+                    <label for="forgot-email" class="block text-base font-semibold text-slate-600 mb-1">Email</label>
                     <div class="relative">
                         <input id="forgot-email" type="email" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none transition-all duration-200">
@@ -210,9 +210,8 @@
             <!-- Reset Password -->
             <form id="auth-reset" class="space-y-4 hidden">
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">New Password</label>
+                    <label for="reset-password" class="block text-base font-semibold text-slate-600 mb-1">New Password</label>
                     <div class="relative">
-                        <form id="auth-reset" class="space-y-4 hidden">
                         <!-- Hidden username/email for accessibility & password managers -->
                         <input type="email" name="username" id="reset-email-hidden" autocomplete="username" class="hidden">
                         <input id="reset-password" type="password" autocomplete="new-password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
@@ -260,7 +259,7 @@
                     <span id="reset-password-strength-error" class="hidden mt-1 text-sm text-red-500">Password must be at least 8 characters and include uppercase, lowercase, number, and special character.</span>
                 </div>
                 <div>
-                    <label class="block text-base font-semibold text-slate-600 mb-1">Confirm Password</label>
+                    <label for="reset-confirm-password" class="block text-base font-semibold text-slate-600 mb-1">Confirm Password</label>
                     <div class="relative">
                         <input id="reset-confirm-password" type="password" autocomplete="new-password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 peer">
                         <span class="custom-placeholder password-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">

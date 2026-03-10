@@ -25,6 +25,7 @@ UPLOADS_DIR = Path(app.root_path) / "uploads"
 PREVIEW_DIR = UPLOADS_DIR / ".preview"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 STRONG_PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$")
+PASSWORD_POLICY_ERROR = "Password must be at least 8 characters and include uppercase, lowercase, number, and special character."
 
 def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
     # Try docx2pdf first (uses Word on Windows), then fallback to LibreOffice.
@@ -342,9 +343,6 @@ def google_auth_callback():
         if conn is not None:
             conn.close()
 
-print("Google client id:", os.getenv("GOOGLE_CLIENT_ID"))
-print("Google redirect:", _google_redirect_uri())
-
 def send_signup_verification_email(to_email: str, username: str, token: str) -> None:
     verify_url = build_external_url(f"/api/auth/verify-email?token={token}")
     subject = "Verify your InsightHub email"
@@ -432,7 +430,7 @@ def send_forgot_password_link_email(to_email: str, username: str, token: str) ->
 
 @app.route('/')
 def root():
-    return render_template('dashboard.html', active_page='dashboard')
+    return dashboard()
 
 @app.route('/dashboard')
 def dashboard():
@@ -466,7 +464,7 @@ def signup():
     if not password:
         return jsonify({'error': 'Password is required.'}), 400
     if not STRONG_PASSWORD_REGEX.match(password):
-        return jsonify({'error': 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'}), 400
+        return jsonify({'error': PASSWORD_POLICY_ERROR}), 400
 
     conn = None
     try:
@@ -521,7 +519,7 @@ def signup():
         # Other integrity issues, like CHECK constraint failures
         if conn is not None:
             conn.rollback()
-        print("Integrity error:", e)
+        logging.getLogger(__name__).warning("Integrity error during signup: %s", e)
         return jsonify({'error': 'Invalid signup data.'}), 400
     except Exception:
         if conn is not None:
@@ -729,7 +727,7 @@ def change_password():
     if not new_password:
         return jsonify({'error': 'New password is required.'}), 400
     if not STRONG_PASSWORD_REGEX.match(new_password):
-        return jsonify({'error': 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'}), 400
+        return jsonify({'error': PASSWORD_POLICY_ERROR}), 400
 
     conn = None
     try:
@@ -951,7 +949,7 @@ def forgot_password_reset():
     if not new_password:
         return jsonify({'error': 'New password is required.'}), 400
     if not STRONG_PASSWORD_REGEX.match(new_password):
-        return jsonify({'error': 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'}), 400
+        return jsonify({'error': PASSWORD_POLICY_ERROR}), 400
 
     conn = None
     try:

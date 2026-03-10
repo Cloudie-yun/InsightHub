@@ -380,8 +380,10 @@ document.querySelectorAll("[data-auth-close]").forEach((el) => {
 });
 
 document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeAuth();
-    if (e.key === "Escape") setUserMenuOpen(false);
+    if (e.key !== "Escape") return;
+    closeAuth();
+    closeEmailVerifyResultModal();
+    setUserMenuOpen(false);
 });
 
 const openEmailVerifyResultModal = (status) => {
@@ -423,10 +425,6 @@ document.querySelectorAll("[data-email-verify-close]").forEach((el) => {
 if (emailVerifyResultBtn) {
     emailVerifyResultBtn.addEventListener("click", closeEmailVerifyResultModal);
 }
-document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeEmailVerifyResultModal();
-    if (e.key === "Escape") setUserMenuOpen(false);
-});
 
 // ========== VALIDATION ==========
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -501,19 +499,12 @@ if (userEditProfileBtn) {
         }
 
         try {
-            const response = await fetch("/api/auth/profile", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ username: nextName }),
-            });
-            const payload = await response.json();
+            const { response, payload } = await postJson("/api/auth/profile", { username: nextName });
             if (!response.ok) {
                 window.alert(payload.error || "Unable to update profile right now.");
                 return;
             }
-            setAuthUiState(payload.user);
+            setAuthFromPayload(payload);
             window.alert("Profile updated.");
         } catch (error) {
             window.alert("Network error. Please try again.");
@@ -526,13 +517,7 @@ if (userEditProfileBtn) {
 if (userLogoutBtn) {
     userLogoutBtn.addEventListener("click", async () => {
         try {
-            const response = await fetch("/api/auth/logout", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-            });
-            const payload = await response.json();
+            const { response, payload } = await postJson("/api/auth/logout");
             if (!response.ok) {
                 window.alert(payload.error || "Unable to log out right now.");
                 return;
@@ -559,13 +544,7 @@ if (emailVerifyResendBtn) {
         setEmailVerifyResendStatus("Sending...");
 
         try {
-            const response = await fetch("/api/auth/resend-verification", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-            });
-            const payload = await response.json();
+            const { response, payload } = await postJson("/api/auth/resend-verification");
             if (!response.ok) {
                 setEmailVerifyResendStatus(payload.error || "Failed to resend email.", true);
                 return;
@@ -586,11 +565,114 @@ const resetForgotPasswordStep = () => {
 };
 
 const hideAllErrorsForInput = (input) => {
+    if (!input) return;
     const inputId = input.id;
     document.querySelectorAll(`span[id^="${inputId}-"]`).forEach(error => {
         error.classList.add("hidden");
     });
     input.classList.remove("auth-input-error");
+};
+
+const setFieldError = (input, errorId, message = "") => {
+    showError(input, errorId, true);
+    if (!message) return;
+    const errorEl = document.getElementById(errorId);
+    if (errorEl) errorEl.textContent = message;
+};
+
+const normalizeAuthUser = (user) => ({
+    ...(user || {}),
+    email_verified: Boolean(user?.email_verified),
+});
+
+const setAuthFromPayload = (payload) => {
+    setAuthUiState(normalizeAuthUser(payload?.user));
+};
+
+const postJson = async (url, body) => {
+    const requestOptions = {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+    };
+    if (body !== undefined) {
+        requestOptions.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, requestOptions);
+    let payload = {};
+    try {
+        payload = await response.json();
+    } catch (error) {
+        payload = {};
+    }
+    return { response, payload };
+};
+
+const bindHideErrorsOnFocus = (inputs) => {
+    inputs.filter(Boolean).forEach((input) => {
+        input.addEventListener("focus", () => hideAllErrorsForInput(input));
+    });
+};
+
+const bindLiveEmailValidation = (input, errorId) => {
+    if (!input) return;
+    input.addEventListener("input", () => {
+        const email = input.value.trim();
+        if (!email || emailRegex.test(email)) {
+            hideAllErrorsForInput(input);
+            return;
+        }
+        setFieldError(input, errorId, "Please enter a valid email.");
+    });
+};
+
+const bindPasswordPairValidation = ({
+    passwordInput,
+    confirmInput,
+    flow,
+    dropdown,
+    matchErrorId,
+}) => {
+    if (!passwordInput || !confirmInput) return;
+
+    passwordInput.addEventListener("input", () => {
+        const password = passwordInput.value;
+        const confirmPassword = confirmInput.value;
+
+        if (!password) {
+            hideAllErrorsForInput(passwordInput);
+            resetPasswordStrengthIndicators(flow);
+        } else {
+            const isStrong = checkPasswordStrength(password, flow);
+            if (isStrong && dropdown) {
+                setTimeout(() => {
+                    if (document.activeElement !== passwordInput) {
+                        dropdown.classList.add("hidden");
+                    }
+                }, 1000);
+            }
+            hideAllErrorsForInput(passwordInput);
+        }
+
+        if (confirmPassword.length > 0) {
+            if (password !== confirmPassword) {
+                setFieldError(confirmInput, matchErrorId);
+                return;
+            }
+            hideAllErrorsForInput(confirmInput);
+        }
+    });
+
+    confirmInput.addEventListener("input", () => {
+        const password = passwordInput.value;
+        const confirmPassword = confirmInput.value;
+        if (!confirmPassword || password === confirmPassword) {
+            hideAllErrorsForInput(confirmInput);
+            return;
+        }
+        setFieldError(confirmInput, matchErrorId);
+    });
 };
 
 // ========== PASSWORD STRENGTH INDICATOR ==========
@@ -687,191 +769,54 @@ document.querySelectorAll(".auth-password-toggle").forEach((button) => {
     });
 });
 
-// ========== REAL-TIME VALIDATION - LOGIN ==========
+// ========== REAL-TIME VALIDATION ==========
 const loginEmailInput = document.getElementById("login-email");
 const loginPasswordInput = document.getElementById("login-password");
-
-loginEmailInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(loginEmailInput);
-});
-
-loginPasswordInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(loginPasswordInput);
-});
-
-loginEmailInput.addEventListener('input', () => {
-    const email = loginEmailInput.value.trim();
-    
-    if (email.length === 0) {
-        hideAllErrorsForInput(loginEmailInput);
-    } else if (!emailRegex.test(email)) {
-        showError(loginEmailInput, "login-email-error", true);
-        document.getElementById("login-email-error").textContent = "Please enter a valid email.";
-    } else {
-        hideAllErrorsForInput(loginEmailInput);
-    }
-});
-
-loginPasswordInput.addEventListener('input', () => {
-    const password = loginPasswordInput.value;
-    
-    if (password.length === 0) {
-        hideAllErrorsForInput(loginPasswordInput);
-    } else {
-        hideAllErrorsForInput(loginPasswordInput);
-    }
-});
-
-// ========== REAL-TIME VALIDATION - SIGNUP ==========
 const signupNameInput = document.getElementById("signup-name");
 const signupEmailInput = document.getElementById("signup-email");
 const signupConfirmPasswordInput = document.getElementById("signup-confirm-password");
 const resetConfirmPasswordInput = document.getElementById("reset-confirm-password");
 
-signupNameInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(signupNameInput);
-});
+bindHideErrorsOnFocus([
+    loginEmailInput,
+    loginPasswordInput,
+    signupNameInput,
+    signupEmailInput,
+    signupConfirmPasswordInput,
+    resetPasswordInput,
+    resetConfirmPasswordInput,
+    forgotEmailInput,
+]);
 
-signupEmailInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(signupEmailInput);
-});
+if (loginPasswordInput) {
+    loginPasswordInput.addEventListener("input", () => {
+        hideAllErrorsForInput(loginPasswordInput);
+    });
+}
 
-signupConfirmPasswordInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(signupConfirmPasswordInput);
-});
-resetPasswordInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(resetPasswordInput);
-});
-resetConfirmPasswordInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(resetConfirmPasswordInput);
-});
-
-signupNameInput.addEventListener('input', () => {
-    const name = signupNameInput.value.trim();
-    
-    if (name.length === 0) {
+if (signupNameInput) {
+    signupNameInput.addEventListener("input", () => {
         hideAllErrorsForInput(signupNameInput);
-    } else {
-        hideAllErrorsForInput(signupNameInput);
-    }
+    });
+}
+
+bindLiveEmailValidation(loginEmailInput, "login-email-error");
+bindLiveEmailValidation(signupEmailInput, "signup-email-error");
+bindLiveEmailValidation(forgotEmailInput, "forgot-email-error");
+
+bindPasswordPairValidation({
+    passwordInput: signupPasswordInput,
+    confirmInput: signupConfirmPasswordInput,
+    flow: "signup",
+    dropdown: passwordStrengthDropdown,
+    matchErrorId: "signup-password-match-error",
 });
-
-signupEmailInput.addEventListener('input', () => {
-    const email = signupEmailInput.value.trim();
-    
-    if (email.length === 0) {
-        hideAllErrorsForInput(signupEmailInput);
-    } else if (!emailRegex.test(email)) {
-        showError(signupEmailInput, "signup-email-error", true);
-        document.getElementById("signup-email-error").textContent = "Please enter a valid email.";
-    } else {
-        hideAllErrorsForInput(signupEmailInput);
-    }
-});
-
-// Password validation with strength indicator
-signupPasswordInput.addEventListener('input', () => {
-    const password = signupPasswordInput.value;
-    const confirmPassword = signupConfirmPasswordInput.value;
-    
-    if (password.length === 0) {
-        hideAllErrorsForInput(signupPasswordInput);
-        resetPasswordStrengthIndicators("signup");
-    } else {
-        const isStrong = checkPasswordStrength(password, "signup");
-        
-        // Auto-hide dropdown when all requirements are met
-        if (isStrong) {
-            setTimeout(() => {
-                if (document.activeElement !== signupPasswordInput) {
-                    passwordStrengthDropdown.classList.add('hidden');
-                }
-            }, 1000);
-        }
-        
-        hideAllErrorsForInput(signupPasswordInput);
-    }
-    
-    // Also validate confirm password if it has content
-    if (confirmPassword.length > 0) {
-        if (password !== confirmPassword) {
-            showError(signupConfirmPasswordInput, "signup-password-match-error", true);
-        } else {
-            hideAllErrorsForInput(signupConfirmPasswordInput);
-        }
-    }
-});
-
-signupConfirmPasswordInput.addEventListener('input', () => {
-    const password = signupPasswordInput.value;
-    const confirmPassword = signupConfirmPasswordInput.value;
-    
-    if (confirmPassword.length === 0) {
-        hideAllErrorsForInput(signupConfirmPasswordInput);
-    } else if (password !== confirmPassword) {
-        showError(signupConfirmPasswordInput, "signup-password-match-error", true);
-    } else {
-        hideAllErrorsForInput(signupConfirmPasswordInput);
-    }
-});
-
-resetPasswordInput.addEventListener('input', () => {
-    const password = resetPasswordInput.value;
-    const confirmPassword = resetConfirmPasswordInput.value;
-
-    if (password.length === 0) {
-        hideAllErrorsForInput(resetPasswordInput);
-        resetPasswordStrengthIndicators("reset");
-    } else {
-        const isStrong = checkPasswordStrength(password, "reset");
-        if (isStrong) {
-            setTimeout(() => {
-                if (document.activeElement !== resetPasswordInput && resetPasswordStrengthDropdown) {
-                    resetPasswordStrengthDropdown.classList.add('hidden');
-                }
-            }, 1000);
-        }
-        hideAllErrorsForInput(resetPasswordInput);
-    }
-
-    if (confirmPassword.length > 0) {
-        if (password !== confirmPassword) {
-            showError(resetConfirmPasswordInput, "reset-password-match-error", true);
-        } else {
-            hideAllErrorsForInput(resetConfirmPasswordInput);
-        }
-    }
-});
-
-resetConfirmPasswordInput.addEventListener('input', () => {
-    const password = resetPasswordInput.value;
-    const confirmPassword = resetConfirmPasswordInput.value;
-
-    if (confirmPassword.length === 0) {
-        hideAllErrorsForInput(resetConfirmPasswordInput);
-    } else if (password !== confirmPassword) {
-        showError(resetConfirmPasswordInput, "reset-password-match-error", true);
-    } else {
-        hideAllErrorsForInput(resetConfirmPasswordInput);
-    }
-});
-
-// ========== REAL-TIME VALIDATION - FORGOT PASSWORD ==========
-forgotEmailInput.addEventListener('focus', () => {
-    hideAllErrorsForInput(forgotEmailInput);
-});
-
-forgotEmailInput.addEventListener('input', () => {
-    const email = forgotEmailInput.value.trim();
-
-    if (email.length === 0) {
-        hideAllErrorsForInput(forgotEmailInput);
-    } else if (!emailRegex.test(email)) {
-        showError(forgotEmailInput, "forgot-email-error", true);
-        document.getElementById("forgot-email-error").textContent = "Please enter a valid email.";
-    } else {
-        hideAllErrorsForInput(forgotEmailInput);
-    }
+bindPasswordPairValidation({
+    passwordInput: resetPasswordInput,
+    confirmInput: resetConfirmPasswordInput,
+    flow: "reset",
+    dropdown: resetPasswordStrengthDropdown,
+    matchErrorId: "reset-password-match-error",
 });
 
 // ========== LOGIN FORM SUBMISSION ==========
@@ -884,17 +829,15 @@ loginForm.addEventListener("submit", async (e) => {
     let isValid = true;
 
     if (!email) {
-        showError(loginEmailInput, "login-email-error", true);
-        document.getElementById("login-email-error").textContent = "Please enter your email.";
+        setFieldError(loginEmailInput, "login-email-error", "Please enter your email.");
         isValid = false;
     } else if (!emailRegex.test(email)) {
-        showError(loginEmailInput, "login-email-error", true);
-        document.getElementById("login-email-error").textContent = "Please enter a valid email.";
+        setFieldError(loginEmailInput, "login-email-error", "Please enter a valid email.");
         isValid = false;
     }
 
     if (!password.trim()) {
-        showError(loginPasswordInput, "login-password-error", true);
+        setFieldError(loginPasswordInput, "login-password-error");
         isValid = false;
     }
 
@@ -902,38 +845,21 @@ loginForm.addEventListener("submit", async (e) => {
 
     setLoginSubmitLoading(true);
     try {
-        const response = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                email,
-                password,
-            }),
-        });
-
-        const payload = await response.json();
+        const { response, payload } = await postJson("/api/auth/login", { email, password });
         if (!response.ok) {
             if (response.status === 401) {
-                showError(loginPasswordInput, "login-password-error", true);
-                document.getElementById("login-password-error").textContent = payload.error || "Invalid email or password.";
+                setFieldError(loginPasswordInput, "login-password-error", payload.error || "Invalid email or password.");
                 return;
             }
 
-            showError(loginEmailInput, "login-email-error", true);
-            document.getElementById("login-email-error").textContent = payload.error || "Login failed. Please try again.";
+            setFieldError(loginEmailInput, "login-email-error", payload.error || "Login failed. Please try again.");
             return;
         }
 
-        setAuthUiState({
-            ...payload.user,
-            email_verified: Boolean(payload.user?.email_verified),
-        });
+        setAuthFromPayload(payload);
         closeAuth();
     } catch (error) {
-        showError(loginEmailInput, "login-email-error", true);
-        document.getElementById("login-email-error").textContent = "Network error. Please try again.";
+        setFieldError(loginEmailInput, "login-email-error", "Network error. Please try again.");
     } finally {
         setLoginSubmitLoading(false);
     }
@@ -951,33 +877,31 @@ signupForm.addEventListener("submit", async (e) => {
     let isValid = true;
 
     if (!name) {
-        showError(signupNameInput, "signup-name-error", true);
+        setFieldError(signupNameInput, "signup-name-error");
         isValid = false;
     }
 
     if (!email) {
-        showError(signupEmailInput, "signup-email-error", true);
-        document.getElementById("signup-email-error").textContent = "Please enter your email.";
+        setFieldError(signupEmailInput, "signup-email-error", "Please enter your email.");
         isValid = false;
     } else if (!emailRegex.test(email)) {
-        showError(signupEmailInput, "signup-email-error", true);
-        document.getElementById("signup-email-error").textContent = "Please enter a valid email.";
+        setFieldError(signupEmailInput, "signup-email-error", "Please enter a valid email.");
         isValid = false;
     }
 
     if (!password.trim()) {
-        showError(signupPasswordInput, "signup-password-error", true);
+        setFieldError(signupPasswordInput, "signup-password-error");
         isValid = false;
     } else if (!strongPasswordRegex.test(password)) {
-        showError(signupPasswordInput, "signup-password-strength-error", true);
+        setFieldError(signupPasswordInput, "signup-password-strength-error");
         isValid = false;
     }
 
     if (!confirmPassword.trim()) {
-        showError(signupConfirmPasswordInput, "signup-confirm-password-error", true);
+        setFieldError(signupConfirmPasswordInput, "signup-confirm-password-error");
         isValid = false;
     } else if (password !== confirmPassword) {
-        showError(signupConfirmPasswordInput, "signup-password-match-error", true);
+        setFieldError(signupConfirmPasswordInput, "signup-password-match-error");
         isValid = false;
     }
 
@@ -985,40 +909,25 @@ signupForm.addEventListener("submit", async (e) => {
 
     setSignupSubmitLoading(true);
     try {
-        const response = await fetch("/api/auth/signup", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                username: name,
-                email,
-                password,
-            }),
+        const { response, payload } = await postJson("/api/auth/signup", {
+            username: name,
+            email,
+            password,
         });
-
-        const payload = await response.json();
         if (!response.ok) {
             if (response.status === 409) {
-                showError(signupEmailInput, "signup-email-error", true);
-                document.getElementById("signup-email-error").textContent = payload.error || "An account with this email already exists.";
+                setFieldError(signupEmailInput, "signup-email-error", payload.error || "An account with this email already exists.");
                 return;
             }
 
-            showError(signupEmailInput, "signup-email-error", true);
-            document.getElementById("signup-email-error").textContent = payload.error || "Signup failed. Please try again.";
+            setFieldError(signupEmailInput, "signup-email-error", payload.error || "Signup failed. Please try again.");
             return;
         }
 
-        console.log("Signup successful:", payload.user);
-        setAuthUiState({
-            ...payload.user,
-            email_verified: Boolean(payload.user?.email_verified),
-        });
+        setAuthFromPayload(payload);
         closeAuth();
     } catch (error) {
-        showError(signupEmailInput, "signup-email-error", true);
-        document.getElementById("signup-email-error").textContent = "Network error. Please try again.";
+        setFieldError(signupEmailInput, "signup-email-error", "Network error. Please try again.");
     } finally {
         setSignupSubmitLoading(false);
     }
@@ -1034,12 +943,10 @@ forgotForm.addEventListener("submit", async (e) => {
     let isValid = true;
 
     if (!email) {
-        showError(forgotEmailInput, "forgot-email-error", true);
-        document.getElementById("forgot-email-error").textContent = "Please enter your email.";
+        setFieldError(forgotEmailInput, "forgot-email-error", "Please enter your email.");
         isValid = false;
     } else if (!emailRegex.test(email)) {
-        showError(forgotEmailInput, "forgot-email-error", true);
-        document.getElementById("forgot-email-error").textContent = "Please enter a valid email.";
+        setFieldError(forgotEmailInput, "forgot-email-error", "Please enter a valid email.");
         isValid = false;
     }
 
@@ -1047,19 +954,10 @@ forgotForm.addEventListener("submit", async (e) => {
 
     setForgotSubmitLoading(true);
     try {
-        const response = await fetch("/api/auth/forgot-password/request", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ email }),
-        });
-        const payload = await response.json();
+        const { response, payload } = await postJson("/api/auth/forgot-password/request", { email });
 
         if (!response.ok) {
-            showError(forgotEmailInput, "forgot-email-error", true);
-            document.getElementById("forgot-email-error").textContent =
-                payload.error || "Unable to send reset link. Please try again.";
+            setFieldError(forgotEmailInput, "forgot-email-error", payload.error || "Unable to send reset link. Please try again.");
             return;
         }
 
@@ -1067,9 +965,7 @@ forgotForm.addEventListener("submit", async (e) => {
         forgotSubmitDefaultText = "Resend Reset Link";
         if (forgotSubmitText) forgotSubmitText.textContent = forgotSubmitDefaultText;
     } catch (error) {
-        showError(forgotEmailInput, "forgot-email-error", true);
-        document.getElementById("forgot-email-error").textContent =
-            "Network error. Please try again.";
+        setFieldError(forgotEmailInput, "forgot-email-error", "Network error. Please try again.");
     } finally {
         setForgotSubmitLoading(false);
     }
@@ -1084,18 +980,18 @@ resetForm.addEventListener("submit", async (e) => {
     let isValid = true;
 
     if (!password.trim()) {
-        showError(resetPasswordInput, "reset-password-error", true);
+        setFieldError(resetPasswordInput, "reset-password-error");
         isValid = false;
     } else if (!strongPasswordRegex.test(password)) {
-        showError(resetPasswordInput, "reset-password-strength-error", true);
+        setFieldError(resetPasswordInput, "reset-password-strength-error");
         isValid = false;
     }
 
     if (!confirmPassword.trim()) {
-        showError(resetConfirmPasswordInput, "reset-confirm-password-error", true);
+        setFieldError(resetConfirmPasswordInput, "reset-confirm-password-error");
         isValid = false;
     } else if (password !== confirmPassword) {
-        showError(resetConfirmPasswordInput, "reset-password-match-error", true);
+        setFieldError(resetConfirmPasswordInput, "reset-password-match-error");
         isValid = false;
     }
 
@@ -1103,34 +999,24 @@ resetForm.addEventListener("submit", async (e) => {
 
     setResetSubmitLoading(true);
     try {
-        const response = await fetch("/api/auth/forgot-password/reset", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ new_password: password }),
-        });
-        const payload = await response.json();
+        const { response, payload } = await postJson("/api/auth/forgot-password/reset", { new_password: password });
 
         if (!response.ok) {
-            showError(resetPasswordInput, "reset-password-error", true);
-            document.getElementById("reset-password-error").textContent =
-                payload.error || "Unable to reset password. Please request a new reset link.";
+            setFieldError(
+                resetPasswordInput,
+                "reset-password-error",
+                payload.error || "Unable to reset password. Please request a new reset link."
+            );
             return;
         }
 
-        setAuthUiState({
-            ...payload.user,
-            email_verified: Boolean(payload.user?.email_verified),
-        });
+        setAuthFromPayload(payload);
         closeAuth();
         sessionStorage.setItem("toastMessage", "Password changed successfully. You are now logged in.");
         sessionStorage.setItem("toastType", "success");
         window.location.href = "/dashboard";
     } catch (error) {
-        showError(resetPasswordInput, "reset-password-error", true);
-        document.getElementById("reset-password-error").textContent =
-            "Network error. Please try again.";
+        setFieldError(resetPasswordInput, "reset-password-error", "Network error. Please try again.");
     } finally {
         setResetSubmitLoading(false);
     }
@@ -1147,10 +1033,7 @@ const sidebarToggle = document.getElementById("sidebar-toggle");
 const convoToggle = document.getElementById("convo-toggle");
 const convoSubmenu = document.getElementById("convo-submenu");
 const convoCaret = document.getElementById("convo-caret");
-const themeLightRadio = document.getElementById("theme-light");
-const themeDarkRadio = document.getElementById("theme-dark");
-const themeLightOption = document.getElementById("theme-light-option");
-const themeDarkOption = document.getElementById("theme-dark-option");
+const themeToggle = document.getElementById("theme-toggle");
 
 const syncConvoCaret = () => {
     const isOpen = !convoSubmenu.classList.contains("hidden");
@@ -1158,11 +1041,8 @@ const syncConvoCaret = () => {
 };
 
 const syncThemeOptions = (theme) => {
-    const isDark = theme === "dark";
-    themeLightOption.classList.toggle("active", !isDark);
-    themeDarkOption.classList.toggle("active", isDark);
-    themeLightRadio.checked = !isDark;
-    themeDarkRadio.checked = isDark;
+    if (!themeToggle) return;
+    themeToggle.checked = theme !== "dark";
 };
 
 const applyTheme = (theme, persist = true) => {
@@ -1250,11 +1130,10 @@ convoToggle.addEventListener("click", () => {
     syncConvoCaret();
 });
 
-themeLightRadio.addEventListener("change", () => {
-    if (themeLightRadio.checked) applyTheme("light");
-});
-themeDarkRadio.addEventListener("change", () => {
-    if (themeDarkRadio.checked) applyTheme("dark");
-});
+if (themeToggle) {
+    themeToggle.addEventListener("change", () => {
+        applyTheme(themeToggle.checked ? "light" : "dark");
+    });
+}
 
 setAuthUiState(window.__AUTH_USER__ || null);
