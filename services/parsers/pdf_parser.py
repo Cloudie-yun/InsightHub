@@ -9,6 +9,15 @@ def _dependency_error(package_name):
     }
 
 
+def _segment_sort_key(segment):
+    return (
+        segment.get("source_index", 0),
+        segment.get("block_index", 0),
+        segment.get("paragraph_index", 0),
+        segment.get("segment_id", ""),
+    )
+
+
 def parse_pdf(file_path):
     try:
         import fitz
@@ -38,13 +47,17 @@ def parse_pdf(file_path):
             segments.append(
                 {
                     "segment_id": f"pdf-page-{page_index}",
-                    "type": "page",
-                    "page_number": page_index,
+                    "source_type": "page",
+                    "source_index": page_index,
                     "text": text,
-                    "metadata": {"char_count": len(text)},
+                    "metadata": {
+                        "char_count": len(text),
+                        "parser_adapter": "pdf",
+                    },
                 }
             )
 
+        segments.sort(key=_segment_sort_key)
         return {"segments": segments, "metadata": metadata, "errors": []}
     except Exception as exc:
         return {

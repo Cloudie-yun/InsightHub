@@ -9,6 +9,15 @@ def _dependency_error(package_name):
     }
 
 
+def _segment_sort_key(segment):
+    return (
+        segment.get("source_index", 0),
+        segment.get("block_index", 0),
+        segment.get("paragraph_index", 0),
+        segment.get("segment_id", ""),
+    )
+
+
 def parse_pptx(file_path):
     try:
         from pptx import Presentation
@@ -32,12 +41,17 @@ def parse_pptx(file_path):
 
         for slide_index, slide in enumerate(presentation.slides, start=1):
             slide_text_parts = []
-            for shape in slide.shapes:
+            for shape in sorted(slide.shapes, key=lambda current_shape: current_shape.shape_id):
                 if not hasattr(shape, "text"):
                     continue
                 text = (shape.text or "").strip()
                 if text:
                     slide_text_parts.append(text)
+
+            if slide.has_notes_slide and slide.notes_slide and slide.notes_slide.notes_text_frame:
+                notes_text = (slide.notes_slide.notes_text_frame.text or "").strip()
+                if notes_text:
+                    slide_text_parts.append(notes_text)
 
             if not slide_text_parts:
                 continue
@@ -46,16 +60,18 @@ def parse_pptx(file_path):
             segments.append(
                 {
                     "segment_id": f"pptx-slide-{slide_index}",
-                    "type": "slide",
-                    "slide_number": slide_index,
+                    "source_type": "slide",
+                    "source_index": slide_index,
                     "text": slide_text,
                     "metadata": {
                         "shape_text_count": len(slide_text_parts),
                         "char_count": len(slide_text),
+                        "parser_adapter": "pptx",
                     },
                 }
             )
 
+        segments.sort(key=_segment_sort_key)
         return {"segments": segments, "metadata": metadata, "errors": []}
     except Exception as exc:
         return {

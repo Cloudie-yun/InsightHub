@@ -24,6 +24,20 @@ PARSER_BY_TYPE = {
 }
 
 
+def _segment_sort_key(segment):
+    source_type_order = {
+        "page": 0,
+        "slide": 1,
+    }
+    return (
+        source_type_order.get(segment.get("source_type"), 99),
+        segment.get("source_index", 0),
+        segment.get("block_index", 0),
+        segment.get("paragraph_index", 0),
+        segment.get("segment_id", ""),
+    )
+
+
 def build_parser_error(code, message, details=None):
     return {
         "code": code,
@@ -89,7 +103,7 @@ def parse_document(file_path, document_id=None, mime_type=None, original_filenam
             return result
 
         parser_result = parser(file_path)
-        result["segments"] = parser_result.get("segments", [])
+        result["segments"] = sorted(parser_result.get("segments", []), key=_segment_sort_key)
         result["metadata"] = parser_result.get("metadata", {})
         errors = parser_result.get("errors", [])
         if errors:
