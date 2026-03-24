@@ -491,6 +491,7 @@ const createSourceDetailedItem = (documentPayload) => {
     article.className = "group rounded-xl border border-gray-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 transition-colors cursor-pointer";
     article.dataset.docFile = documentPayload.upload_path;
     article.dataset.docTitle = documentPayload.original_filename;
+    article.dataset.docId = documentPayload.document_id || "";
     const row = document.createElement("div");
     row.className = "flex items-center gap-3 px-3 py-2.5";
 
@@ -506,6 +507,22 @@ const createSourceDetailedItem = (documentPayload) => {
     nameText.textContent = documentPayload.original_filename;
     nameWrap.appendChild(nameText);
 
+    const parseLink = document.createElement("a");
+    parseLink.className = "h-7 px-2 inline-flex items-center rounded-lg border border-gray-200 text-xs text-slate-500 hover:text-brand-700 hover:border-brand-300 hover:bg-brand-50";
+    parseLink.title = "Inspect parser results";
+    parseLink.textContent = "Parse";
+    if (documentPayload.document_id) {
+        const params = new URLSearchParams();
+        if (currentConversationId) {
+            params.set("conversation_id", currentConversationId);
+        }
+        const queryString = params.toString();
+        parseLink.href = `/documents/${encodeURIComponent(documentPayload.document_id)}/parser-results${queryString ? `?${queryString}` : ""}`;
+    } else {
+        parseLink.href = "#";
+        parseLink.classList.add("pointer-events-none", "opacity-60");
+    }
+
     const selectButton = document.createElement("button");
     selectButton.type = "button";
     selectButton.className = "h-7 w-7 rounded-lg border text-xs transition-colors";
@@ -517,6 +534,7 @@ const createSourceDetailedItem = (documentPayload) => {
 
     row.appendChild(iconWrap);
     row.appendChild(nameWrap);
+    row.appendChild(parseLink);
     row.appendChild(selectButton);
     article.appendChild(row);
     sourcesDetailedList.prepend(article);

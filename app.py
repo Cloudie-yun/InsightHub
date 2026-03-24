@@ -100,6 +100,17 @@ def _compose_upload_conversation_title(file_names):
 
 def _serialize_dashboard_conversation(row):
     updated_at = row[2]
+    documents = row[5] or []
+    serialized_documents = []
+    for doc in documents:
+        if not isinstance(doc, dict):
+            continue
+        serialized_documents.append(
+            {
+                "document_id": str(doc.get("document_id") or ""),
+                "original_filename": doc.get("original_filename") or "",
+            }
+        )
     return {
         "id": str(row[0]),
         "title": (row[1] or "Untitled conversation").strip() or "Untitled conversation",
@@ -107,6 +118,7 @@ def _serialize_dashboard_conversation(row):
         "formatted_date": updated_at.strftime("%b %d, %Y") if updated_at else "",
         "source_count": int(row[3] or 0),
         "sources_joined": row[4] or "",
+        "documents": [doc for doc in serialized_documents if doc["document_id"]],
     }
 
 
@@ -210,6 +222,76 @@ def get_extracted_document_result(user_id, document_id, conversation_id=None):
                 document_id=document_id,
                 conversation_id=conversation_id,
             )
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_document_parser_result(user_id, document_id, conversation_id=None):
+    if not user_id or not document_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if conversation_id:
+                cur.execute(
+                    """
+                    SELECT
+                        d.document_id,
+                        d.original_filename,
+                        d.file_extension,
+                        d.mime_type
+                    FROM conversations c
+                    JOIN conversation_documents cd
+                        ON cd.conversation_id = c.conversation_id
+                    JOIN documents d
+                        ON d.document_id = cd.document_id
+                    WHERE c.user_id = %s
+                      AND c.conversation_id = %s
+                      AND d.document_id = %s
+                      AND d.is_deleted = FALSE
+                    LIMIT 1
+                    """,
+                    (user_id, conversation_id, document_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT
+                        document_id,
+                        original_filename,
+                        file_extension,
+                        mime_type
+                    FROM documents
+                    WHERE user_id = %s
+                      AND document_id = %s
+                      AND is_deleted = FALSE
+                    LIMIT 1
+                    """,
+                    (user_id, document_id),
+                )
+
+            document_row = cur.fetchone()
+            if not document_row:
+                return None
+
+            extraction_payload = fetch_document_extraction(
+                cur,
+                document_id=document_id,
+                conversation_id=conversation_id,
+            ) or build_pending_extraction_payload(document_id=document_id)
+
+            return {
+                "document_id": str(document_row[0]),
+                "original_filename": document_row[1] or "",
+                "file_extension": document_row[2] or "",
+                "mime_type": document_row[3] or "",
+                "parser_result": extraction_payload,
+            }
     except Exception:
         return None
     finally:
@@ -671,7 +753,16 @@ def dashboard():
                             STRING_AGG(d.original_filename, ' | ' ORDER BY d.created_at)
                             FILTER (WHERE d.document_id IS NOT NULL),
                             ''
-                        ) AS sources_joined
+                        ) AS sources_joined,
+                        COALESCE(
+                            JSONB_AGG(
+                                DISTINCT JSONB_BUILD_OBJECT(
+                                    'document_id', d.document_id,
+                                    'original_filename', d.original_filename
+                                )
+                            ) FILTER (WHERE d.document_id IS NOT NULL),
+                            '[]'::jsonb
+                        ) AS documents
                     FROM conversations c
                     LEFT JOIN conversation_documents cd
                         ON cd.conversation_id = c.conversation_id
@@ -710,6 +801,29 @@ def chat():
         current_conversation_id=current_conversation_id,
         highlight_new_conversation=highlight_new_conversation,
         conversation_documents=conversation_documents,
+    )
+
+
+@app.route('/documents/<document_id>/parser-results')
+def document_parser_results(document_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return redirect(url_for("dashboard"))
+
+    conversation_id = (request.args.get("conversation_id") or "").strip() or None
+    document_result = get_document_parser_result(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if not document_result:
+        abort(404)
+
+    return render_template(
+        "document_parser_results.html",
+        active_page="chat",
+        parser_document=document_result,
+        parser_json=json.dumps(document_result, indent=2),
     )
 
 @app.route('/flashcards')
@@ -1615,6 +1729,24 @@ def upload_documents():
     finally:
         if conn is not None:
             conn.close()
+
+
+@app.route('/api/documents/<document_id>/parser-results', methods=['GET'])
+def api_document_parser_results(document_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to view parser results.'}), 401
+
+    conversation_id = (request.args.get("conversation_id") or "").strip() or None
+    document_result = get_document_parser_result(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if not document_result:
+        return jsonify({'error': 'Document not found.'}), 404
+
+    return jsonify(document_result), 200
 
 
 @app.route('/uploads/<path:filename>')
