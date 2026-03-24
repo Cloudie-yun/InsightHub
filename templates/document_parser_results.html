@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="p-6 md:p-8 max-w-6xl mx-auto space-y-6">
+    <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900">Document Parser Results</h1>
+            <p class="text-sm text-slate-500">Inspect extraction output for debugging parser quality.</p>
+        </div>
+        <a
+            href="{{ url_for('chat') }}{% if request.args.get('conversation_id') %}?conversation_id={{ request.args.get('conversation_id') }}{% endif %}"
+            class="inline-flex items-center gap-2 self-start rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-gray-50"
+        >
+            <i class="fa-solid fa-arrow-left"></i>
+            Back to chat
+        </a>
+    </header>
+
+    <section class="grid gap-4 md:grid-cols-3">
+        <article class="rounded-xl border border-gray-200 bg-white p-4">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Filename</p>
+            <p class="mt-1 text-sm font-medium text-slate-800 break-all">{{ parser_document.original_filename }}</p>
+        </article>
+        <article class="rounded-xl border border-gray-200 bg-white p-4">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Type</p>
+            <p class="mt-1 text-sm font-medium text-slate-800">
+                {{ parser_document.parser_result.file_type or parser_document.file_extension or parser_document.mime_type or 'Unknown' }}
+            </p>
+        </article>
+        <article class="rounded-xl border border-gray-200 bg-white p-4">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Parse status</p>
+            <p class="mt-1 text-sm font-semibold {% if parser_document.parser_result.parser_status == 'success' %}text-emerald-700{% elif parser_document.parser_result.parser_status == 'failed' %}text-red-700{% else %}text-amber-700{% endif %}">
+                {{ parser_document.parser_result.parser_status or 'unknown' }}
+            </p>
+        </article>
+    </section>
+
+    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
+        <div class="flex items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold text-slate-900">Extracted Segments</h2>
+            <span class="text-xs text-slate-500">{{ parser_document.parser_result.segments|length }} segments</span>
+        </div>
+        <div id="parser-segments" class="mt-4 space-y-4"></div>
+    </section>
+
+    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
+        <div class="flex items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold text-slate-900">Extraction JSON</h2>
+            <div class="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
+                <button id="show-normalized" type="button" class="px-3 py-1.5 text-sm rounded-md bg-white shadow-sm text-slate-800">Normalized</button>
+                <button id="show-raw" type="button" class="px-3 py-1.5 text-sm rounded-md text-slate-500">Raw</button>
+            </div>
+        </div>
+        <pre id="normalized-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs"></pre>
+        <pre id="raw-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs hidden">{{ parser_json }}</pre>
+    </section>
+</div>
+
+<script>
+(() => {
+    const parserDocument = {{ parser_document|tojson }};
+    const segments = Array.isArray(parserDocument?.parser_result?.segments)
+        ? parserDocument.parser_result.segments
+        : [];
+
+    const groupedSegments = segments.reduce((acc, segment) => {
+        const sourceType = segment?.source_type || "page";
+        const sourceIndex = Number.isFinite(segment?.source_index)
+            ? segment.source_index
+            : (segment?.source_index ?? "unknown");
+        const key = `${sourceType}:${sourceIndex}`;
+        if (!acc[key]) {
+            acc[key] = {
+                source_type: sourceType,
+                source_index: sourceIndex,
+                segments: [],
+            };
+        }
+        acc[key].segments.push(segment);
+        return acc;
+    }, {});
+
+    const groups = Object.values(groupedSegments).sort((a, b) => {
+        const aIndex = Number(a.source_index);
+        const bIndex = Number(b.source_index);
+        if (Number.isFinite(aIndex) && Number.isFinite(bIndex)) {
+            return aIndex - bIndex;
+        }
+        return String(a.source_index).localeCompare(String(b.source_index));
+    });
+
+    const container = document.getElementById("parser-segments");
+    if (container) {
+        if (!groups.length) {
+            container.innerHTML = '<p class="text-sm text-slate-500">No extraction segments available.</p>';
+        } else {
+            container.innerHTML = groups.map((group) => {
+                const heading = `${group.source_type || "source"} ${group.source_index}`;
+                const rows = group.segments.map((segment) => {
+                    const sourceIndex = segment?.source_index ?? "-";
+                    const text = (segment?.text || "").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+                    return `
+                        <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
+                            <div class="flex items-center justify-between text-xs text-slate-500">
+                                <span>source index: ${sourceIndex}</span>
+                                <span>segment index: ${segment?.segment_index ?? "-"}</span>
+                            </div>
+                            <p class="mt-2 whitespace-pre-wrap text-sm text-slate-700">${text || "(empty)"}</p>
+                        </article>
+                    `;
+                }).join("");
+
+                return `
+                    <section class="rounded-xl border border-gray-200 p-3 md:p-4">
+                        <h3 class="text-sm font-semibold text-slate-800 uppercase tracking-wide">${heading}</h3>
+                        <div class="mt-3 space-y-2">${rows}</div>
+                    </section>
+                `;
+            }).join("");
+        }
+    }
+
+    const normalizedPre = document.getElementById("normalized-json");
+    const rawPre = document.getElementById("raw-json");
+    const normalizedBtn = document.getElementById("show-normalized");
+    const rawBtn = document.getElementById("show-raw");
+
+    const normalizedPayload = {
+        document_id: parserDocument?.document_id,
+        original_filename: parserDocument?.original_filename,
+        file_extension: parserDocument?.file_extension,
+        mime_type: parserDocument?.mime_type,
+        parser_result: {
+            parser_status: parserDocument?.parser_result?.parser_status,
+            parser_version: parserDocument?.parser_result?.parser_version,
+            file_type: parserDocument?.parser_result?.file_type,
+            extraction_timestamp: parserDocument?.parser_result?.extraction_timestamp,
+            metadata: parserDocument?.parser_result?.metadata || {},
+            errors: parserDocument?.parser_result?.errors || [],
+            grouped_segments: groups,
+        },
+    };
+
+    if (normalizedPre) {
+        normalizedPre.textContent = JSON.stringify(normalizedPayload, null, 2);
+    }
+
+    const setMode = (mode) => {
+        const showRaw = mode === "raw";
+        rawPre?.classList.toggle("hidden", !showRaw);
+        normalizedPre?.classList.toggle("hidden", showRaw);
+        rawBtn?.classList.toggle("bg-white", showRaw);
+        rawBtn?.classList.toggle("shadow-sm", showRaw);
+        rawBtn?.classList.toggle("text-slate-800", showRaw);
+        rawBtn?.classList.toggle("text-slate-500", !showRaw);
+        normalizedBtn?.classList.toggle("bg-white", !showRaw);
+        normalizedBtn?.classList.toggle("shadow-sm", !showRaw);
+        normalizedBtn?.classList.toggle("text-slate-800", !showRaw);
+        normalizedBtn?.classList.toggle("text-slate-500", showRaw);
+    };
+
+    normalizedBtn?.addEventListener("click", () => setMode("normalized"));
+    rawBtn?.addEventListener("click", () => setMode("raw"));
+    setMode("normalized");
+})();
+</script>
+{% endblock %}
