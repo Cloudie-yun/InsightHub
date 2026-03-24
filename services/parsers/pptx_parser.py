@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from services.parsers.utils import clean_extracted_text
+
 
 def _dependency_error(package_name):
     return {
@@ -44,19 +46,19 @@ def parse_pptx(file_path):
             for shape in sorted(slide.shapes, key=lambda current_shape: current_shape.shape_id):
                 if not hasattr(shape, "text"):
                     continue
-                text = (shape.text or "").strip()
+                text = clean_extracted_text(shape.text or "")
                 if text:
                     slide_text_parts.append(text)
 
             if slide.has_notes_slide and slide.notes_slide and slide.notes_slide.notes_text_frame:
-                notes_text = (slide.notes_slide.notes_text_frame.text or "").strip()
+                notes_text = clean_extracted_text(slide.notes_slide.notes_text_frame.text or "")
                 if notes_text:
                     slide_text_parts.append(notes_text)
 
             if not slide_text_parts:
                 continue
 
-            slide_text = "\n".join(slide_text_parts)
+            slide_text = clean_extracted_text("\n\n".join(slide_text_parts))
             segments.append(
                 {
                     "segment_id": f"pptx-slide-{slide_index}",

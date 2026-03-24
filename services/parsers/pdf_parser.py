@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from services.parsers.utils import clean_extracted_text
+
 
 def _dependency_error(package_name):
     return {
@@ -41,7 +43,7 @@ def parse_pdf(file_path):
         metadata["page_count"] = document.page_count
 
         for page_index, page in enumerate(document, start=1):
-            text = (page.get_text("text") or "").strip()
+            text = clean_extracted_text(page.get_text("text") or "")
             if not text:
                 continue
             segments.append(
