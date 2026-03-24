@@ -1,11 +1,97 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+    /* Base Card (Grid View) */
+    .recent-convo-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* Provide space for absolute actions menu in Grid view */
+    .recent-convo-card:not(.list-view) [data-card-title-area] {
+        padding-right: 32px;
+        flex-grow: 1;
+    }
+    
+    .recent-convo-card:not(.list-view) [data-card-actions] {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+    }
+
+    /* List View Styles (Table Row Layout) */
+    article.recent-convo-card.list-view {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 120px 180px 40px;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 24px;
+        border: none;
+        border-bottom: 1px solid #e5e7eb; /* Tailwind gray-200 */
+        border-radius: 0;
+        box-shadow: none;
+        background-color: #fff;
+    }
+
+    article.recent-convo-card.list-view:last-child {
+        border-bottom: none;
+    }
+
+    article.recent-convo-card.list-view:hover {
+        background-color: #f9fafb; /* Tailwind gray-50 */
+    }
+
+    .recent-convo-card.list-view [data-card-actions] {
+        position: static;
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .recent-convo-card.list-view [data-card-title-area] {
+        padding-right: 0;
+    }
+
+    .recent-convo-card.list-view [data-card-title] {
+        font-size: 14px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Remove standard margins & borders from areas to fit perfectly in list */
+    .recent-convo-card.list-view [data-card-sources-section] { margin-top: 0; }
+    .recent-convo-card.list-view [data-card-footer] {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
+    }
+
+    .recent-convo-card.list-view .grid-view-only { display: none; }
+
+    .upload-drag-active {
+        border-color: #9147e8 !important;
+        background-color: #f7eeff !important;
+    }
+</style>
+
 <div class="p-8 max-w-8xl mx-auto">
     
     <!-- Upload Section -->
     <div class="mb-10">
-        <div class="h-80 border-2 border-dashed border-brand-300 rounded-2xl p-10 flex flex-col items-center justify-center bg-white hover:bg-brand-50 transition-colors cursor-pointer group">
+        <input
+            id="dashboard-upload-input"
+            type="file"
+            class="hidden"
+            multiple
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp"
+        >
+        <div
+            id="dashboard-upload-dropzone"
+            class="h-80 border-2 border-dashed border-brand-300 rounded-2xl p-10 flex flex-col items-center justify-center bg-white hover:bg-brand-50 transition-colors cursor-pointer group"
+        >
             <div class="text-brand-500 text-5xl mb-4 group-hover:scale-125 transition-transform">
                 <i class="fa-solid fa-cloud-arrow-up"></i>
             </div>
@@ -29,81 +115,434 @@
                     <span class="text-xs mt-1">PDF</span>
                 </div>
             </div>
+            <p id="dashboard-upload-status" class="mt-5 text-sm text-gray-500 text-center"></p>
         </div>
     </div>
 
     <!-- Recent Conversations -->
-    <div>
-        <h2 class="text-lg font-semibold text-gray-400 mb-2">Recent Conversations</h2>
-        
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <!-- Card 1 -->
-            <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-300 hover:shadow-xl transition-shadow">
-                <div class="flex items-start gap-3 mb-4">
-                    <div class="bg-purple-100 p-2 rounded-lg text-purple-600">
-                        <i class="fa-regular fa-comments"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-gray-800">Project Alpha Discussion</h3>
-                    </div>
+    <div class="space-y-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <h2 class="text-lg font-semibold text-gray-500">Recent Conversations</h2>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">search</span>
+                    <input
+                        id="recent-convo-search"
+                        type="text"
+                        placeholder="Search conversations or sources..."
+                        class="w-full sm:w-72 h-10 pl-10 pr-3 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
                 </div>
-                <div class="bg-gray-50 p-3 rounded-lg text-sm text-gray-500 italic mb-4 truncate">
-                    "What are the main objectives for the next quarter regarding this project?"
+                <select id="recent-convo-filter" class="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    <option value="all">All time</option>
+                    <option value="today">Today</option>
+                    <option value="7d">Last 7 days</option>
+                    <option value="30d">Last 30 days</option>
+                </select>
+                <div class="inline-flex h-10 items-center rounded-lg border border-gray-200 bg-white p-1">
+                    <button
+                        id="recent-convo-grid-btn"
+                        type="button"
+                        class="h-8 px-3 rounded-md bg-brand-50 text-brand-700 text-sm font-semibold"
+                        aria-pressed="true"
+                    >
+                        <i class="fa-solid fa-table-cells mr-1"></i>Grid
+                    </button>
+                    <button
+                        id="recent-convo-list-btn"
+                        type="button"
+                        class="h-8 px-3 rounded-md text-sm font-semibold text-gray-500 hover:bg-gray-100"
+                        aria-pressed="false"
+                    >
+                        <i class="fa-solid fa-list mr-1"></i>List
+                    </button>
                 </div>
-                <div class="flex items-center gap-2 text-xs text-gray-400 mb-4">
-                    <i class="fa-regular fa-file-lines"></i> 5 files uploaded
-                </div>
-                <div class="flex justify-between items-center text-xs text-gray-400 border-t pt-3">
-                    <span>11:24 am</span>
-                    <span class="bg-gray-100 px-2 py-1 rounded text-gray-500">15 messages</span>
-                </div>
+                <button
+                    id="recent-convo-clear-filters"
+                    type="button"
+                    class="h-10 px-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-600 hover:bg-gray-100"
+                >
+                    Clear
+                </button>
             </div>
-
-            <!-- Card 2 -->
-            <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-300 hover:shadow-xl transition-shadow">
-                <div class="flex items-start gap-3 mb-4">
-                    <div class="bg-purple-100 p-2 rounded-lg text-purple-600">
-                        <i class="fa-regular fa-comments"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-gray-800">Machine Learning Basics</h3>
-                    </div>
-                </div>
-                <div class="bg-gray-50 p-3 rounded-lg text-sm text-gray-500 italic mb-4">
-                    "Can you explain the difference between supervised and..."
-                </div>
-                <div class="flex items-center gap-2 text-xs text-gray-400 mb-4">
-                    <i class="fa-regular fa-file-lines"></i> 8 files uploaded
-                </div>
-                <div class="flex justify-between items-center text-xs text-gray-400 border-t pt-3">
-                    <span>02:37 pm</span>
-                    <span class="bg-gray-100 px-2 py-1 rounded text-gray-500">13 messages</span>
-                </div>
-            </div>
-
-            <!-- Card 3 -->
-            <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-300 hover:shadow-xl transition-shadow">
-                <div class="flex items-start gap-3 mb-4">
-                    <div class="bg-purple-100 p-2 rounded-lg text-purple-600">
-                        <i class="fa-regular fa-comments"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-gray-800">Marketing Strategy</h3>
-                    </div>
-                </div>
-                <div class="bg-gray-50 p-3 rounded-lg text-sm text-gray-500 italic mb-4">
-                    "What are the key metrics for measuring campaign..."
-                </div>
-                <div class="flex items-center gap-2 text-xs text-gray-400 mb-4">
-                    <i class="fa-regular fa-file-lines"></i> 3 files uploaded
-                </div>
-                <div class="flex justify-between items-center text-xs text-gray-400 border-t pt-3">
-                    <span>08:45 am</span>
-                    <span class="bg-gray-100 px-2 py-1 rounded text-gray-500">21 messages</span>
-                </div>
-            </div>
-
         </div>
+
+        <!-- Structure for switching seamlessly between Views -->
+        <div id="recent-convo-container" class="transition-all">
+            <!-- Table Headers for List View -->
+            <div id="list-view-header" class="hidden">
+                <div class="px-6 py-3">Title</div>
+                <div class="py-3">No of sources</div>
+                <div class="py-3">Last interaction</div>
+                <div class="py-3"></div>
+            </div>
+
+            <!-- Cards Grid -->
+            <div id="recent-convo-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                
+                <!-- Dynamic Loop for Database Data -->
+                {% for convo in conversations %}
+                <article class="recent-convo-card bg-white rounded-xl p-5 shadow-sm border border-gray-200 hover:shadow-md transition-shadow" 
+                         data-id="{{ convo.id }}"
+                         data-updated-at="{{ convo.updated_at }}" 
+                         data-title="{{ convo.title }}" 
+                         data-sources="{{ convo.sources_joined }}">
+                    
+                    <!-- Title Column -->
+                    <div data-card-title-area class="min-w-0">
+                        <h3 class="text-base font-bold text-gray-800 leading-snug break-words" data-card-title>{{ convo.title }}</h3>
+                        <div class="hidden mt-3 gap-2" data-rename-row>
+                            <input type="text" class="h-9 flex-1 rounded-lg border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" data-rename-input>
+                            <button type="button" class="h-9 px-3 rounded-lg bg-brand-600 text-white text-sm hover:bg-brand-700" data-rename-save>Save</button>
+                            <button type="button" class="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-100" data-rename-cancel>Cancel</button>
+                        </div>
+                    </div>
+
+                    <!-- Sources Column -->
+                    <div class="mt-4" data-card-sources-section>
+                        <span class="inline-flex items-center px-3 py-1 rounded-full bg-gray-50 text-gray-600 border border-gray-200 text-xs font-medium" data-card-source-count>
+                            {{ convo.source_count }} sources
+                        </span>
+                    </div>
+
+                    <!-- Date Column -->
+                    <div class="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400" data-card-footer>
+                        <span class="grid-view-only">Recent conversation: </span>
+                        <span data-time-label class="text-gray-500 font-medium">{{ convo.formatted_date }}</span>
+                    </div>
+
+                    <!-- Actions Column -->
+                    <div data-card-actions>
+                        <div class="relative">
+                            <button type="button" class="recent-convo-menu-btn h-8 w-8 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" aria-expanded="false" title="Conversation actions">
+                                <i class="fa-solid fa-ellipsis"></i>
+                            </button>
+                            <div class="recent-convo-menu hidden absolute right-0 top-10 z-10 w-40 rounded-lg border border-gray-200 bg-white shadow-lg p-1">
+                                <button type="button" class="recent-convo-edit w-full text-left px-3 py-2 text-sm text-gray-600 rounded-md hover:bg-gray-100">Edit name</button>
+                                <button type="button" class="recent-convo-delete w-full text-left px-3 py-2 text-sm text-red-600 rounded-md hover:bg-red-50">Delete conversation</button>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+                {% endfor %}
+
+            </div>
+        </div>
+
+        <!-- Empty State displayed if no records or no filter matches -->
+        <p id="recent-convo-empty" class="hidden text-sm text-gray-500 bg-white border border-dashed border-gray-300 rounded-xl p-6 text-center">
+            No conversations match your search/filter or the list is empty.
+        </p>
     </div>
 </div>
+
+<script>
+(() => {
+    const uploadDropzone = document.getElementById("dashboard-upload-dropzone");
+    const uploadInput = document.getElementById("dashboard-upload-input");
+    const uploadStatus = document.getElementById("dashboard-upload-status");
+    let isUploading = false;
+    let dragDepth = 0;
+
+    const container = document.getElementById("recent-convo-container");
+    const grid = document.getElementById("recent-convo-grid");
+    const header = document.getElementById("list-view-header");
+    const cards = Array.from(document.querySelectorAll(".recent-convo-card"));
+    
+    const searchInput = document.getElementById("recent-convo-search");
+    const filterSelect = document.getElementById("recent-convo-filter");
+    const clearFiltersBtn = document.getElementById("recent-convo-clear-filters");
+    const emptyState = document.getElementById("recent-convo-empty");
+    const gridBtn = document.getElementById("recent-convo-grid-btn");
+    const listBtn = document.getElementById("recent-convo-list-btn");
+
+    const notify = (type, message) => {
+        const toastMethod = window.toast && typeof window.toast[type] === "function"
+            ? window.toast[type]
+            : null;
+        if (toastMethod) {
+            toastMethod(message);
+            return;
+        }
+        if (message) {
+            window.alert(message);
+        }
+    };
+
+    const setUploadStatus = (message, isError = false) => {
+        if (!uploadStatus) return;
+        uploadStatus.textContent = message || "";
+        uploadStatus.className = `mt-5 text-sm text-center ${isError ? "text-red-600" : "text-gray-500"}`;
+    };
+
+    const setDropzoneActive = (active) => {
+        if (!uploadDropzone) return;
+        uploadDropzone.classList.toggle("upload-drag-active", active);
+    };
+
+    const hasDraggedFiles = (event) => {
+        const types = Array.from(event.dataTransfer?.types || []);
+        return types.includes("Files");
+    };
+
+    const uploadFiles = async (fileList) => {
+        if (isUploading) return;
+        const files = Array.from(fileList || []);
+        if (!files.length) return;
+
+        if (!window.__AUTH_USER__ || !window.__AUTH_USER__.user_id) {
+            notify("warning", "Please log in to upload documents.");
+            setUploadStatus("Please log in to upload documents.", true);
+            return;
+        }
+
+        isUploading = true;
+        setUploadStatus(`Uploading ${files.length} file(s)...`);
+        setDropzoneActive(false);
+
+        const formData = new FormData();
+        files.forEach((file) => formData.append("documents", file));
+
+        try {
+            const response = await fetch("/api/documents/upload", {
+                method: "POST",
+                body: formData,
+            });
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (error) {
+                payload = {};
+            }
+
+            if (!response.ok) {
+                const errorMessage = payload.error || "Upload failed. Please try again.";
+                setUploadStatus(errorMessage, true);
+                notify("error", errorMessage);
+                return;
+            }
+
+            const successMessage = payload.message || `Uploaded ${files.length} file(s) successfully.`;
+            setUploadStatus(successMessage, false);
+            notify("success", successMessage);
+            const conversationId = payload?.conversation?.conversation_id;
+            if (conversationId) {
+                window.location.href = payload.conversation_url || `/chat?conversation_id=${encodeURIComponent(conversationId)}&new=1`;
+                return;
+            }
+            window.location.reload();
+        } catch (error) {
+            const networkError = "Network error while uploading documents.";
+            setUploadStatus(networkError, true);
+            notify("error", networkError);
+        } finally {
+            isUploading = false;
+            if (uploadInput) {
+                uploadInput.value = "";
+            }
+        }
+    };
+
+    const closeAllMenus = () => {
+        document.querySelectorAll(".recent-convo-menu").forEach((menu) => menu.classList.add("hidden"));
+        document.querySelectorAll(".recent-convo-menu-btn").forEach((btn) => btn.setAttribute("aria-expanded", "false"));
+    };
+
+    const getFilterWindowStart = (value) => {
+        const now = new Date();
+        if (value === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        if (value === "7d") return now.getTime() - (7 * 24 * 60 * 60 * 1000);
+        if (value === "30d") return now.getTime() - (30 * 24 * 60 * 60 * 1000);
+        return null;
+    };
+
+    const applyCardFilters = () => {
+        const keyword = (searchInput.value || "").trim().toLowerCase();
+        const filterWindowStart = getFilterWindowStart(filterSelect.value);
+        let visibleCount = 0;
+
+        cards.forEach((card) => {
+            const title = (card.dataset.title || "").toLowerCase();
+            const sources = (card.dataset.sources || "").toLowerCase();
+            const updatedAt = new Date(card.dataset.updatedAt || "");
+            const matchesKeyword = !keyword || title.includes(keyword) || sources.includes(keyword);
+            const matchesDate = !filterWindowStart || (!Number.isNaN(updatedAt.getTime()) && updatedAt.getTime() >= filterWindowStart);
+            const show = matchesKeyword && matchesDate;
+            card.classList.toggle("hidden", !show);
+            if (show) visibleCount += 1;
+        });
+
+        // Hide main container entirely if empty
+        container.classList.toggle("hidden", visibleCount === 0);
+        emptyState.classList.toggle("hidden", visibleCount !== 0);
+    };
+
+    const applyDisplayMode = (mode) => {
+        const isGrid = mode === "grid";
+
+        // Toggle Table Header & Outer Container Styles 
+        if (isGrid) {
+            container.className = "transition-all";
+            header.className = "hidden";
+            grid.className = "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4";
+        } else {
+            container.className = "flex flex-col border border-gray-200 rounded-xl bg-white shadow-sm overflow-hidden transition-all";
+            header.className = "grid grid-cols-[minmax(0,1fr)_120px_180px_40px] gap-4 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider rounded-t-xl";
+            grid.className = "flex flex-col"; // removes gap, cards handle border
+        }
+
+        // Toggle Views directly on each card
+        document.querySelectorAll(".recent-convo-card").forEach(card => {
+            card.classList.toggle("list-view", !isGrid);
+        });
+
+        // Set Active states on toggle buttons
+        gridBtn.className = isGrid
+            ? "h-8 px-3 rounded-md bg-brand-50 text-brand-700 text-sm font-semibold transition-colors"
+            : "h-8 px-3 rounded-md text-sm font-semibold text-gray-500 hover:bg-gray-100 transition-colors";
+        listBtn.className = isGrid
+            ? "h-8 px-3 rounded-md text-sm font-semibold text-gray-500 hover:bg-gray-100 transition-colors"
+            : "h-8 px-3 rounded-md bg-brand-50 text-brand-700 text-sm font-semibold transition-colors";
+
+        gridBtn.setAttribute("aria-pressed", String(isGrid));
+        listBtn.setAttribute("aria-pressed", String(!isGrid));
+    };
+    
+    cards.forEach((card) => {
+        const menuBtn = card.querySelector(".recent-convo-menu-btn");
+        const menu = card.querySelector(".recent-convo-menu");
+        const editBtn = card.querySelector(".recent-convo-edit");
+        const deleteBtn = card.querySelector(".recent-convo-delete");
+        const titleEl = card.querySelector("[data-card-title]");
+        const renameRow = card.querySelector("[data-rename-row]");
+        const renameInput = card.querySelector("[data-rename-input]");
+        const renameSave = card.querySelector("[data-rename-save]");
+        const renameCancel = card.querySelector("[data-rename-cancel]");
+
+        menuBtn?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const open = menu.classList.contains("hidden");
+            closeAllMenus();
+            menu.classList.toggle("hidden", !open);
+            menuBtn.setAttribute("aria-expanded", String(open));
+        });
+
+        editBtn?.addEventListener("click", () => {
+            closeAllMenus();
+            renameInput.value = titleEl.textContent.trim();
+            renameRow.classList.remove("hidden");
+            renameRow.classList.add("flex");
+            renameInput.focus();
+            renameInput.select();
+        });
+
+        renameSave?.addEventListener("click", async () => {
+            const nextName = renameInput.value.trim();
+            if (!nextName) return;
+
+            const previousName = titleEl.textContent.trim();
+            titleEl.textContent = nextName;
+            card.dataset.title = nextName;
+            renameRow.classList.add("hidden");
+            renameRow.classList.remove("flex");
+            applyCardFilters();
+
+            try {
+                const response = await fetch(`/api/conversations/${encodeURIComponent(card.dataset.id)}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: nextName }),
+                });
+
+                if (!response.ok) {
+                    throw new Error("Failed to update conversation name.");
+                }
+            } catch (error) {
+                titleEl.textContent = previousName;
+                card.dataset.title = previousName;
+                renameInput.value = previousName;
+                applyCardFilters();
+            }
+        });
+        
+        renameCancel?.addEventListener("click", () => {
+            renameRow.classList.add("hidden");
+            renameRow.classList.remove("flex");
+        });
+
+        deleteBtn?.addEventListener("click", () => {
+            const conversationId = card.dataset.id;
+            if (conversationId) {
+                fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+                    method: "DELETE",
+                }).catch((error) => {
+                    console.error("Failed to delete conversation:", error);
+                });
+            }
+
+            card.remove();
+            const nextCards = Array.from(document.querySelectorAll(".recent-convo-card"));
+            cards.length = 0;
+            cards.push(...nextCards);
+            applyCardFilters();
+            closeAllMenus();
+        });
+    });
+
+    uploadDropzone?.addEventListener("click", () => {
+        if (isUploading) return;
+        uploadInput?.click();
+    });
+
+    uploadInput?.addEventListener("change", () => {
+        uploadFiles(uploadInput.files);
+    });
+
+    document.addEventListener("dragenter", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        dragDepth += 1;
+        setDropzoneActive(true);
+        setUploadStatus("Drop files anywhere to upload.");
+    });
+
+    document.addEventListener("dragover", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+    });
+
+    document.addEventListener("dragleave", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) {
+            setDropzoneActive(false);
+            setUploadStatus("");
+        }
+    });
+
+    document.addEventListener("drop", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        dragDepth = 0;
+        setDropzoneActive(false);
+        uploadFiles(event.dataTransfer.files);
+    });
+
+    document.addEventListener("click", closeAllMenus);
+    searchInput.addEventListener("input", applyCardFilters);
+    filterSelect.addEventListener("change", applyCardFilters);
+    clearFiltersBtn?.addEventListener("click", () => {
+        searchInput.value = "";
+        filterSelect.value = "all";
+        applyCardFilters();
+    });
+    gridBtn.addEventListener("click", () => applyDisplayMode("grid"));
+    listBtn.addEventListener("click", () => applyDisplayMode("list"));
+
+    // Initialize View
+    applyDisplayMode("grid");
+    applyCardFilters();
+})();
+</script>
 {% endblock %}

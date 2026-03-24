@@ -3,7 +3,14 @@
 {% block content %}
 <div class="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
     <header class="h-11 px-6 bg-slate-50 flex items-center justify-between flex-shrink-0">
-        <h1 class="text-base font-semibold text-slate-800 truncate">Introduction to Machine Learning</h1>
+        <div class="flex items-center gap-2 min-w-0">
+            <h1 class="text-base font-semibold text-slate-800 truncate"></h1>
+            {% if highlight_new_conversation %}
+            <span class="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                Recently created
+            </span>
+            {% endif %}
+        </div>
         <button class="h-7 w-7 rounded-lg text-slate-500 hover:bg-gray-100 hover:text-slate-700 transition-colors flex items-center justify-center" title="More actions">
             <i class="fa-solid fa-ellipsis"></i>
         </button>
@@ -43,32 +50,45 @@
                             </button>
                         </div>
                         <div id="sources-detailed-list" class="space-y-2">
-                            <div data-doc-file="Machine Learning Fundamentals.pdf" class="flex items-center gap-3 p-2 px-3 hover:bg-slate-100 rounded-lg cursor-pointer">
-                                <div class="text-red-500"><i class="fa-regular fa-file-pdf"></i></div>
-                                <div class="text-sm text-gray-800 truncate flex-1">Machine Learning Fundamentals.pdf</div>
-                                <button data-source-select-btn="true" class="h-6 w-6 rounded-full text-gray-400 border border-gray-300 hover:text-brand-600 hover:bg-brand-100 hover:border-brand-200 flex items-center justify-center" title="Select Document">
-                                    <i class="fa-solid fa-check text-xs"></i>
-                                </button>
-                            </div>
-                            <div data-doc-file="Deep Learning Basics.docx" class="flex items-center gap-3 p-2 px-3 hover:bg-slate-100 rounded-lg cursor-pointer">
-                                <div class="text-blue-500"><i class="fa-regular fa-file-word"></i></div>
-                                <div class="text-sm text-gray-800 truncate flex-1">Deep Learning Basics.docx</div>
-                                <button data-source-select-btn="true" class="h-6 w-6 rounded-full text-gray-400 border border-gray-300 hover:text-brand-600 hover:bg-brand-100 hover:border-brand-200 flex items-center justify-center" title="Select Document">
-                                    <i class="fa-solid fa-check text-xs"></i>
-                                </button>
-                            </div>
-                            <div data-doc-file="Neural Networks 101.ppt" class="flex items-center gap-3 p-2 px-3 hover:bg-slate-100 rounded-lg cursor-pointer">
-                                <div class="text-orange-500"><i class="fa-regular fa-file-powerpoint"></i></div>
-                                <div class="text-sm text-gray-800 truncate flex-1">Neural Networks 101.ppt</div>
-                                <button data-source-select-btn="true" class="h-6 w-6 rounded-full text-gray-400 border border-gray-300 hover:text-brand-600 hover:bg-brand-100 hover:border-brand-200 flex items-center justify-center" title="Select Document">
-                                    <i class="fa-solid fa-check text-xs"></i>
-                                </button>
-                            </div>
+                            {% for doc in conversation_documents %}
+                            <article
+                                class="group rounded-xl border border-gray-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 transition-colors cursor-pointer"
+                                data-doc-file="{{ doc.upload_path }}"
+                                data-doc-title="{{ doc.original_filename }}"
+                            >
+                                <div class="flex items-center gap-3 px-3 py-2.5">
+                                    <span class="h-8 w-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                                        <i class="fa-regular fa-file-lines"></i>
+                                    </span>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="truncate text-sm font-medium text-slate-700" title="{{ doc.original_filename }}">{{ doc.original_filename }}</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="h-7 w-7 rounded-lg border text-xs transition-colors"
+                                        data-source-select-btn="true"
+                                        data-selected="true"
+                                        aria-pressed="true"
+                                        title="Deselect Document"
+                                    >
+                                        <i class="fa-solid fa-check"></i>
+                                    </button>
+                                </div>
+                            </article>
+                            {% endfor %}
                         </div>
                         <div id="sources-icon-list" class="hidden flex flex-col items-center justify-center gap-2 py-2">
-                            <button type="button" data-doc-file="Machine Learning Fundamentals.pdf" class="h-10 w-10 rounded-lg hover:bg-gray-100 text-red-500"><i class="fa-regular fa-file-pdf"></i></button>
-                            <button type="button" data-doc-file="Deep Learning Basics.docx" class="h-10 w-10 rounded-lg hover:bg-gray-100 text-blue-500"><i class="fa-regular fa-file-word"></i></button>
-                            <button type="button" data-doc-file="Neural Networks 101.ppt" class="h-10 w-10 rounded-lg hover:bg-gray-100 text-orange-500"><i class="fa-regular fa-file-powerpoint"></i></button>
+                            {% for doc in conversation_documents %}
+                            <button
+                                type="button"
+                                class="h-10 w-10 rounded-lg hover:bg-gray-100 text-slate-500"
+                                data-doc-file="{{ doc.upload_path }}"
+                                data-doc-title="{{ doc.original_filename }}"
+                                title="{{ doc.original_filename }}"
+                            >
+                                <i class="fa-regular fa-file-lines"></i>
+                            </button>
+                            {% endfor %}
                         </div>
                     </div>
                 </section>
@@ -123,106 +143,9 @@
         <section id="chat-main" class="relative h-full min-h-0 min-w-0 flex flex-col bg-slate-50 transition-[padding] duration-200 ease-out">
             <div id="chat-conversation-panel" class="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
                 <div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto p-5 pb-36 space-y-5 max-w-5xl w-full mx-auto">
-                    <div class="flex justify-end">
-                        <div class="relative group max-w-xl pb-[32px]">
-                            <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
-                                Can you explain the difference between supervised and unsupervised learning?
-                            </div>
-                            <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                    <i class="fa-solid fa-clone"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors" title="Edit">
-                                    <i class="fa-solid fa-pen"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="w-full flex justify-center">
-                        <div class="w-full max-w-4xl">
-                            <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
-                                <p class="mb-3">Based on your document <strong>'Machine Learning Fundamentals.pdf'</strong>, supervised learning uses labeled data where the algorithm learns from input-output pairs. The model is trained to predict the output from the input data, and its performance is evaluated based on how accurately it can make these predictions on new, unseen data.</p>
-                                </p>
-                                <p>In contrast, unsupervised learning works with unlabeled data, where the algorithm identifies patterns and structures on its own.</p>
-                            </div>
-                            <div class="mt-1 flex items-center gap-1">
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                    <i class="fa-solid fa-clone"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Helpful">
-                                    <i class="fa-regular fa-thumbs-up"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Not helpful">
-                                    <i class="fa-regular fa-thumbs-down"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Regenerate">
-                                    <i class="fa-solid fa-rotate-right"></i>
-                                </button>
-                                <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-8 w-8 rounded-md text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors" title="Create study aid">
-                                    <i class="fa-solid fa-lightbulb"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Prompt to Ask -->
-                    <div class="flex justify-end">
-                        <div class="relative group max-w-xl pb-[32px]">
-                            <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
-                                What are some common algorithms used in supervised learning?
-                            </div>
-                            <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                    <i class="fa-solid fa-clone"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors" title="Edit">
-                                    <i class="fa-solid fa-pen"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="w-full flex justify-center">
-                        <div class="w-full max-w-4xl">
-                            <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
-                                <p class="mb-3">Some common algorithms used in supervised learning include:</p>
-                                <ul class="list-disc list-inside mb-2">
-                                    <li><strong>Linear Regression</strong>: Used for predicting continuous values.</li>
-                                    <li><strong>Logistic Regression</strong>: Used for binary classification tasks.</li>
-                                    <li><strong>Support Vector Machines (SVM)</strong>: Effective for high-dimensional spaces.</li>
-                                    <li><strong>Decision Trees</strong>: Simple and interpretable models for classification and regression.</li>
-                                    <li><strong>Random Forests</strong>: An ensemble of decision trees that improves accuracy and reduces overfitting.</li>
-                                    <li><strong>Neural Networks</strong>: Powerful models that can capture complex relationships in data, especially with large datasets.</li>
-                                </ul>
-                                <p>The choice of algorithm depends on the specific problem, the size and nature of the dataset, and the desired balance between interpretability and performance.</p>
-                            </div>
-                            <div class="mt-1 flex items-center gap-1">
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                    <i class="fa-solid fa-clone"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Helpful">
-                                    <i class="fa-regular fa-thumbs-up"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Not helpful">
-                                    <i class="fa-regular fa-thumbs-down"></i>
-                                </button>
-                                <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Regenerate">
-                                    <i class="fa-solid fa-rotate-right"></i>
-                                </button>
-                                <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-8 w-8 rounded-md text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors" title="Create study aid">
-                                    <i class="fa-solid fa-lightbulb"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
                 </div>
                 <div id="chat-input-area" class="sticky bottom-0 z-10 px-6 pb-3 pt-5 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
                     <div class="max-w-4xl mx-auto">
-                        <div class="flex flex-wrap gap-2 mb-3">
-                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">What is Machine Learning?</button>
-                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">Explain Regression</button>
-                        </div>
                         <div class="chat-input-container bg-white/95 border border-gray-200 rounded-full p-2 flex items-center shadow-lg backdrop-blur-sm focus-within:ring-2 focus-within:ring-brand-500 transition-shadow">
                             <input type="text" placeholder="Ask any question..." class="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 px-4 py-2 text-gray-700 placeholder-gray-400">
                             <button class="bg-brand-600 text-white h-10 w-10 rounded-full flex items-center justify-center hover:bg-brand-700 transition">
@@ -236,6 +159,64 @@
                 </div>
             </div>
         </section>
+    </div>
+</div>
+
+<!-- Chat Upload Modal -->
+<div id="chat-upload-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
+    <div id="chat-upload-modal-backdrop" class="absolute inset-0 bg-slate-900/45 backdrop-blur-sm"></div>
+    <div class="relative z-10 w-full max-w-lg mx-4 rounded-2xl border border-gray-200 bg-white shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h3 class="text-base font-semibold text-slate-800">Add Files to Conversation</h3>
+            <button id="chat-upload-cancel-btn" type="button" class="h-8 w-8 rounded-lg text-slate-500 hover:bg-gray-100 hover:text-slate-700 transition-colors" aria-label="Close upload modal">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="p-5 space-y-4">
+            <input
+                id="chat-upload-input"
+                type="file"
+                class="hidden"
+                multiple
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp"
+            >
+            <div id="chat-upload-dropzone" class="rounded-xl border-2 border-dashed border-brand-300 bg-brand-50/30 p-8 text-center transition-colors">
+                <div class="text-brand-600 text-3xl mb-2">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                </div>
+                <p class="text-sm font-medium text-slate-700">Drag and drop files here</p>
+                <p class="text-xs text-slate-500 mt-1">or choose files from your computer</p>
+                <button id="chat-upload-browse-btn" type="button" class="mt-4 inline-flex items-center gap-2 rounded-full border border-brand-200 bg-white px-4 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 transition-colors">
+                    <i class="fa-solid fa-folder-open"></i>
+                    Browse Files
+                </button>
+            </div>
+            <div id="chat-upload-selection-summary" class="rounded-xl border border-gray-200 bg-slate-50 p-3 hidden">
+                <div class="flex items-center justify-between gap-2">
+                    <p class="text-sm font-semibold text-slate-700">Selected files</p>
+                    <p id="chat-upload-count" class="text-xs font-medium text-slate-500">0 files</p>
+                </div>
+                <ul id="chat-upload-file-list" class="mt-2 max-h-36 overflow-y-auto space-y-1 text-sm text-slate-600"></ul>
+            </div>
+            <div class="flex items-center justify-end gap-2">
+                <button id="chat-upload-clear-btn" type="button" class="rounded-lg border border-gray-200 px-3 py-2 text-sm text-slate-600 hover:bg-gray-100 transition-colors">
+                    Clear
+                </button>
+                <button id="chat-upload-confirm-btn" type="button" class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50" disabled>
+                    Upload
+                </button>
+            </div>
+            <p id="chat-upload-status" class="text-sm text-slate-500 text-center min-h-[20px]"></p>
+        </div>
+    </div>
+</div>
+
+<!-- Drop Overlay for Conversation -->
+<div id="chat-drop-overlay" class="hidden fixed inset-0 z-30 pointer-events-none">
+    <div class="absolute inset-0 bg-brand-50/60 border-2 border-dashed border-brand-400 rounded-xl m-3 flex items-center justify-center">
+        <div class="rounded-xl bg-white px-5 py-3 shadow-md border border-brand-200 text-brand-700 font-semibold">
+            Drop files to add them into this conversation
+        </div>
     </div>
 </div>
 
@@ -255,9 +236,7 @@
         <!-- Modal Content -->
         <div class="p-8">
             <h4 class="font-bold text-gray-800 mb-3">Source Content</h4>
-            <div class="bg-gray-50 rounded-lg p-4 text-sm text-gray-600 leading-relaxed border-l-4 border-brand-500 mb-8">
-                Based on your document 'Machine Learning Fundamentals.pdf', supervised learning uses labeled data... In contrast, unsupervised learning works with unlabeled data...
-            </div>
+            <div class="bg-gray-50 rounded-lg p-4 text-sm text-gray-600 leading-relaxed border-l-4 border-brand-500 mb-8"></div>
 
             <div class="grid grid-cols-2 gap-6">
                 <a href="/mindmap" class="border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-brand-500 hover:bg-brand-50 hover:shadow-md transition-all group">

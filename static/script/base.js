@@ -154,6 +154,22 @@ const showToast = (input, options = {}) => {
     }
 };
 
+const notifyUser = (input, options = {}) => {
+    showToast(input, options);
+};
+
+const queueToastForNextPage = (input, options = {}) => {
+    const payload = typeof input === "string" ? { message: input, ...options } : (input || {});
+    if (!payload.message) return;
+    sessionStorage.setItem("toastMessage", String(payload.message));
+    sessionStorage.setItem("toastType", String(payload.type || "info"));
+    if (payload.title) {
+        sessionStorage.setItem("toastTitle", String(payload.title));
+    } else {
+        sessionStorage.removeItem("toastTitle");
+    }
+};
+
 window.toast = {
     info: (message, opts = {}) => showToast({ type: "info", message, ...opts }),
     success: (message, opts = {}) => showToast({ type: "success", message, ...opts }),
@@ -161,15 +177,24 @@ window.toast = {
     error: (message, opts = {}) => showToast({ type: "error", message, ...opts }),
     show: showToast,
 };
+window.notify = notifyUser;
+window.notifyNextPage = queueToastForNextPage;
+
+document.addEventListener("app:notify", (event) => {
+    if (!event?.detail) return;
+    notifyUser(event.detail);
+});
 
 document.addEventListener("DOMContentLoaded", () => {
     const message = sessionStorage.getItem("toastMessage");
     const type = sessionStorage.getItem("toastType") || "info";
+    const title = sessionStorage.getItem("toastTitle");
     if (message) {
-        showToast({ type, message });
+        showToast({ type, title, message });
     }
     sessionStorage.removeItem("toastMessage");
     sessionStorage.removeItem("toastType");
+    sessionStorage.removeItem("toastTitle");
 });
 
 // ========== CUSTOM PLACEHOLDER MANAGEMENT ==========
@@ -458,6 +483,7 @@ const setAuthUiState = (user) => {
         if (emailVerifyBanner) emailVerifyBanner.classList.add("hidden");
         if (emailVerifyBadge) emailVerifyBadge.classList.add("hidden");
         setEmailVerifyResendStatus("");
+        renderConvoSubmenu();
         return;
     }
 
@@ -472,6 +498,7 @@ const setAuthUiState = (user) => {
     if (emailVerifyBanner) emailVerifyBanner.classList.toggle("hidden", isVerified);
     if (emailVerifyBadge) emailVerifyBadge.classList.toggle("hidden", isVerified);
     if (isVerified) setEmailVerifyResendStatus("");
+    renderConvoSubmenu();
 };
 
 if (userMenuToggle && userMenuDropdown) {
@@ -1034,6 +1061,54 @@ const convoToggle = document.getElementById("convo-toggle");
 const convoSubmenu = document.getElementById("convo-submenu");
 const convoCaret = document.getElementById("convo-caret");
 const themeToggle = document.getElementById("theme-toggle");
+const sidebarConversations = Array.isArray(window.__SIDEBAR_CONVERSATIONS__)
+    ? window.__SIDEBAR_CONVERSATIONS__
+    : [];
+const currentConversationId = String(window.__CURRENT_CONVERSATION_ID__ || "");
+const newConversationId = String(window.__NEW_CONVERSATION_ID__ || "");
+
+const renderConvoSubmenu = () => {
+    if (!convoSubmenu) return;
+
+    if (!currentAuthUser || !currentAuthUser.user_id) {
+        convoSubmenu.innerHTML = "";
+        return;
+    }
+
+    if (!sidebarConversations.length) {
+        convoSubmenu.innerHTML = '<p class="px-3 py-2 text-xs text-gray-400">No conversations yet.</p>';
+        return;
+    }
+
+    const itemsHtml = sidebarConversations
+        .map((conversation) => {
+            const conversationId = String(conversation.id || "").trim();
+            const title = String(conversation.title || "Untitled conversation").trim() || "Untitled conversation";
+            const isActive = Boolean(conversationId && conversationId === currentConversationId);
+            const isNew = Boolean(conversationId && conversationId === newConversationId);
+            const href = `/chat?conversation_id=${encodeURIComponent(conversationId)}`;
+            const escapedTitle = title
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+
+            return `
+                <a href="${href}" class="group flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                    isActive
+                        ? "bg-brand-50 text-brand-700 font-medium"
+                        : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                }" title="${escapedTitle}">
+                    <span class="truncate flex-1">${escapedTitle}</span>
+                    ${isNew ? '<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">New</span>' : ""}
+                </a>
+            `;
+        })
+        .join("");
+
+    convoSubmenu.innerHTML = itemsHtml;
+};
 
 const syncConvoCaret = () => {
     const isOpen = !convoSubmenu.classList.contains("hidden");
@@ -1066,6 +1141,9 @@ if (savedConvoOpen === "false") {
     convoSubmenu.classList.add("hidden");
 } else if (savedConvoOpen === "true") {
     convoSubmenu.classList.remove("hidden");
+} else if (window.location.pathname === "/chat") {
+    convoSubmenu.classList.remove("hidden");
+    localStorage.setItem(CONVO_STATE_KEY, "true");
 }
 
 const savedTheme = localStorage.getItem(THEME_STATE_KEY);

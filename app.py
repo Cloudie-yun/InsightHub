@@ -13,10 +13,12 @@ import os
 import re
 from urllib.parse import urljoin
 from urllib.parse import urlencode
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import json
 import logging
+import mimetypes
 
 
 app = Flask(__name__)
@@ -24,6 +26,17 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 UPLOADS_DIR = Path(app.root_path) / "uploads"
 PREVIEW_DIR = UPLOADS_DIR / ".preview"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_UPLOAD_EXTENSIONS = {
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".ppt",
+    ".pptx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+}
 STRONG_PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$")
 PASSWORD_POLICY_ERROR = "Password must be at least 8 characters and include uppercase, lowercase, number, and special character."
 
@@ -58,6 +71,120 @@ def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
 
 def get_preview_pdf_path(file_path: Path) -> Path:
     return PREVIEW_DIR / f"{file_path.stem}.pdf"
+
+
+def _allowed_upload_extensions_text():
+    return ", ".join(sorted(ALLOWED_UPLOAD_EXTENSIONS))
+
+
+def _compose_upload_conversation_title(file_names):
+    safe_names = [name for name in file_names if name]
+    if not safe_names:
+        return "Uploaded documents"
+    if len(safe_names) == 1:
+        return safe_names[0][:255]
+    base_name = safe_names[0]
+    suffix = f" +{len(safe_names) - 1} more"
+    max_base_len = max(1, 255 - len(suffix))
+    return f"{base_name[:max_base_len]}{suffix}"
+
+
+def _serialize_dashboard_conversation(row):
+    updated_at = row[2]
+    return {
+        "id": str(row[0]),
+        "title": (row[1] or "Untitled conversation").strip() or "Untitled conversation",
+        "updated_at": updated_at.isoformat() if updated_at else "",
+        "formatted_date": updated_at.strftime("%b %d, %Y") if updated_at else "",
+        "source_count": int(row[3] or 0),
+        "sources_joined": row[4] or "",
+    }
+
+
+def _serialize_sidebar_conversation(row):
+    return {
+        "id": str(row[0]),
+        "title": (row[1] or "Untitled conversation").strip() or "Untitled conversation",
+        "updated_at": row[2].isoformat() if row[2] else "",
+    }
+
+
+def _serialize_conversation_document(row):
+    return {
+        "document_id": str(row[0]),
+        "original_filename": row[1] or "",
+        "stored_filename": row[2] or "",
+        "file_extension": row[3] or "",
+        "mime_type": row[4] or "",
+        "created_at": row[5].isoformat() if row[5] else "",
+        "upload_path": f"{row[6]}/{row[2]}" if row[6] and row[2] else "",
+    }
+
+
+def get_conversation_documents(user_id, conversation_id):
+    if not user_id or not conversation_id:
+        return []
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    d.document_id,
+                    d.original_filename,
+                    d.stored_filename,
+                    d.file_extension,
+                    d.mime_type,
+                    d.created_at,
+                    c.user_id
+                FROM conversations c
+                JOIN conversation_documents cd
+                    ON cd.conversation_id = c.conversation_id
+                JOIN documents d
+                    ON d.document_id = cd.document_id
+                WHERE c.conversation_id = %s
+                  AND c.user_id = %s
+                  AND d.is_deleted = FALSE
+                ORDER BY cd.added_at DESC, d.created_at DESC
+                """,
+                (conversation_id, user_id),
+            )
+            rows = cur.fetchall()
+        return [_serialize_conversation_document(row) for row in rows]
+    except Exception:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_sidebar_conversations(user_id, limit=8):
+    if not user_id:
+        return []
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT conversation_id, title, updated_at
+                FROM conversations
+                WHERE user_id = %s
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """,
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+        return [_serialize_sidebar_conversation(row) for row in rows]
+    except Exception:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def serialize_user_row(user_row):
@@ -106,7 +233,14 @@ def get_current_user():
 
 @app.context_processor
 def inject_auth_user():
-    return {"auth_user": get_current_user()}
+    auth_user = get_current_user()
+    sidebar_conversations = get_sidebar_conversations(
+        auth_user.get("user_id") if auth_user else None
+    )
+    return {
+        "auth_user": auth_user,
+        "sidebar_conversations": sidebar_conversations,
+    }
 
 
 def build_external_url(path: str) -> str:
@@ -434,11 +568,64 @@ def root():
 
 @app.route('/dashboard')
 def dashboard():
-    return render_template('dashboard.html', active_page='dashboard')
+    user_id = session.get("user_id")
+    conversations = []
+    if user_id:
+        conn = None
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        c.conversation_id,
+                        c.title,
+                        c.updated_at,
+                        COUNT(cd.document_id) AS source_count,
+                        COALESCE(
+                            STRING_AGG(d.original_filename, ' | ' ORDER BY d.created_at)
+                            FILTER (WHERE d.document_id IS NOT NULL),
+                            ''
+                        ) AS sources_joined
+                    FROM conversations c
+                    LEFT JOIN conversation_documents cd
+                        ON cd.conversation_id = c.conversation_id
+                    LEFT JOIN documents d
+                        ON d.document_id = cd.document_id
+                       AND d.is_deleted = FALSE
+                    WHERE c.user_id = %s
+                    GROUP BY c.conversation_id, c.title, c.updated_at
+                    ORDER BY c.updated_at DESC
+                    """,
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+                conversations = [_serialize_dashboard_conversation(row) for row in rows]
+        except Exception:
+            conversations = []
+        finally:
+            if conn is not None:
+                conn.close()
+
+    return render_template(
+        'dashboard.html',
+        active_page='dashboard',
+        conversations=conversations,
+    )
 
 @app.route('/chat')
 def chat():
-    return render_template('chat.html', active_page='chat')
+    user_id = session.get("user_id")
+    current_conversation_id = (request.args.get("conversation_id") or "").strip()
+    highlight_new_conversation = request.args.get("new") == "1"
+    conversation_documents = get_conversation_documents(user_id, current_conversation_id)
+    return render_template(
+        'chat.html',
+        active_page='chat',
+        current_conversation_id=current_conversation_id,
+        highlight_new_conversation=highlight_new_conversation,
+        conversation_documents=conversation_documents,
+    )
 
 @app.route('/flashcards')
 def flashcards():
@@ -994,6 +1181,320 @@ def forgot_password_reset():
     finally:
         if conn is not None:
             conn.close()
+
+
+@app.route('/api/conversations/<conversation_id>/documents/upload', methods=['POST'])
+def upload_documents_to_conversation(conversation_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to upload documents.'}), 401
+
+    conversation_id = (conversation_id or "").strip()
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+
+    incoming_files = request.files.getlist("documents")
+    selected_files = []
+    invalid_files = []
+
+    for incoming_file in incoming_files:
+        raw_name = (incoming_file.filename or "").strip()
+        if not raw_name:
+            continue
+        original_name = Path(raw_name).name
+        extension = Path(original_name).suffix.lower()
+        if extension not in ALLOWED_UPLOAD_EXTENSIONS:
+            invalid_files.append(original_name)
+            continue
+        selected_files.append((incoming_file, original_name, extension))
+
+    if invalid_files:
+        return jsonify({
+            'error': f"Unsupported file format. Allowed formats: {_allowed_upload_extensions_text()}",
+            'invalid_files': invalid_files,
+        }), 400
+
+    if not selected_files:
+        return jsonify({'error': 'Please select at least one valid file to upload.'}), 400
+
+    user_upload_dir = UPLOADS_DIR / user_id
+    user_upload_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = None
+    saved_paths = []
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM conversations
+                WHERE conversation_id = %s
+                  AND user_id = %s
+                """,
+                (conversation_id, user_id),
+            )
+            if not cur.fetchone():
+                return jsonify({'error': 'Conversation not found.'}), 404
+
+            uploaded_documents = []
+            for incoming_file, original_name, extension in selected_files:
+                stored_filename = f"{secrets.token_hex(16)}{extension}"
+                destination = user_upload_dir / stored_filename
+                file_hash = hashlib.sha256()
+                file_size_bytes = 0
+
+                incoming_file.stream.seek(0)
+                with destination.open("wb") as output_file:
+                    while True:
+                        chunk = incoming_file.stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        file_size_bytes += len(chunk)
+                        file_hash.update(chunk)
+                        output_file.write(chunk)
+
+                if file_size_bytes <= 0:
+                    destination.unlink(missing_ok=True)
+                    raise ValueError(f"File is empty: {original_name}")
+
+                saved_paths.append(destination)
+                guessed_mime, _ = mimetypes.guess_type(original_name)
+                mime_type = (incoming_file.mimetype or guessed_mime or "application/octet-stream")[:100]
+
+                cur.execute(
+                    """
+                    INSERT INTO documents (
+                        user_id,
+                        original_filename,
+                        stored_filename,
+                        storage_path,
+                        mime_type,
+                        file_extension,
+                        file_size_bytes,
+                        file_hash
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING document_id, created_at
+                    """,
+                    (
+                        user_id,
+                        original_name[:255],
+                        stored_filename,
+                        str(user_upload_dir),
+                        mime_type,
+                        extension.lstrip(".")[:20],
+                        file_size_bytes,
+                        file_hash.hexdigest(),
+                    ),
+                )
+                document_row = cur.fetchone()
+                document_id = document_row[0]
+
+                cur.execute(
+                    """
+                    INSERT INTO conversation_documents (conversation_id, document_id)
+                    VALUES (%s, %s)
+                    """,
+                    (conversation_id, document_id),
+                )
+
+                uploaded_documents.append({
+                    "document_id": str(document_id),
+                    "original_filename": original_name,
+                    "stored_filename": stored_filename,
+                    "file_size_bytes": file_size_bytes,
+                    "mime_type": mime_type,
+                    "file_extension": extension.lstrip("."),
+                    "upload_path": f"{user_id}/{stored_filename}",
+                    "created_at": document_row[1].isoformat() if document_row[1] else None,
+                })
+
+            cur.execute(
+                """
+                UPDATE conversations
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE conversation_id = %s
+                """,
+                (conversation_id,),
+            )
+
+        conn.commit()
+        return jsonify({
+            'message': f"Uploaded {len(uploaded_documents)} file(s) successfully.",
+            'conversation': {
+                "conversation_id": conversation_id,
+            },
+            'documents': uploaded_documents,
+        }), 201
+    except ValueError as e:
+        if conn is not None:
+            conn.rollback()
+        for saved_path in saved_paths:
+            saved_path.unlink(missing_ok=True)
+        return jsonify({'error': str(e)}), 400
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        for saved_path in saved_paths:
+            saved_path.unlink(missing_ok=True)
+        return jsonify({'error': 'Unable to upload documents right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/documents/upload', methods=['POST'])
+def upload_documents():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to upload documents.'}), 401
+
+    incoming_files = request.files.getlist("documents")
+    selected_files = []
+    invalid_files = []
+
+    for incoming_file in incoming_files:
+        raw_name = (incoming_file.filename or "").strip()
+        if not raw_name:
+            continue
+        original_name = Path(raw_name).name
+        extension = Path(original_name).suffix.lower()
+        if extension not in ALLOWED_UPLOAD_EXTENSIONS:
+            invalid_files.append(original_name)
+            continue
+        selected_files.append((incoming_file, original_name, extension))
+
+    if invalid_files:
+        return jsonify({
+            'error': f"Unsupported file format. Allowed formats: {_allowed_upload_extensions_text()}",
+            'invalid_files': invalid_files,
+        }), 400
+
+    if not selected_files:
+        return jsonify({'error': 'Please select at least one valid file to upload.'}), 400
+
+    user_upload_dir = UPLOADS_DIR / user_id
+    user_upload_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = None
+    saved_paths = []
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            title = _compose_upload_conversation_title([name for _, name, _ in selected_files])
+            cur.execute(
+                """
+                INSERT INTO conversations (user_id, title)
+                VALUES (%s, %s)
+                RETURNING conversation_id
+                """,
+                (user_id, title),
+            )
+            conversation_id = cur.fetchone()[0]
+            uploaded_documents = []
+
+            for incoming_file, original_name, extension in selected_files:
+                stored_filename = f"{secrets.token_hex(16)}{extension}"
+                destination = user_upload_dir / stored_filename
+                file_hash = hashlib.sha256()
+                file_size_bytes = 0
+
+                incoming_file.stream.seek(0)
+                with destination.open("wb") as output_file:
+                    while True:
+                        chunk = incoming_file.stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        file_size_bytes += len(chunk)
+                        file_hash.update(chunk)
+                        output_file.write(chunk)
+
+                if file_size_bytes <= 0:
+                    destination.unlink(missing_ok=True)
+                    raise ValueError(f"File is empty: {original_name}")
+
+                saved_paths.append(destination)
+                guessed_mime, _ = mimetypes.guess_type(original_name)
+                mime_type = (incoming_file.mimetype or guessed_mime or "application/octet-stream")[:100]
+
+                cur.execute(
+                    """
+                    INSERT INTO documents (
+                        user_id,
+                        original_filename,
+                        stored_filename,
+                        storage_path,
+                        mime_type,
+                        file_extension,
+                        file_size_bytes,
+                        file_hash
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING document_id, created_at
+                    """,
+                    (
+                        user_id,
+                        original_name[:255],
+                        stored_filename,
+                        str(user_upload_dir),
+                        mime_type,
+                        extension.lstrip(".")[:20],
+                        file_size_bytes,
+                        file_hash.hexdigest(),
+                    ),
+                )
+                document_row = cur.fetchone()
+                document_id = document_row[0]
+
+                cur.execute(
+                    """
+                    INSERT INTO conversation_documents (conversation_id, document_id)
+                    VALUES (%s, %s)
+                    """,
+                    (conversation_id, document_id),
+                )
+
+                uploaded_documents.append({
+                    "document_id": str(document_id),
+                    "original_filename": original_name,
+                    "stored_filename": stored_filename,
+                    "file_size_bytes": file_size_bytes,
+                    "mime_type": mime_type,
+                    "file_extension": extension.lstrip("."),
+                    "upload_path": f"{user_id}/{stored_filename}",
+                    "created_at": document_row[1].isoformat() if document_row[1] else None,
+                })
+
+        conn.commit()
+        conversation_url = (
+            f"/chat?conversation_id={quote(str(conversation_id))}&new=1"
+        )
+        return jsonify({
+            'message': f"Uploaded {len(uploaded_documents)} file(s) successfully.",
+            'conversation': {
+                "conversation_id": str(conversation_id),
+                "title": title,
+            },
+            'conversation_url': conversation_url,
+            'documents': uploaded_documents,
+        }), 201
+    except ValueError as e:
+        if conn is not None:
+            conn.rollback()
+        for saved_path in saved_paths:
+            saved_path.unlink(missing_ok=True)
+        return jsonify({'error': str(e)}), 400
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        for saved_path in saved_paths:
+            saved_path.unlink(missing_ok=True)
+        return jsonify({'error': 'Unable to upload documents right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
 
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):

@@ -29,6 +29,20 @@ const toolboxDocBack = document.getElementById("toolbox-doc-back");
 const chatMessages = document.getElementById("chat-messages");
 const promptRail = document.getElementById("prompt-rail");
 const promptRailNodes = document.getElementById("prompt-rail-nodes");
+const conversationPanel = document.getElementById("chat-conversation-panel");
+const chatUploadModal = document.getElementById("chat-upload-modal");
+const chatUploadModalBackdrop = document.getElementById("chat-upload-modal-backdrop");
+const chatUploadDropzone = document.getElementById("chat-upload-dropzone");
+const chatUploadInput = document.getElementById("chat-upload-input");
+const chatUploadBrowseBtn = document.getElementById("chat-upload-browse-btn");
+const chatUploadCancelBtn = document.getElementById("chat-upload-cancel-btn");
+const chatUploadConfirmBtn = document.getElementById("chat-upload-confirm-btn");
+const chatUploadClearBtn = document.getElementById("chat-upload-clear-btn");
+const chatUploadStatus = document.getElementById("chat-upload-status");
+const chatUploadSelectionSummary = document.getElementById("chat-upload-selection-summary");
+const chatUploadCount = document.getElementById("chat-upload-count");
+const chatUploadFileList = document.getElementById("chat-upload-file-list");
+const chatDropOverlay = document.getElementById("chat-drop-overlay");
 
 let dragging = false;
 let resizing = false;
@@ -42,6 +56,9 @@ let isToolboxDocumentMode = false;
 let widthBeforeDocumentMode = null;
 let promptScrollTicking = false;
 let promptAnchors = [];
+let isConversationUploading = false;
+let conversationDragDepth = 0;
+let pendingConversationUploadFiles = [];
 const promptNodeButtons = new Map();
 const PANEL_STORAGE_KEY = "chat.toolsPanelState";
 
@@ -50,10 +67,153 @@ const PANEL_GUTTER = 8;
 const PANEL_COLLAPSED_WIDTH = 80;
 const PANEL_MIN_WIDTH = 260;
 const PANEL_MAX_WIDTH = 620;
+const ALLOWED_CONVERSATION_UPLOAD_EXTENSIONS = new Set([
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".ppt",
+    ".pptx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+]);
 const getCurrentPanelWidth = () => (isPanelCollapsed ? PANEL_COLLAPSED_WIDTH : expandedPanelWidth);
 const getUploadUrl = (fileName) => `/uploads/${encodeURIComponent(fileName)}`;
 const getPreviewUrl = (fileName) => `/uploads/preview/${encodeURIComponent(fileName)}`;
 const getMaxAllowedPanelWidth = () => Math.min(PANEL_MAX_WIDTH, workspace.clientWidth - 120);
+const getCurrentConversationId = () => String(window.__CURRENT_CONVERSATION_ID__ || "").trim();
+
+const notify = (type, message) => {
+    if (typeof window.notify === "function") {
+        window.notify({ type, message });
+        return;
+    }
+    const toastMethod = window.toast && typeof window.toast[type] === "function"
+        ? window.toast[type]
+        : null;
+    if (toastMethod) {
+        toastMethod(message);
+        return;
+    }
+    if (message) {
+        window.alert(message);
+    }
+};
+
+const hasDraggedFiles = (event) => {
+    const types = Array.from(event.dataTransfer?.types || []);
+    return types.includes("Files");
+};
+
+const setChatUploadStatus = (message, isError = false) => {
+    if (!chatUploadStatus) return;
+    chatUploadStatus.textContent = message || "";
+    chatUploadStatus.className = `text-sm text-center min-h-[20px] ${isError ? "text-red-600" : "text-slate-500"}`;
+};
+
+const setConversationDropOverlay = (active) => {
+    if (!chatDropOverlay) return;
+    chatDropOverlay.classList.toggle("hidden", !active);
+};
+
+const getFileExtension = (fileName) => {
+    const safeName = String(fileName || "").trim().toLowerCase();
+    const dotIndex = safeName.lastIndexOf(".");
+    if (dotIndex <= 0) return "";
+    return safeName.slice(dotIndex);
+};
+
+const formatFileCountLabel = (count) => `${count} file${count === 1 ? "" : "s"}`;
+
+const splitValidAndInvalidUploadFiles = (fileList) => {
+    const files = Array.from(fileList || []);
+    const validFiles = [];
+    const invalidFileNames = [];
+
+    files.forEach((file) => {
+        const extension = getFileExtension(file?.name);
+        if (!ALLOWED_CONVERSATION_UPLOAD_EXTENSIONS.has(extension)) {
+            invalidFileNames.push(file?.name || "Unnamed file");
+            return;
+        }
+        validFiles.push(file);
+    });
+
+    return { validFiles, invalidFileNames };
+};
+
+const renderPendingUploadFiles = () => {
+    if (!chatUploadSelectionSummary || !chatUploadFileList || !chatUploadCount) return;
+    const hasFiles = pendingConversationUploadFiles.length > 0;
+    chatUploadSelectionSummary.classList.toggle("hidden", !hasFiles);
+    chatUploadCount.textContent = formatFileCountLabel(pendingConversationUploadFiles.length);
+    chatUploadFileList.replaceChildren();
+
+    pendingConversationUploadFiles.forEach((file) => {
+        const item = document.createElement("li");
+        item.className = "truncate";
+        item.title = file.name;
+        item.textContent = file.name;
+        chatUploadFileList.appendChild(item);
+    });
+
+    if (chatUploadConfirmBtn) {
+        chatUploadConfirmBtn.disabled = !hasFiles || isConversationUploading;
+    }
+};
+
+const resetPendingUploadFiles = () => {
+    pendingConversationUploadFiles = [];
+    renderPendingUploadFiles();
+};
+
+const queueConversationUploadFiles = (fileList, options = {}) => {
+    const { validFiles, invalidFileNames } = splitValidAndInvalidUploadFiles(fileList);
+    if (!validFiles.length && !invalidFileNames.length) return;
+
+    if (invalidFileNames.length > 0) {
+        const invalidPreview = invalidFileNames.slice(0, 2).join(", ");
+        const remainder = invalidFileNames.length > 2 ? ` and ${invalidFileNames.length - 2} more` : "";
+        notify("warning", `Some files were skipped due to unsupported format: ${invalidPreview}${remainder}.`);
+    }
+
+    pendingConversationUploadFiles = validFiles;
+    if (chatUploadInput) {
+        chatUploadInput.value = "";
+    }
+
+    if (!validFiles.length) {
+        setChatUploadStatus("No supported files selected.", true);
+    } else {
+        setChatUploadStatus(
+            `Ready to upload ${formatFileCountLabel(validFiles.length)}. Please confirm.`,
+            false,
+        );
+    }
+    renderPendingUploadFiles();
+    if (options.openModal !== false) {
+        openChatUploadModal();
+    }
+};
+
+const uploadDroppedFilesImmediately = (fileList) => {
+    const { validFiles, invalidFileNames } = splitValidAndInvalidUploadFiles(fileList);
+    if (!validFiles.length && !invalidFileNames.length) return;
+
+    if (invalidFileNames.length > 0) {
+        const invalidPreview = invalidFileNames.slice(0, 2).join(", ");
+        const remainder = invalidFileNames.length > 2 ? ` and ${invalidFileNames.length - 2} more` : "";
+        notify("warning", `Some files were skipped due to unsupported format: ${invalidPreview}${remainder}.`);
+    }
+
+    if (!validFiles.length) {
+        notify("warning", "No supported files were dropped.");
+        return;
+    }
+
+    uploadFilesToCurrentConversation(validFiles, { closeModalOnSuccess: false });
+};
 
 const savePanelState = () => {
     const payload = {
@@ -178,9 +338,37 @@ const getSourceSelectButtons = () => {
     return Array.from(sourcesDetailedList.querySelectorAll('[data-source-select-btn="true"]'));
 };
 
+const bindSourceSelectButton = (button) => {
+    if (!button || button.dataset.boundSelectHandler === "true") return;
+    button.dataset.boundSelectHandler = "true";
+    const isSelected = button.dataset.selected === "true";
+    applySourceSelectButtonState(button, isSelected);
+    button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const currentlySelected = button.dataset.selected === "true";
+        applySourceSelectButtonState(button, !currentlySelected);
+        updateSendButtonState();
+        updateSelectAllButtonState();
+    });
+};
+
+const bindDocumentTrigger = (trigger) => {
+    if (!trigger || trigger.dataset.boundDocHandler === "true") return;
+    trigger.dataset.boundDocHandler = "true";
+    trigger.addEventListener("click", (event) => {
+        if (event.target.closest('[data-source-select-btn="true"]')) return;
+        const filePath = trigger.dataset.docFile;
+        const fileTitle = trigger.dataset.docTitle || filePath;
+        if (!filePath) return;
+        openToolboxDocument(filePath, fileTitle);
+    });
+};
+
 const updateSelectAllButtonState = () => {
     if (!sourcesSelectAllBtn) return;
     const sourceButtons = getSourceSelectButtons();
+    sourcesSelectAllBtn.classList.toggle("hidden", sourceButtons.length === 0);
     const selectedCount = sourceButtons.filter((button) => button.dataset.selected === "true").length;
     const allSelected = sourceButtons.length > 0 && selectedCount === sourceButtons.length;
     sourcesSelectAllBtn.textContent = allSelected ? "Deselect All" : "Select All";
@@ -198,18 +386,7 @@ const updateSendButtonState = () => {
 const initializeSourceSelectionButtons = () => {
     if (!sourcesDetailedList) return;
     const sourceButtons = getSourceSelectButtons();
-    sourceButtons.forEach((button) => {
-        const isSelected = button.dataset.selected === "true";
-        applySourceSelectButtonState(button, isSelected);
-        button.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const currentlySelected = button.dataset.selected === "true";
-            applySourceSelectButtonState(button, !currentlySelected);
-            updateSendButtonState();
-            updateSelectAllButtonState();
-        });
-    });
+    sourceButtons.forEach(bindSourceSelectButton);
     sourcesSelectAllBtn?.addEventListener("click", () => {
         const buttons = getSourceSelectButtons();
         const allSelected = buttons.length > 0 && buttons.every((button) => button.dataset.selected === "true");
@@ -233,8 +410,8 @@ const showViewerFallback = (fileName) => {
     toolboxDocEmpty.appendChild(text);
 };
 
-const openToolboxDocument = (fileName) => {
-    if (!toolsDocumentContent || !fileName) return;
+const openToolboxDocument = (filePath, displayName = "") => {
+    if (!toolsDocumentContent || !filePath) return;
     if (isPanelCollapsed) {
         isPanelCollapsed = false;
         applyPanelCollapseState();
@@ -245,17 +422,19 @@ const openToolboxDocument = (fileName) => {
         widthBeforeDocumentMode = expandedPanelWidth;
     }
     expandedPanelWidth = clamp(getMaxAllowedPanelWidth(), PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
-    const fileUrl = getUploadUrl(fileName);
-    const isPdf = fileName.toLowerCase().endsWith(".pdf");
-    const isDocx = fileName.toLowerCase().endsWith(".docx");
-    const previewUrl = isPdf ? fileUrl : (isDocx ? getPreviewUrl(fileName) : null);
+    const safeDisplayName = (displayName || filePath).trim();
+    const fileUrl = getUploadUrl(filePath);
+    const filePathLower = filePath.toLowerCase();
+    const isPdf = filePathLower.endsWith(".pdf");
+    const isDocx = filePathLower.endsWith(".docx");
+    const previewUrl = isPdf ? fileUrl : (isDocx ? getPreviewUrl(filePath) : null);
     isToolboxDocumentMode = true;
 
     applyPanelCollapseState();
     snapPanelToSide(dockSide);
 
     if (toolboxDocTitle) {
-        toolboxDocTitle.textContent = fileName;
+        toolboxDocTitle.textContent = safeDisplayName;
     }
     if (toolboxDocOpen) {
         toolboxDocOpen.href = previewUrl || fileUrl;
@@ -273,7 +452,7 @@ const openToolboxDocument = (fileName) => {
             toolboxDocFrame.classList.add("hidden");
         }
         toolboxDocEmpty?.classList.remove("hidden");
-        showViewerFallback(fileName);
+        showViewerFallback(safeDisplayName);
     }
 };
 
@@ -302,15 +481,221 @@ const closeToolboxDocument = () => {
 };
 
 const initializeDocumentViewer = () => {
-    document.querySelectorAll("[data-doc-file]").forEach((trigger) => {
-        trigger.addEventListener("click", (event) => {
-            if (event.target.closest('[data-source-select-btn="true"]')) return;
-            const fileName = trigger.dataset.docFile;
-            if (!fileName) return;
-            openToolboxDocument(fileName);
-        });
-    });
+    document.querySelectorAll("[data-doc-file]").forEach(bindDocumentTrigger);
     toolboxDocBack?.addEventListener("click", closeToolboxDocument);
+};
+
+const createSourceDetailedItem = (documentPayload) => {
+    if (!sourcesDetailedList || !documentPayload?.upload_path || !documentPayload?.original_filename) return;
+    const article = document.createElement("article");
+    article.className = "group rounded-xl border border-gray-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 transition-colors cursor-pointer";
+    article.dataset.docFile = documentPayload.upload_path;
+    article.dataset.docTitle = documentPayload.original_filename;
+    const row = document.createElement("div");
+    row.className = "flex items-center gap-3 px-3 py-2.5";
+
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "h-8 w-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-500";
+    iconWrap.innerHTML = '<i class="fa-regular fa-file-lines"></i>';
+
+    const nameWrap = document.createElement("div");
+    nameWrap.className = "min-w-0 flex-1";
+    const nameText = document.createElement("p");
+    nameText.className = "truncate text-sm font-medium text-slate-700";
+    nameText.title = documentPayload.original_filename;
+    nameText.textContent = documentPayload.original_filename;
+    nameWrap.appendChild(nameText);
+
+    const selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "h-7 w-7 rounded-lg border text-xs transition-colors";
+    selectButton.dataset.sourceSelectBtn = "true";
+    selectButton.dataset.selected = "true";
+    selectButton.setAttribute("aria-pressed", "true");
+    selectButton.title = "Deselect Document";
+    selectButton.innerHTML = '<i class="fa-solid fa-check"></i>';
+
+    row.appendChild(iconWrap);
+    row.appendChild(nameWrap);
+    row.appendChild(selectButton);
+    article.appendChild(row);
+    sourcesDetailedList.prepend(article);
+    bindDocumentTrigger(article);
+    bindSourceSelectButton(selectButton);
+};
+
+const createSourceIconItem = (documentPayload) => {
+    if (!sourcesIconList || !documentPayload?.upload_path || !documentPayload?.original_filename) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "h-10 w-10 rounded-lg hover:bg-gray-100 text-slate-500";
+    button.dataset.docFile = documentPayload.upload_path;
+    button.dataset.docTitle = documentPayload.original_filename;
+    button.title = documentPayload.original_filename;
+    button.innerHTML = '<i class="fa-regular fa-file-lines"></i>';
+    sourcesIconList.prepend(button);
+    bindDocumentTrigger(button);
+};
+
+const openChatUploadModal = () => {
+    if (!chatUploadModal) return;
+    chatUploadModal.classList.remove("hidden");
+    chatUploadModal.classList.add("flex");
+    renderPendingUploadFiles();
+};
+
+const closeChatUploadModal = () => {
+    if (!chatUploadModal) return;
+    chatUploadModal.classList.add("hidden");
+    chatUploadModal.classList.remove("flex");
+    setChatUploadStatus("");
+    resetPendingUploadFiles();
+    if (chatUploadInput) {
+        chatUploadInput.value = "";
+    }
+};
+
+const uploadFilesToCurrentConversation = async (fileList, options = {}) => {
+    const files = Array.from(fileList || []);
+    if (!files.length || isConversationUploading) return;
+
+    const conversationId = getCurrentConversationId();
+    if (!window.__AUTH_USER__ || !window.__AUTH_USER__.user_id) {
+        notify("warning", "Please log in to upload documents.");
+        setChatUploadStatus("Please log in to upload documents.", true);
+        return;
+    }
+    if (!conversationId) {
+        notify("warning", "Please start or open a conversation first.");
+        setChatUploadStatus("No conversation selected.", true);
+        return;
+    }
+
+    isConversationUploading = true;
+    if (chatUploadConfirmBtn) {
+        chatUploadConfirmBtn.disabled = true;
+    }
+    setChatUploadStatus(`Uploading ${files.length} file(s)...`);
+    const formData = new FormData();
+    files.forEach((file) => formData.append("documents", file));
+
+    try {
+        const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/documents/upload`, {
+            method: "POST",
+            body: formData,
+        });
+        let payload = {};
+        try {
+            payload = await response.json();
+        } catch (_error) {
+            payload = {};
+        }
+
+        if (!response.ok) {
+            const errorMessage = payload.error || "Upload failed. Please try again.";
+            setChatUploadStatus(errorMessage, true);
+            notify("error", errorMessage);
+            return;
+        }
+
+        const uploadedDocuments = Array.isArray(payload.documents) ? payload.documents : [];
+        uploadedDocuments.forEach((doc) => {
+            createSourceDetailedItem(doc);
+            createSourceIconItem(doc);
+        });
+        updateSelectAllButtonState();
+        updateSendButtonState();
+
+        const successMessage = payload.message || `Uploaded ${uploadedDocuments.length} file(s).`;
+        setChatUploadStatus(successMessage, false);
+        notify("success", successMessage);
+
+        if (options.closeModalOnSuccess !== false) {
+            closeChatUploadModal();
+        }
+    } catch (_error) {
+        const networkError = "Network error while uploading documents.";
+        setChatUploadStatus(networkError, true);
+        notify("error", networkError);
+    } finally {
+        isConversationUploading = false;
+        renderPendingUploadFiles();
+    }
+};
+
+const initializeConversationUpload = () => {
+    sourcesAddBtn?.addEventListener("click", openChatUploadModal);
+    chatUploadCancelBtn?.addEventListener("click", closeChatUploadModal);
+    chatUploadModalBackdrop?.addEventListener("click", closeChatUploadModal);
+    chatUploadBrowseBtn?.addEventListener("click", () => chatUploadInput?.click());
+    chatUploadClearBtn?.addEventListener("click", () => {
+        resetPendingUploadFiles();
+        setChatUploadStatus("");
+    });
+    chatUploadConfirmBtn?.addEventListener("click", () => {
+        uploadFilesToCurrentConversation(pendingConversationUploadFiles);
+    });
+    chatUploadDropzone?.addEventListener("click", () => {
+        if (isConversationUploading) return;
+        chatUploadInput?.click();
+    });
+    chatUploadInput?.addEventListener("change", () => {
+        queueConversationUploadFiles(chatUploadInput.files, { openModal: true });
+    });
+
+    chatUploadDropzone?.addEventListener("dragover", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        chatUploadDropzone.classList.add("border-brand-500", "bg-brand-100/40");
+    });
+    chatUploadDropzone?.addEventListener("dragleave", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        chatUploadDropzone.classList.remove("border-brand-500", "bg-brand-100/40");
+    });
+    chatUploadDropzone?.addEventListener("drop", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        chatUploadDropzone.classList.remove("border-brand-500", "bg-brand-100/40");
+        queueConversationUploadFiles(event.dataTransfer.files, { openModal: true });
+    });
+
+    const dragArea = conversationPanel || chatMain;
+    dragArea?.addEventListener("dragenter", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        conversationDragDepth += 1;
+        setConversationDropOverlay(true);
+    });
+    dragArea?.addEventListener("dragover", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+    });
+    dragArea?.addEventListener("dragleave", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        conversationDragDepth = Math.max(0, conversationDragDepth - 1);
+        if (conversationDragDepth === 0) {
+            setConversationDropOverlay(false);
+        }
+    });
+    dragArea?.addEventListener("drop", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        conversationDragDepth = 0;
+        setConversationDropOverlay(false);
+        uploadDroppedFilesImmediately(event.dataTransfer.files);
+    });
+
+    window.addEventListener("dragend", () => {
+        conversationDragDepth = 0;
+        setConversationDropOverlay(false);
+    });
+    window.addEventListener("drop", () => {
+        conversationDragDepth = 0;
+        setConversationDropOverlay(false);
+    });
 };
 
 const updatePromptRailDockSide = () => {
@@ -514,6 +899,7 @@ window.addEventListener("resize", () => {
 loadPanelState();
 initializeSourceSelectionButtons();
 initializeDocumentViewer();
+initializeConversationUpload();
 initializePromptRail();
 applyPanelCollapseState();
 updateSectionLayout();
