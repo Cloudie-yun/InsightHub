@@ -21,6 +21,13 @@ import logging
 import mimetypes
 
 from services.document_parser import parse_document
+from services.extraction_store import (
+    build_extraction_payload,
+    build_pending_extraction_payload,
+    save_document_extraction,
+    get_document_extraction as fetch_document_extraction,
+    get_conversation_extractions as fetch_conversation_extractions,
+)
 
 
 app = Flask(__name__)
@@ -155,6 +162,82 @@ def get_conversation_documents(user_id, conversation_id):
             )
             rows = cur.fetchall()
         return [_serialize_conversation_document(row) for row in rows]
+    except Exception:
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_extracted_document_result(user_id, document_id, conversation_id=None):
+    if not user_id or not document_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if conversation_id:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM conversations c
+                    JOIN conversation_documents cd
+                        ON cd.conversation_id = c.conversation_id
+                    WHERE c.user_id = %s
+                      AND c.conversation_id = %s
+                      AND cd.document_id = %s
+                    """,
+                    (user_id, conversation_id, document_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM documents
+                    WHERE user_id = %s
+                      AND document_id = %s
+                      AND is_deleted = FALSE
+                    """,
+                    (user_id, document_id),
+                )
+
+            if not cur.fetchone():
+                return None
+
+            return fetch_document_extraction(
+                cur,
+                document_id=document_id,
+                conversation_id=conversation_id,
+            )
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_conversation_extracted_results(user_id, conversation_id):
+    if not user_id or not conversation_id:
+        return []
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM conversations
+                WHERE user_id = %s
+                  AND conversation_id = %s
+                """,
+                (user_id, conversation_id),
+            )
+            if not cur.fetchone():
+                return []
+
+            return fetch_conversation_extractions(cur, conversation_id=conversation_id)
     except Exception:
         return []
     finally:
@@ -1292,11 +1375,22 @@ def upload_documents_to_conversation(conversation_id):
                 )
                 document_row = cur.fetchone()
                 document_id = document_row[0]
+                pending_payload = build_pending_extraction_payload(document_id=document_id)
+                save_document_extraction(cur, document_id=document_id, extraction_payload=pending_payload)
                 parser_result = parse_document(
                     file_path=destination,
                     document_id=document_id,
                     mime_type=mime_type,
                     original_filename=original_name,
+                )
+                extraction_payload = build_extraction_payload(
+                    document_id=document_id,
+                    parser_result=parser_result,
+                )
+                save_document_extraction(
+                    cur,
+                    document_id=document_id,
+                    extraction_payload=extraction_payload,
                 )
 
                 cur.execute(
@@ -1455,11 +1549,22 @@ def upload_documents():
                 )
                 document_row = cur.fetchone()
                 document_id = document_row[0]
+                pending_payload = build_pending_extraction_payload(document_id=document_id)
+                save_document_extraction(cur, document_id=document_id, extraction_payload=pending_payload)
                 parser_result = parse_document(
                     file_path=destination,
                     document_id=document_id,
                     mime_type=mime_type,
                     original_filename=original_name,
+                )
+                extraction_payload = build_extraction_payload(
+                    document_id=document_id,
+                    parser_result=parser_result,
+                )
+                save_document_extraction(
+                    cur,
+                    document_id=document_id,
+                    extraction_payload=extraction_payload,
                 )
 
                 cur.execute(
