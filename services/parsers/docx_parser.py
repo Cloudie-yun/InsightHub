@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from services.parsers.utils import clean_extracted_text
+
 
 def _dependency_error(package_name):
     return {
@@ -62,7 +64,7 @@ def parse_docx(file_path):
 
             if block_type == "paragraph":
                 paragraph_index += 1
-                text = (block.text or "").strip()
+                text = clean_extracted_text(block.text or "")
                 if not text:
                     continue
                 segments.append(
@@ -87,7 +89,7 @@ def parse_docx(file_path):
             for row_index, row in enumerate(block.rows, start=1):
                 row_text_parts = []
                 for cell in row.cells:
-                    cell_text = (cell.text or "").strip()
+                    cell_text = clean_extracted_text(cell.text or "")
                     if cell_text:
                         row_text_parts.append(cell_text)
                 row_text = " | ".join(row_text_parts).strip()
