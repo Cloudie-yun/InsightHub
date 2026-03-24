@@ -20,6 +20,8 @@ import json
 import logging
 import mimetypes
 
+from services.document_parser import parse_document
+
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -1290,6 +1292,12 @@ def upload_documents_to_conversation(conversation_id):
                 )
                 document_row = cur.fetchone()
                 document_id = document_row[0]
+                parser_result = parse_document(
+                    file_path=destination,
+                    document_id=document_id,
+                    mime_type=mime_type,
+                    original_filename=original_name,
+                )
 
                 cur.execute(
                     """
@@ -1308,6 +1316,7 @@ def upload_documents_to_conversation(conversation_id):
                     "file_extension": extension.lstrip("."),
                     "upload_path": f"{user_id}/{stored_filename}",
                     "created_at": document_row[1].isoformat() if document_row[1] else None,
+                    "parser_result": parser_result,
                 })
 
             cur.execute(
@@ -1446,6 +1455,12 @@ def upload_documents():
                 )
                 document_row = cur.fetchone()
                 document_id = document_row[0]
+                parser_result = parse_document(
+                    file_path=destination,
+                    document_id=document_id,
+                    mime_type=mime_type,
+                    original_filename=original_name,
+                )
 
                 cur.execute(
                     """
@@ -1464,6 +1479,7 @@ def upload_documents():
                     "file_extension": extension.lstrip("."),
                     "upload_path": f"{user_id}/{stored_filename}",
                     "created_at": document_row[1].isoformat() if document_row[1] else None,
+                    "parser_result": parser_result,
                 })
 
         conn.commit()
