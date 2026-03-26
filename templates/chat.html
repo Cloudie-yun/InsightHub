@@ -66,7 +66,7 @@
                                         <p class="truncate text-sm font-medium text-slate-700" title="{{ doc.original_filename }}">{{ doc.original_filename }}</p>
                                         {% if doc.parser_status == "pending" %}
                                         <p class="mt-0.5 text-xs text-brand-700">
-                                            <i class="fa-solid fa-spinner animate-spin mr-1"></i>Processing document...
+                                            <i class="fa-solid fa-spinner animate-spin mr-1"></i>{{ (doc.parser_progress.message if doc.parser_progress else "Processing document...") }}
                                         </p>
                                         {% endif %}
                                     </div>

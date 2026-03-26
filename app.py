@@ -18,6 +18,7 @@ import json
 import logging
 import mimetypes
 import threading
+import time
 
 from services.document_parser import parse_document
 from services.extraction_store import (
@@ -165,6 +166,11 @@ def _serialize_sidebar_conversation(row) -> dict:
 
 
 def _serialize_conversation_document(row) -> dict:
+    raw_metadata = row[8] if len(row) > 8 else None
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_progress = metadata.get("processing") if isinstance(metadata, dict) else None
+    parser_progress = raw_progress if isinstance(raw_progress, dict) else None
+
     return {
         "document_id":       str(row[0]),
         "original_filename": row[1] or "",
@@ -174,6 +180,7 @@ def _serialize_conversation_document(row) -> dict:
         "created_at":        row[5].isoformat() if row[5] else "",
         "upload_path":       f"{row[6]}/{row[2]}" if row[6] and row[2] else "",
         "parser_status":     row[7] or "pending",
+        "parser_progress":   parser_progress,
     }
 
 
@@ -255,7 +262,8 @@ def get_conversation_documents(user_id, conversation_id) -> list:
                     d.mime_type,
                     d.created_at,
                     c.user_id,
-                    de.parser_status
+                    de.parser_status,
+                    de.metadata
                 FROM conversations c
                 JOIN conversation_documents cd ON cd.conversation_id = c.conversation_id
                 JOIN documents d              ON d.document_id       = cd.document_id
@@ -1395,6 +1403,31 @@ def _validate_uploaded_files(incoming_files) -> tuple[list, list]:
     return selected_files, invalid_files
 
 
+def _iso_utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _build_processing_metadata(stage: str, message: str, **extra_fields) -> dict:
+    metadata = {
+        "processing": {
+            "stage": str(stage or "").strip() or "pending",
+            "message": str(message or "").strip() or "Processing document...",
+            "updated_at": _iso_utc_now(),
+        },
+    }
+    processing = metadata["processing"]
+    for key, value in extra_fields.items():
+        if value is not None:
+            processing[key] = value
+    return metadata
+
+
+def _build_pending_payload_with_processing(document_id, stage: str, message: str, **extra_fields) -> dict:
+    payload = build_pending_extraction_payload(document_id=document_id)
+    payload["metadata"] = _build_processing_metadata(stage=stage, message=message, **extra_fields)
+    return payload
+
+
 def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_file, original_name, extension) -> dict:
     """
     Save one file to disk, insert the documents row, mark extraction as pending,
@@ -1435,8 +1468,16 @@ def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_fi
     document_row = cur.fetchone()
     document_id  = document_row[0]
 
-    save_document_extraction(cur, document_id=document_id,
-                             extraction_payload=build_pending_extraction_payload(document_id=document_id))
+    pending_payload = _build_pending_payload_with_processing(
+        document_id=document_id,
+        stage="queued",
+        message="Queued for background parsing.",
+    )
+    save_document_extraction(
+        cur,
+        document_id=document_id,
+        extraction_payload=pending_payload,
+    )
 
     return {
         "document_id":       str(document_id),
@@ -1448,6 +1489,7 @@ def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_fi
         "upload_path":       f"{user_id}/{stored_filename}",
         "created_at":        document_row[1].isoformat() if document_row[1] else None,
         "parser_status":     "pending",
+        "parser_progress":   pending_payload.get("metadata", {}).get("processing"),
         "_parse_job": {
             "document_id":       document_id,
             "destination":       destination,
@@ -1468,11 +1510,86 @@ def _run_document_parse_job(job: dict) -> None:
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
+            last_progress_state: tuple[str, str] = ("", "")
+            last_progress_save_at = 0.0
+
+            def persist_pending_progress(stage: str, message: str, force: bool = False, **extra_fields) -> None:
+                nonlocal last_progress_state, last_progress_save_at
+                normalized_stage = str(stage or "").strip().lower() or "processing"
+                normalized_message = str(message or "").strip() or "Processing document..."
+                now = time.monotonic()
+                current_state = (normalized_stage, normalized_message)
+                if not force and current_state == last_progress_state and (now - last_progress_save_at) < 2.0:
+                    return
+
+                pending_payload = _build_pending_payload_with_processing(
+                    document_id=document_id,
+                    stage=normalized_stage,
+                    message=normalized_message,
+                    **extra_fields,
+                )
+                save_document_extraction(
+                    cur,
+                    document_id=document_id,
+                    extraction_payload=pending_payload,
+                )
+                conn.commit()
+                last_progress_state = current_state
+                last_progress_save_at = now
+
+            persist_pending_progress(
+                stage="starting",
+                message="Starting background parser.",
+                force=True,
+            )
+
+            def on_progress(progress_payload: dict | None) -> None:
+                if not isinstance(progress_payload, dict):
+                    return
+                stage = progress_payload.get("stage") or "processing"
+                message = progress_payload.get("message") or "Processing document..."
+                provider = progress_payload.get("provider") or "parser"
+                provider_state = progress_payload.get("provider_state") or ""
+                batch_id = progress_payload.get("batch_id") or ""
+                poll_attempt = progress_payload.get("poll_attempt")
+                progress_percent = progress_payload.get("progress_percent")
+
+                # Real-time visibility in terminal while background parsing runs.
+                progress_line = (
+                    f"[parse-progress] doc={document_id} stage={stage} "
+                    f"provider={provider} state={provider_state or '-'} "
+                    f"batch={batch_id or '-'} poll={poll_attempt if poll_attempt is not None else '-'} "
+                    f"percent={progress_percent if progress_percent is not None else '-'} "
+                    f"msg={message}"
+                )
+                print(progress_line, flush=True)
+                logger.info(progress_line)
+
+                extra_fields = {}
+                for key in (
+                    "provider",
+                    "provider_state",
+                    "batch_id",
+                    "task_id",
+                    "progress_percent",
+                    "poll_attempt",
+                ):
+                    value = progress_payload.get(key)
+                    if value is not None:
+                        extra_fields[key] = value
+                persist_pending_progress(
+                    stage=stage,
+                    message=message,
+                    force=bool(progress_payload.get("force")),
+                    **extra_fields,
+                )
+
             parser_result = parse_document(
                 file_path=destination,
                 document_id=document_id,
                 mime_type=mime_type,
                 original_filename=original_filename,
+                progress_callback=on_progress,
             )
             extraction_payload = build_extraction_payload(
                 document_id=document_id,

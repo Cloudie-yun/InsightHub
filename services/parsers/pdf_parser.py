@@ -38,6 +38,16 @@ _RUNNING_HEAD_PATTERNS = [
     re.compile(r"^[-–—]{3,}\s*$"),
 ]
 
+_DOI_PATTERN = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Za-z0-9]+\b", re.IGNORECASE)
+_ISBN_PATTERN = re.compile(
+    r"\bISBN(?:-1[03])?:?\s*((?:97[89][-\s]?)?\d(?:[-\s]?\d){8,16}[\dXx])\b",
+    re.IGNORECASE,
+)
+_ISSN_PATTERN = re.compile(
+    r"\bISSN(?:\s*\((?:print|online)\))?\s*[:#]?\s*([0-9]{4}-?[0-9]{3}[0-9Xx])\b",
+    re.IGNORECASE,
+)
+
 _HEADER_BAND_RATIO = 0.08
 _FOOTER_BAND_RATIO = 0.92
 _MIN_DIGITAL_WORDS = 8
@@ -65,6 +75,7 @@ class TextBlock:
     y1: float
     font_size: float
     is_bold: bool
+    is_italic: bool
     direction: tuple[float, float]
     source: str
 
@@ -214,6 +225,7 @@ class TextExtractor:
             lines: list[str] = []
             font_sizes: list[float] = []
             is_bold = False
+            is_italic = False
             direction = (1.0, 0.0)
 
             for line in raw.get("lines", []):
@@ -230,6 +242,8 @@ class TextExtractor:
                     flags = span.get("flags", 0)
                     if flags & 16:
                         is_bold = True
+                    if flags & 2:
+                        is_italic = True
 
                 d = line.get("dir")
                 if isinstance(d, (list, tuple)) and len(d) == 2:
@@ -252,6 +266,7 @@ class TextExtractor:
                     y1=float(y1),
                     font_size=statistics.median(font_sizes) if font_sizes else 0.0,
                     is_bold=is_bold,
+                    is_italic=is_italic,
                     direction=direction,
                     source="digital",
                 )
@@ -303,6 +318,7 @@ class TextExtractor:
                     y1=y1,
                     font_size=0.0,
                     is_bold=False,
+                    is_italic=False,
                     direction=(1.0, 0.0),
                     source="ocr",
                 )
@@ -506,11 +522,27 @@ class StructureTagger:
         compact = " ".join(text.split())
         if not compact or len(compact) > 120:
             return False
-        if re.match(r"^(chapter|section|\d+(?:\.\d+)+)", compact, re.IGNORECASE):
+
+        # Academic numbering patterns:
+        # 1 Introduction, 1. Introduction, 1.1 Motivation, 1.1.1 Details
+        if re.match(r"^\d+\.\d+\.\d+\b", compact):
+            return True
+        if re.match(r"^\d+\.\d+\b", compact):
+            return True
+        if re.match(r"^\d+\.\s*[A-Z]", compact):
+            return True
+        if re.match(r"^\d+\s+[A-Z]", compact):
+            return True
+
+        if re.match(r"^(chapter|section)", compact, re.IGNORECASE):
             return True
         if compact.isupper() and len(compact.split()) <= 12:
             return True
-        if block.is_bold and block.font_size >= median_size * 1.08 and not re.search(r"[.!?]$", compact):
+        if (
+            (block.is_bold or block.is_italic)
+            and block.font_size >= median_size * 1.04
+            and not re.search(r"[.!?]$", compact)
+        ):
             return True
         return False
 
@@ -782,6 +814,79 @@ def _looks_sentence_like(lines: list[str]) -> bool:
     )
 
 
+def _build_running_text_fingerprints(
+    segments: list[dict],
+    page_count: int,
+) -> set[str]:
+    """
+    Positional running-text detector.
+
+    A canonical line fingerprint is considered running text when it repeats
+    across enough pages and stays vertically consistent near header/footer zones.
+    """
+    if page_count < 3:
+        return set()
+
+    min_pages = max(2, ceil(page_count * 0.25))
+    occurrences: dict[str, list[tuple[int, float, str]]] = {}
+
+    for seg in segments:
+        text = seg.get("text", "")
+        if not text:
+            continue
+        page_index = int(seg.get("source_index", 0) or 0)
+        metadata = seg.get("metadata", {})
+        bbox = metadata.get("bbox") or []
+        page_height = float(metadata.get("page_height", 0.0) or 0.0)
+
+        stripped_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if not stripped_lines:
+            continue
+
+        for line_num, line in enumerate(stripped_lines):
+            if len(line) > 200:
+                continue
+            canonical = _canonicalize_running_line(line)
+            if not canonical:
+                continue
+
+            y_fraction = -1.0
+            if len(bbox) == 4 and page_height > 0:
+                seg_y0 = float(bbox[1])
+                seg_y1 = float(bbox[3])
+                seg_h = max(1.0, seg_y1 - seg_y0)
+                line_y = seg_y0 + (line_num / max(1, len(stripped_lines))) * seg_h
+                y_fraction = line_y / page_height
+
+            occurrences.setdefault(canonical, []).append((page_index, y_fraction, line))
+
+    fingerprints: set[str] = set()
+    for canonical, occ in occurrences.items():
+        distinct_pages = {p for p, _, _ in occ}
+        if len(distinct_pages) < min_pages:
+            continue
+
+        y_values = [y for _, y, _ in occ if y >= 0]
+        if len(y_values) >= 2:
+            y_std = statistics.stdev(y_values)
+            if y_std > 0.06:
+                continue
+            y_mean = statistics.mean(y_values)
+            if not (y_mean < 0.15 or y_mean > 0.85):
+                continue
+        elif len(y_values) == 0:
+            # Unknown position everywhere is too risky in conservative mode.
+            continue
+
+        sample_lines = [line for _, _, line in occ]
+        if _looks_sentence_like(sample_lines):
+            continue
+
+        fingerprints.add(canonical)
+
+    return fingerprints
+
+
 def _cluster_running_text_candidates(candidates: list[dict]) -> list[dict]:
     primary: dict[str, list[dict]] = {}
     for cand in candidates:
@@ -861,23 +966,33 @@ def _score_running_cluster(cluster: dict, page_count: int) -> dict:
 def _remove_repeated_running_text(
     segments: list[dict],
     page_count: int,
+    protected_lines: set[str] | None = None,
     return_debug: bool = False,
 ) -> list[dict] | tuple[list[dict], dict]:
     empty_debug = {
-        "clusters_detected": 0,
-        "clusters_removed": 0,
+        "fingerprints_found": 0,
         "lines_removed_total": 0,
-        "removed_clusters": [],
+        "samples": [],
     }
     if page_count < 3:
         return (segments, empty_debug) if return_debug else segments
 
+    fingerprints = _build_running_text_fingerprints(segments, page_count)
+    if not fingerprints:
+        return (segments, empty_debug) if return_debug else segments
+
+    protected_canonicals = {
+        _canonicalize_running_line(line)
+        for line in (protected_lines or set())
+        if (line or "").strip()
+    }
+
+    # Build a quick line lookup with positional zone for conservative stripping.
     candidates: list[dict] = []
     for seg in segments:
         text = seg.get("text", "")
         if not text:
             continue
-        page_index = int(seg.get("source_index", 0) or 0)
         metadata = seg.get("metadata", {})
         bbox = metadata.get("bbox") or []
         page_height = float(metadata.get("page_height", 0.0) or 0.0)
@@ -890,44 +1005,33 @@ def _remove_repeated_running_text(
             candidates.append({
                 "segment_id": seg.get("segment_id"),
                 "line_index": line_index,
-                "page_index": page_index,
                 "raw_line": raw_line,
                 "canonical": _canonicalize_running_line(raw_line),
-                "bbox": bbox,
                 "zone": zone,
+                "page_index": int(seg.get("source_index", 0) or 0),
             })
 
-    clusters = _cluster_running_text_candidates(candidates)
-    removed_line_keys: set[tuple[str, int]] = set()
-    removed_clusters: list[dict] = []
-
-    for cluster in clusters:
-        metrics = _score_running_cluster(cluster, page_count)
-        if metrics["score"] < 0.70 or metrics["page_hits"] < 2:
-            continue
-        if metrics["sentence_like"] and metrics["zone_ratio"] < 0.70:
-            continue
-
-        allowed_members = []
-        for member in cluster["candidates"]:
-            if member["zone"] == "middle" and metrics["score"] < 0.90:
+    protected_first_occurrence_keys: set[tuple[str, int]] = set()
+    if protected_canonicals:
+        for canonical in protected_canonicals:
+            matching = [c for c in candidates if c["canonical"] == canonical]
+            if not matching:
                 continue
-            allowed_members.append(member)
+            matching.sort(key=lambda c: (c["page_index"], c["line_index"]))
+            first = matching[0]
+            protected_first_occurrence_keys.add((str(first["segment_id"]), int(first["line_index"])))
 
-        if not allowed_members:
+    removed_line_keys: set[tuple[str, int]] = set()
+    for cand in candidates:
+        if cand["canonical"] not in fingerprints:
             continue
+        if cand["canonical"] in protected_canonicals and cand["page_index"] <= 1:
+            continue
+        if cand["zone"] == "middle":
+            continue
+        removed_line_keys.add((str(cand["segment_id"]), int(cand["line_index"])))
 
-        for member in allowed_members:
-            removed_line_keys.add((str(member["segment_id"]), int(member["line_index"])))
-
-        sample = sorted({m["raw_line"] for m in allowed_members}, key=len)[0]
-        removed_clusters.append({
-            "sample": sample[:160],
-            "page_coverage": metrics["page_hits"],
-            "confidence": metrics["score"],
-            "zone_ratio": metrics["zone_ratio"],
-            "removed_members": len(allowed_members),
-        })
+    removed_line_keys -= protected_first_occurrence_keys
 
     if not removed_line_keys:
         return (segments, empty_debug) if return_debug else segments
@@ -949,10 +1053,9 @@ def _remove_repeated_running_text(
         cleaned.append(new_seg)
 
     debug = {
-        "clusters_detected": len(clusters),
-        "clusters_removed": len(removed_clusters),
+        "fingerprints_found": len(fingerprints),
         "lines_removed_total": lines_removed_total,
-        "removed_clusters": sorted(removed_clusters, key=lambda c: c["confidence"], reverse=True)[:5],
+        "samples": sorted(fingerprints, key=len)[:8],
     }
     return (cleaned, debug) if return_debug else cleaned
 
@@ -1001,6 +1104,244 @@ def _merge_cross_page_paragraphs(segments: list[dict]) -> list[dict]:
     return merged
 
 
+def _extract_first_page_profile(paragraphs: list[dict]) -> dict:
+    page_one = [
+        seg for seg in paragraphs
+        if int(seg.get("source_index", 0) or 0) == 1
+    ]
+    page_one.sort(key=lambda seg: int(seg.get("paragraph_index", 0) or 0))
+    if not page_one:
+        return {"title": "", "authors": "", "doi": "", "isbn": "", "issn": ""}
+
+    text_chunks = [str(seg.get("text", "")).strip() for seg in page_one if str(seg.get("text", "")).strip()]
+    whole_text = "\n".join(text_chunks)
+
+    doi_match = _DOI_PATTERN.search(whole_text)
+    isbn_match = _ISBN_PATTERN.search(whole_text)
+    issn_match = _ISSN_PATTERN.search(whole_text)
+    doi = doi_match.group(0).strip() if doi_match else ""
+    isbn = isbn_match.group(1).strip() if isbn_match else ""
+    issn = issn_match.group(1).strip() if issn_match else ""
+
+    # Score early-page candidates to avoid misreading running headers / abstract lines as title.
+    title = ""
+    title_candidates: list[tuple[float, str]] = []
+    for seg in page_one[:14]:
+        text = str(seg.get("text", "")).strip()
+        low = text.lower()
+        if not text or len(text) < 10 or len(text) > 240:
+            continue
+
+        metadata = seg.get("metadata", {}) or {}
+        role = str(metadata.get("role", "")).lower()
+        bbox = metadata.get("bbox") or []
+        page_height = float(metadata.get("page_height", 0.0) or 0.0)
+        y0 = float(bbox[1]) if len(bbox) == 4 else 0.0
+        y_ratio = (y0 / page_height) if page_height > 0 else 0.0
+
+        score = 0.0
+        if role == "heading":
+            score += 2.2
+        if y_ratio <= 0.35:
+            score += 1.8
+        if 18 <= len(text) <= 180:
+            score += 1.0
+        if "\n" not in text:
+            score += 0.6
+
+        # Penalize obvious non-title lines.
+        if low.startswith(("abstract", "keywords", "introduction", "doi", "isbn", "issn")):
+            score -= 4.0
+        if _DOI_PATTERN.search(text) or _ISBN_PATTERN.search(text) or _ISSN_PATTERN.search(text):
+            score -= 4.0
+        if "http://" in low or "https://" in low:
+            score -= 2.0
+        if len(re.findall(r"\d", text)) >= 8:
+            score -= 2.0
+        if re.search(r"\b(university|department|faculty|journal|proceedings|conference)\b", low):
+            score -= 1.5
+
+        title_candidates.append((score, text))
+
+    if title_candidates:
+        title_candidates.sort(key=lambda item: item[0], reverse=True)
+        if title_candidates[0][0] >= 1.0:
+            title = title_candidates[0][1]
+
+    authors = ""
+    if title:
+        title_index = next(
+            (idx for idx, seg in enumerate(page_one) if str(seg.get("text", "")).strip() == title),
+            -1,
+        )
+        candidate_window = page_one[title_index + 1:title_index + 6] if title_index >= 0 else page_one[:6]
+    else:
+        candidate_window = page_one[:6]
+
+    for seg in candidate_window:
+        text = str(seg.get("text", "")).strip()
+        if not text:
+            continue
+        low = text.lower()
+        if low.startswith(("abstract", "keywords", "doi", "isbn")):
+            continue
+        if len(text) > 180:
+            continue
+        if "@" in text or "university" in low or "department" in low:
+            continue
+        tokens = re.findall(r"[A-Za-z][A-Za-z\.\-']+", text)
+        if len(tokens) < 2:
+            continue
+        if "," in text or " and " in low or re.search(r"\b[A-Z]\.\s*[A-Z][a-z]+", text):
+            authors = text
+            break
+
+    return {
+        "title": title,
+        "authors": authors,
+        "doi": doi,
+        "isbn": isbn,
+        "issn": issn,
+    }
+
+
+def _looks_like_publication_header(text: str) -> bool:
+    low = text.lower()
+    return bool(
+        "sciencedirect" in low
+        or "procedia" in low
+        or "computer science" in low
+        or "international conference" in low
+        or re.search(r"\bvol(?:ume)?\.?\s*\d+\b", low)
+        or re.search(r"\(\d{4}\)\s*\d{2,5}\s*[–-]\s*\d{2,5}", text)
+    )
+
+
+def _extract_first_page_profile_from_blocks(
+    ordered_blocks: list[TextBlock],
+    page_height: float,
+) -> dict:
+    if not ordered_blocks:
+        return {"title": "", "authors": "", "doi": "", "isbn": "", "issn": ""}
+
+    text_all = "\n".join((b.text or "").strip() for b in ordered_blocks if (b.text or "").strip())
+    doi_match = _DOI_PATTERN.search(text_all)
+    isbn_match = _ISBN_PATTERN.search(text_all)
+    issn_match = _ISSN_PATTERN.search(text_all)
+    doi = doi_match.group(0).strip() if doi_match else ""
+    isbn = isbn_match.group(1).strip() if isbn_match else ""
+    issn = issn_match.group(1).strip() if issn_match else ""
+
+    body_font_sizes = [b.font_size for b in ordered_blocks if b.font_size > 0]
+    body_median = statistics.median(body_font_sizes) if body_font_sizes else 11.0
+
+    title_candidates: list[tuple[float, int, TextBlock]] = []
+    for idx, block in enumerate(ordered_blocks):
+        text = (block.text or "").strip()
+        if not text:
+            continue
+        low = text.lower()
+        y_ratio = (block.y0 / page_height) if page_height > 0 else 0.0
+
+        if y_ratio > 0.60:
+            continue
+        if len(text) < 12 or len(text) > 260:
+            continue
+        if low.startswith(("abstract", "keywords", "introduction", "doi", "isbn", "issn")):
+            continue
+        if _DOI_PATTERN.search(text) or _ISBN_PATTERN.search(text) or _ISSN_PATTERN.search(text):
+            continue
+        if "http://" in low or "https://" in low:
+            continue
+        if _looks_like_publication_header(text):
+            continue
+
+        score = 0.0
+        score += min(5.0, max(0.0, block.font_size - body_median) * 0.9)
+        if block.is_bold:
+            score += 1.2
+        if y_ratio < 0.35:
+            score += 1.0
+        if 18 <= len(text) <= 180:
+            score += 0.8
+        if "\n" not in text:
+            score += 0.3
+
+        title_candidates.append((score, idx, block))
+
+    title = ""
+    title_end_y = 0.0
+    title_end_index = -1
+    if title_candidates:
+        title_candidates.sort(key=lambda item: item[0], reverse=True)
+        _, seed_idx, seed_block = title_candidates[0]
+
+        title_parts = [seed_block.text.strip()]
+        title_end_y = seed_block.y1
+        title_end_index = seed_idx
+        seed_size = max(1.0, seed_block.font_size or body_median)
+
+        # Merge adjacent title line blocks when they look like continuation.
+        for j in range(seed_idx + 1, min(seed_idx + 5, len(ordered_blocks))):
+            nxt = ordered_blocks[j]
+            nxt_text = (nxt.text or "").strip()
+            if not nxt_text:
+                continue
+            if _looks_like_publication_header(nxt_text):
+                continue
+            if re.match(r"^(abstract|keywords)\b", nxt_text, re.IGNORECASE):
+                break
+
+            gap = nxt.y0 - title_end_y
+            size_close = abs((nxt.font_size or seed_size) - seed_size) <= max(1.8, seed_size * 0.22)
+            if gap <= max(12.0, seed_size * 1.3) and size_close and len(nxt_text) <= 180:
+                title_parts.append(nxt_text)
+                title_end_y = nxt.y1
+                title_end_index = j
+            else:
+                break
+
+        title = " ".join(part.strip() for part in title_parts if part.strip())
+        title = re.sub(r"\s+", " ", title).strip()
+
+    authors = ""
+    if title_end_index >= 0:
+        author_parts: list[str] = []
+        for j in range(title_end_index + 1, min(title_end_index + 8, len(ordered_blocks))):
+            block = ordered_blocks[j]
+            text = (block.text or "").strip()
+            if not text:
+                continue
+            low = text.lower()
+            y_ratio = (block.y0 / page_height) if page_height > 0 else 0.0
+            if y_ratio > 0.82:
+                break
+            if re.match(r"^(abstract|keywords)\b", low):
+                break
+            if _DOI_PATTERN.search(text) or _ISBN_PATTERN.search(text) or _ISSN_PATTERN.search(text):
+                continue
+            if _looks_like_publication_header(text):
+                continue
+
+            # Keep author/affiliation lines close to title and before abstract.
+            if len(text) <= 360:
+                author_parts.append(text)
+
+            if len(author_parts) >= 3:
+                break
+
+        authors = " ".join(author_parts).strip()
+        authors = re.sub(r"\s+", " ", authors)
+
+    return {
+        "title": title,
+        "authors": authors,
+        "doi": doi,
+        "isbn": isbn,
+        "issn": issn,
+    }
+
+
 def _dependency_error(package_name: str) -> dict:
     return {
         "code": "missing_dependency",
@@ -1040,6 +1381,8 @@ def parse_pdf(file_path) -> dict:
     all_segments: list[dict] = []
     all_headers: Counter = Counter()
     all_footers: Counter = Counter()
+    first_page_ordered_blocks: list[TextBlock] = []
+    first_page_height = 0.0
 
     try:
         document = fitz.open(file_path)
@@ -1055,6 +1398,9 @@ def parse_pdf(file_path) -> dict:
 
             layouts = layout_detector.detect(blocks, page_width)
             ordered_blocks = orderer.order(blocks, layouts)
+            if page_index == 1:
+                first_page_ordered_blocks = ordered_blocks[:]
+                first_page_height = page_height
 
             table_segments, table_bboxes, table_warnings = _extract_tables(page, page_index)
             metadata["warnings"].extend([f"page_{page_index}:{w}" for w in table_warnings])
@@ -1091,10 +1437,32 @@ def parse_pdf(file_path) -> dict:
         }
         repeated_running = repeated_headers | repeated_footers
 
+        first_page_profile = _extract_first_page_profile_from_blocks(
+            first_page_ordered_blocks,
+            first_page_height,
+        )
+        # Fallback to paragraph-based extraction if block-based profile is incomplete.
+        if not first_page_profile.get("title"):
+            fallback_profile = _extract_first_page_profile(paragraphs)
+            for key, value in fallback_profile.items():
+                if not first_page_profile.get(key) and value:
+                    first_page_profile[key] = value
+        metadata["paper_profile"] = first_page_profile
+        protected_lines = {
+            value.strip()
+            for value in first_page_profile.values()
+            if isinstance(value, str) and value.strip()
+        }
+
         if repeated_running:
             cleaned: list[dict] = []
             for seg in paragraphs:
-                if seg["text"].strip() in repeated_running:
+                seg_text = seg["text"].strip()
+                if (
+                    seg_text in repeated_running
+                    and int(seg.get("source_index", 0) or 0) > 1
+                    and seg_text not in protected_lines
+                ):
                     continue
                 cleaned.append(seg)
             paragraphs = cleaned
@@ -1102,6 +1470,7 @@ def parse_pdf(file_path) -> dict:
         paragraphs, running_text_debug = _remove_repeated_running_text(
             paragraphs,
             metadata["page_count"],
+            protected_lines=protected_lines,
             return_debug=True,
         )
         metadata["running_text_debug"] = running_text_debug

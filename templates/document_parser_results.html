@@ -47,11 +47,62 @@
     </section>
 
     <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
+        <h2 class="text-lg font-semibold text-slate-900">Paper Profile (First Page)</h2>
+        <div class="mt-3 grid gap-3 md:grid-cols-2">
+            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Title</p>
+                <p id="paper-title-value" class="mt-1 text-sm text-slate-800">-</p>
+            </article>
+            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
+                <p class="text-xs uppercase tracking-wide text-slate-500">Authors</p>
+                <p id="paper-authors-value" class="mt-1 text-sm text-slate-800">-</p>
+            </article>
+            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
+                <p class="text-xs uppercase tracking-wide text-slate-500">DOI</p>
+                <p id="paper-doi-value" class="mt-1 text-sm text-slate-800">-</p>
+            </article>
+            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
+                <p class="text-xs uppercase tracking-wide text-slate-500">ISBN</p>
+                <p id="paper-isbn-value" class="mt-1 text-sm text-slate-800">-</p>
+            </article>
+            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
+                <p class="text-xs uppercase tracking-wide text-slate-500">ISSN</p>
+                <p id="paper-issn-value" class="mt-1 text-sm text-slate-800">-</p>
+            </article>
+        </div>
+    </section>
+
+    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
         <div class="flex items-center justify-between gap-3">
             <h2 class="text-lg font-semibold text-slate-900">Extracted Segments</h2>
-            <span id="segment-count" class="text-xs text-slate-500">{{ parser_document.parser_result.segments|length }} segments</span>
+            <div class="flex items-center gap-2">
+                <button
+                    id="copy-extracted-text"
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-gray-50"
+                >
+                    <i class="fa-regular fa-copy"></i>
+                    Copy Extracted Text
+                </button>
+                <span id="segment-count" class="text-xs text-slate-500">{{ parser_document.parser_result.segments|length }} segments</span>
+            </div>
         </div>
         <div id="parser-segments" class="mt-4 space-y-4"></div>
+    </section>
+
+    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
+        <div class="flex items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold text-slate-900">Markdown Output</h2>
+            <button
+                id="copy-markdown-output"
+                type="button"
+                class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-gray-50"
+            >
+                <i class="fa-regular fa-copy"></i>
+                Copy Markdown
+            </button>
+        </div>
+        <pre id="markdown-output" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs whitespace-pre-wrap"></pre>
     </section>
 
     <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
@@ -67,25 +118,175 @@
     </section>
 </div>
 
+<button
+    id="scroll-to-top-btn"
+    type="button"
+    class="hidden fixed bottom-6 right-6 z-40 h-11 w-11 rounded-full bg-brand-600 text-white shadow-lg hover:bg-brand-700 transition-colors"
+    title="Scroll to top"
+>
+    <i class="fa-solid fa-arrow-up"></i>
+</button>
+
 <script>
 (() => {
     let parserDocument = {{ parser_document|tojson }};
+    let pendingStatusPollHandle = null;
     const conversationId = {{ request.args.get('conversation_id')|tojson }};
     const statusText = document.getElementById("reparse-status");
     const reparseBtn = document.getElementById("reparse-btn");
     const container = document.getElementById("parser-segments");
     const normalizedPre = document.getElementById("normalized-json");
     const rawPre = document.getElementById("raw-json");
+    const markdownPre = document.getElementById("markdown-output");
     const normalizedBtn = document.getElementById("show-normalized");
     const rawBtn = document.getElementById("show-raw");
     const statusValue = document.getElementById("parse-status-value");
     const fileTypeValue = document.getElementById("file-type-value");
     const segmentCountValue = document.getElementById("segment-count");
+    const copyExtractedBtn = document.getElementById("copy-extracted-text");
+    const copyMarkdownBtn = document.getElementById("copy-markdown-output");
+    const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
+    const paperTitleValue = document.getElementById("paper-title-value");
+    const paperAuthorsValue = document.getElementById("paper-authors-value");
+    const paperDoiValue = document.getElementById("paper-doi-value");
+    const paperIsbnValue = document.getElementById("paper-isbn-value");
+    const paperIssnValue = document.getElementById("paper-issn-value");
+
+    const escapeHtml = (value) => String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+
+    const renderMarkdownInline = (line) => {
+        let safe = escapeHtml(line);
+        safe = safe.replace(/`([^`]+)`/g, "<code class=\"rounded bg-slate-100 px-1 py-0.5 text-xs\">$1</code>");
+        safe = safe.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+        safe = safe.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+        safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="text-brand-700 underline" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        return safe;
+    };
+
+    const markdownToHtml = (text) => {
+        const lines = String(text || "").split(/\r?\n/);
+        const html = [];
+        let inList = false;
+
+        const closeList = () => {
+            if (inList) {
+                html.push("</ul>");
+                inList = false;
+            }
+        };
+
+        for (const rawLine of lines) {
+            const line = rawLine.trimEnd();
+            if (!line.trim()) {
+                closeList();
+                continue;
+            }
+            if (line.startsWith("### ")) {
+                closeList();
+                html.push(`<h5 class="mt-2 text-sm font-semibold text-slate-800">${renderMarkdownInline(line.slice(4))}</h5>`);
+                continue;
+            }
+            if (line.startsWith("## ")) {
+                closeList();
+                html.push(`<h4 class="mt-2 text-base font-semibold text-slate-900">${renderMarkdownInline(line.slice(3))}</h4>`);
+                continue;
+            }
+            if (line.startsWith("# ")) {
+                closeList();
+                html.push(`<h3 class="mt-2 text-lg font-semibold text-slate-900">${renderMarkdownInline(line.slice(2))}</h3>`);
+                continue;
+            }
+            if (/^\s*[-*]\s+/.test(line)) {
+                if (!inList) {
+                    html.push('<ul class="list-disc pl-5 space-y-1">');
+                    inList = true;
+                }
+                html.push(`<li class="text-sm text-slate-700">${renderMarkdownInline(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
+                continue;
+            }
+
+            closeList();
+            html.push(`<p class="text-sm text-slate-700 leading-relaxed">${renderMarkdownInline(line)}</p>`);
+        }
+
+        closeList();
+        return html.join("");
+    };
 
     const setStatusMessage = (message, isError = false) => {
         if (!statusText) return;
         statusText.textContent = message || "";
         statusText.className = `text-sm min-h-[20px] ${isError ? "text-red-600" : "text-slate-500"}`;
+    };
+
+    const getPendingProgressMessage = () => {
+        const processing = parserDocument?.parser_result?.metadata?.processing || {};
+        const message = typeof processing?.message === "string" ? processing.message.trim() : "";
+        if (message) return message;
+        const state = typeof processing?.provider_state === "string" ? processing.provider_state.trim() : "";
+        return state ? `Processing document (${state})...` : "Processing document...";
+    };
+
+    const stopPendingStatusPolling = () => {
+        if (!pendingStatusPollHandle) return;
+        window.clearInterval(pendingStatusPollHandle);
+        pendingStatusPollHandle = null;
+    };
+
+    const refreshParserStatus = async () => {
+        const documentId = String(parserDocument?.document_id || "").trim();
+        if (!documentId) {
+            stopPendingStatusPolling();
+            return;
+        }
+
+        const currentStatus = String(parserDocument?.parser_result?.parser_status || "").toLowerCase();
+        if (currentStatus !== "pending") {
+            stopPendingStatusPolling();
+            return;
+        }
+
+        try {
+            const params = new URLSearchParams();
+            if (conversationId) {
+                params.set("conversation_id", String(conversationId));
+            }
+            const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}/parser-results${params.toString() ? `?${params.toString()}` : ""}`);
+            if (!response.ok) return;
+            const payload = await response.json();
+            if (!payload || typeof payload !== "object") return;
+            parserDocument = payload;
+            renderParserResult();
+
+            const nextStatus = String(parserDocument?.parser_result?.parser_status || "").toLowerCase();
+            if (nextStatus === "pending") {
+                setStatusMessage(getPendingProgressMessage());
+            } else if (nextStatus === "success") {
+                setStatusMessage("Parsing finished successfully.");
+                stopPendingStatusPolling();
+            } else if (nextStatus === "failed") {
+                setStatusMessage("Parsing failed. Check errors in the JSON section.", true);
+                stopPendingStatusPolling();
+            } else {
+                setStatusMessage(`Parser status: ${nextStatus || "unknown"}.`);
+                stopPendingStatusPolling();
+            }
+        } catch (_error) {
+            // Keep polling on transient network errors.
+        }
+    };
+
+    const ensurePendingStatusPolling = () => {
+        const currentStatus = String(parserDocument?.parser_result?.parser_status || "").toLowerCase();
+        if (currentStatus !== "pending") {
+            stopPendingStatusPolling();
+            return;
+        }
+        if (pendingStatusPollHandle) return;
+        pendingStatusPollHandle = window.setInterval(refreshParserStatus, 5000);
     };
 
     const renderParserResult = () => {
@@ -125,14 +326,14 @@
                     const heading = `${group.source_type || "source"} ${group.source_index}`;
                     const rows = group.segments.map((segment) => {
                         const sourceIndex = segment?.source_index ?? "-";
-                        const text = (segment?.text || "").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+                        const textHtml = markdownToHtml(segment?.text || "");
                         return `
                             <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
                                 <div class="flex items-center justify-between text-xs text-slate-500">
                                     <span>source index: ${sourceIndex}</span>
                                     <span>segment index: ${segment?.segment_index ?? "-"}</span>
                                 </div>
-                                <p class="mt-2 whitespace-pre-wrap text-sm text-slate-700">${text || "(empty)"}</p>
+                                <div class="mt-2 space-y-1">${textHtml || '<p class="text-sm text-slate-500">(empty)</p>'}</div>
                             </article>
                         `;
                     }).join("");
@@ -157,6 +358,7 @@
                 file_type: parserDocument?.parser_result?.file_type,
                 extraction_timestamp: parserDocument?.parser_result?.extraction_timestamp,
                 metadata: parserDocument?.parser_result?.metadata || {},
+                markdown_output: parserDocument?.parser_result?.metadata?.markdown_output || "",
                 errors: parserDocument?.parser_result?.errors || [],
                 grouped_segments: groups,
             },
@@ -167,6 +369,11 @@
         }
         if (rawPre) {
             rawPre.textContent = JSON.stringify(parserDocument, null, 2);
+        }
+        if (markdownPre) {
+            const markdownText = parserDocument?.parser_result?.metadata?.markdown_output
+                || buildCopyableExtractedText();
+            markdownPre.textContent = markdownText || "(empty)";
         }
         if (segmentCountValue) {
             segmentCountValue.textContent = `${segments.length} segments`;
@@ -189,6 +396,73 @@
                 statusValue.classList.add("text-amber-700");
             }
         }
+        const profile = parserDocument?.parser_result?.metadata?.paper_profile || {};
+        if (paperTitleValue) paperTitleValue.textContent = profile?.title || "-";
+        if (paperAuthorsValue) paperAuthorsValue.textContent = profile?.authors || "-";
+        if (paperDoiValue) paperDoiValue.textContent = profile?.doi || "-";
+        if (paperIsbnValue) paperIsbnValue.textContent = profile?.isbn || "-";
+        if (paperIssnValue) paperIssnValue.textContent = profile?.issn || "-";
+    };
+
+    const buildCopyableExtractedText = () => {
+        const segments = Array.isArray(parserDocument?.parser_result?.segments)
+            ? parserDocument.parser_result.segments
+            : [];
+        const ordered = [...segments].sort((a, b) => {
+            const ai = Number(a?.source_index ?? 0);
+            const bi = Number(b?.source_index ?? 0);
+            if (ai !== bi) return ai - bi;
+            const ap = Number(a?.paragraph_index ?? 0);
+            const bp = Number(b?.paragraph_index ?? 0);
+            if (ap !== bp) return ap - bp;
+            const ab = Number(a?.block_index ?? 0);
+            const bb = Number(b?.block_index ?? 0);
+            return ab - bb;
+        });
+
+        const parts = [];
+        for (const segment of ordered) {
+            const sourceType = String(segment?.source_type || "").toLowerCase();
+            if (sourceType === "image") continue;
+            const text = String(segment?.text || "").trim();
+            if (!text) continue;
+
+            const role = String(segment?.metadata?.role || "").toLowerCase();
+            if (sourceType === "paragraph" && role === "heading") {
+                parts.push(`## ${text}`);
+            } else {
+                parts.push(text);
+            }
+        }
+        return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+    };
+
+    const copyToClipboard = async (text) => {
+        if (!text) {
+            setStatusMessage("No extracted text available to copy.", true);
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(text);
+            setStatusMessage("Extracted text copied to clipboard.");
+            return;
+        } catch (_error) {
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.setAttribute("readonly", "");
+            textarea.style.position = "fixed";
+            textarea.style.left = "-9999px";
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand("copy");
+                setStatusMessage("Extracted text copied to clipboard.");
+            } catch (_fallbackError) {
+                setStatusMessage("Unable to copy automatically. Please copy from the segments view.", true);
+            } finally {
+                document.body.removeChild(textarea);
+            }
+        }
     };
 
     const setMode = (mode) => {
@@ -207,7 +481,17 @@
 
     normalizedBtn?.addEventListener("click", () => setMode("normalized"));
     rawBtn?.addEventListener("click", () => setMode("raw"));
+    copyExtractedBtn?.addEventListener("click", async () => {
+        const text = buildCopyableExtractedText();
+        await copyToClipboard(text);
+    });
+    copyMarkdownBtn?.addEventListener("click", async () => {
+        const text = parserDocument?.parser_result?.metadata?.markdown_output
+            || buildCopyableExtractedText();
+        await copyToClipboard(text);
+    });
     reparseBtn?.addEventListener("click", async () => {
+        stopPendingStatusPolling();
         reparseBtn.disabled = true;
         setStatusMessage("Reparsing from stored file (DB save disabled)...");
         try {
@@ -242,14 +526,28 @@
             parserDocument = payload;
             renderParserResult();
             setStatusMessage("Reparse complete. Results are shown below and not saved to DB.");
+            ensurePendingStatusPolling();
         } catch (_error) {
             setStatusMessage("Network error while reparsing.", true);
         } finally {
             reparseBtn.disabled = false;
         }
     });
+    window.addEventListener("scroll", () => {
+        if (!scrollToTopBtn) return;
+        const shouldShow = window.scrollY > 240;
+        scrollToTopBtn.classList.toggle("hidden", !shouldShow);
+    }, { passive: true });
+    scrollToTopBtn?.addEventListener("click", () => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    });
     renderParserResult();
     setMode("normalized");
+    if (String(parserDocument?.parser_result?.parser_status || "").toLowerCase() === "pending") {
+        setStatusMessage(getPendingProgressMessage());
+        ensurePendingStatusPolling();
+        refreshParserStatus();
+    }
 })();
 </script>
 {% endblock %}

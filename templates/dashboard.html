@@ -351,9 +351,13 @@
             }
             window.location.reload();
         } catch (error) {
-            const networkError = "Network error while uploading documents.";
-            setUploadStatus(networkError, true);
-            notify("error", networkError);
+            console.error("Dashboard upload UI error:", error);
+            const isLikelyNetworkError = error instanceof TypeError;
+            const message = isLikelyNetworkError
+                ? "Network error while uploading documents."
+                : "Upload completed but the UI failed to finish. Please refresh.";
+            setUploadStatus(message, true);
+            notify("error", message);
         } finally {
             isUploading = false;
             if (uploadInput) {

@@ -156,6 +156,18 @@ const estimateProcessingWindowForFiles = (files) => {
     };
 };
 
+const getParserProgressMessage = (documentPayload) => {
+    const parserProgress = documentPayload?.parser_progress;
+    if (parserProgress && typeof parserProgress.message === "string" && parserProgress.message.trim()) {
+        return parserProgress.message.trim();
+    }
+    const providerState = String(parserProgress?.provider_state || "").trim().toLowerCase();
+    if (providerState) {
+        return `Processing document (${providerState})...`;
+    }
+    return "Processing document...";
+};
+
 const splitValidAndInvalidUploadFiles = (fileList) => {
     const files = Array.from(fileList || []);
     const validFiles = [];
@@ -544,7 +556,7 @@ const createSourceDetailedItem = (documentPayload) => {
     if (isProcessing) {
         const subText = document.createElement("p");
         subText.className = "mt-0.5 text-xs text-brand-700";
-        subText.innerHTML = '<i class="fa-solid fa-spinner animate-spin mr-1"></i>Processing document...';
+        subText.innerHTML = `<i class="fa-solid fa-spinner animate-spin mr-1"></i>${escapeHtml(getParserProgressMessage(documentPayload))}`;
         nameWrap.appendChild(subText);
     }
 
@@ -553,6 +565,7 @@ const createSourceDetailedItem = (documentPayload) => {
     parseLink.title = "Inspect parser results";
     parseLink.textContent = "Parse";
     if (documentPayload.document_id) {
+        const currentConversationId = getCurrentConversationId();
         const params = new URLSearchParams();
         if (currentConversationId) {
             params.set("conversation_id", currentConversationId);
@@ -695,6 +708,40 @@ const upsertSourceItems = (documentPayload) => {
     createSourceIconItem(documentPayload);
 };
 
+const refreshToolboxSourcesSection = async () => {
+    const conversationId = getCurrentConversationId();
+    if (!conversationId) return;
+
+    const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/documents`);
+    if (!response.ok) {
+        throw new Error(`Failed to refresh toolbox sources: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const documents = Array.isArray(payload.documents) ? payload.documents : [];
+    const liveIds = new Set(
+        documents
+            .map((doc) => String(doc?.document_id || "").trim())
+            .filter(Boolean),
+    );
+
+    // Remove stale items that no longer exist in API response.
+    document.querySelectorAll("[data-doc-id]").forEach((node) => {
+        const id = String(node.dataset.docId || "").trim();
+        if (id && !liveIds.has(id)) {
+            node.remove();
+        }
+    });
+
+    // Upsert each current document without clearing the whole panel first.
+    documents.forEach((doc) => {
+        upsertSourceItems(doc);
+    });
+
+    updateSelectAllButtonState();
+    updateSendButtonState();
+};
+
 const getPendingDocumentIds = () => {
     const ids = new Set();
     document.querySelectorAll("[data-doc-id][data-parser-status]").forEach((node) => {
@@ -725,25 +772,10 @@ const refreshPendingSourceStates = async () => {
         stopPendingSourcePolling();
         return;
     }
-
     try {
-        const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/documents`);
-        if (!response.ok) return;
-
-        const payload = await response.json();
-        const documents = Array.isArray(payload.documents) ? payload.documents : [];
-        let changed = false;
-
-        documents.forEach((doc) => {
-            const documentId = String(doc?.document_id || "").trim();
-            if (!documentId || !pendingIds.has(documentId)) return;
-            upsertSourceItems(doc);
-            changed = true;
-        });
-
-        if (changed) {
-            updateSelectAllButtonState();
-            updateSendButtonState();
+        await refreshToolboxSourcesSection();
+        if (!getPendingDocumentIds().size) {
+            stopPendingSourcePolling();
         }
     } catch (_error) {
         // Keep polling on transient network/backend errors.
@@ -806,12 +838,12 @@ const uploadFilesToCurrentConversation = async (fileList, options = {}) => {
     const formData = new FormData();
     files.forEach((file) => formData.append("documents", file));
 
+    let payload = {};
     try {
         const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/documents/upload`, {
             method: "POST",
             body: formData,
         });
-        let payload = {};
         try {
             payload = await response.json();
         } catch (_error) {
@@ -825,14 +857,28 @@ const uploadFilesToCurrentConversation = async (fileList, options = {}) => {
             notify("error", errorMessage);
             return;
         }
+    } catch (error) {
+        console.error("Conversation upload request failed:", error);
+        const networkError = "Network error while uploading documents.";
+        removeProcessingSourceItems(processingItemIds);
+        setChatUploadStatus(networkError, true);
+        notify("error", networkError);
+        return;
+    }
 
+    try {
         const uploadedDocuments = Array.isArray(payload.documents) ? payload.documents : [];
         removeProcessingSourceItems(processingItemIds);
-        uploadedDocuments.forEach((doc) => {
-            upsertSourceItems(doc);
-        });
-        updateSelectAllButtonState();
-        updateSendButtonState();
+        try {
+            await refreshToolboxSourcesSection();
+        } catch (refreshError) {
+            console.error("Toolbox refresh failed, using upload payload fallback:", refreshError);
+            uploadedDocuments.forEach((doc) => {
+                upsertSourceItems(doc);
+            });
+            updateSelectAllButtonState();
+            updateSendButtonState();
+        }
         if (uploadedDocuments.some((doc) => String(doc?.parser_status || "").toLowerCase() === PENDING_PARSER_STATUS)) {
             ensurePendingSourcePolling();
             refreshPendingSourceStates();
@@ -845,11 +891,11 @@ const uploadFilesToCurrentConversation = async (fileList, options = {}) => {
         if (options.closeModalOnSuccess !== false) {
             closeChatUploadModal({ force: true });
         }
-    } catch (_error) {
-        const networkError = "Network error while uploading documents.";
-        removeProcessingSourceItems(processingItemIds);
-        setChatUploadStatus(networkError, true);
-        notify("error", networkError);
+    } catch (error) {
+        console.error("Conversation upload UI refresh failed:", error);
+        const uiWarn = "Uploaded successfully. Sources panel sync is delayed; it will auto-update shortly.";
+        setChatUploadStatus(uiWarn, false);
+        notify("warning", uiWarn);
     } finally {
         isConversationUploading = false;
         renderPendingUploadFiles();
