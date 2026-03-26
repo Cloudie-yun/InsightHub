@@ -7,14 +7,25 @@
             <h1 class="text-2xl font-bold text-slate-900">Document Parser Results</h1>
             <p class="text-sm text-slate-500">Inspect extraction output for debugging parser quality.</p>
         </div>
-        <a
-            href="{{ url_for('chat') }}{% if request.args.get('conversation_id') %}?conversation_id={{ request.args.get('conversation_id') }}{% endif %}"
-            class="inline-flex items-center gap-2 self-start rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-gray-50"
-        >
-            <i class="fa-solid fa-arrow-left"></i>
-            Back to chat
-        </a>
+        <div class="flex flex-wrap items-center gap-2 self-start">
+            <button
+                id="reparse-btn"
+                type="button"
+                class="inline-flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700 hover:bg-brand-100 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+                <i class="fa-solid fa-rotate-right"></i>
+                Reparse (no save)
+            </button>
+            <a
+                href="{{ url_for('chat') }}{% if request.args.get('conversation_id') %}?conversation_id={{ request.args.get('conversation_id') }}{% endif %}"
+                class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-gray-50"
+            >
+                <i class="fa-solid fa-arrow-left"></i>
+                Back to chat
+            </a>
+        </div>
     </header>
+    <p id="reparse-status" class="text-sm text-slate-500 min-h-[20px]"></p>
 
     <section class="grid gap-4 md:grid-cols-3">
         <article class="rounded-xl border border-gray-200 bg-white p-4">
@@ -23,13 +34,13 @@
         </article>
         <article class="rounded-xl border border-gray-200 bg-white p-4">
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Type</p>
-            <p class="mt-1 text-sm font-medium text-slate-800">
+            <p id="file-type-value" class="mt-1 text-sm font-medium text-slate-800">
                 {{ parser_document.parser_result.file_type or parser_document.file_extension or parser_document.mime_type or 'Unknown' }}
             </p>
         </article>
         <article class="rounded-xl border border-gray-200 bg-white p-4">
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Parse status</p>
-            <p class="mt-1 text-sm font-semibold {% if parser_document.parser_result.parser_status == 'success' %}text-emerald-700{% elif parser_document.parser_result.parser_status == 'failed' %}text-red-700{% else %}text-amber-700{% endif %}">
+            <p id="parse-status-value" class="mt-1 text-sm font-semibold {% if parser_document.parser_result.parser_status == 'success' %}text-emerald-700{% elif parser_document.parser_result.parser_status == 'failed' %}text-red-700{% else %}text-amber-700{% endif %}">
                 {{ parser_document.parser_result.parser_status or 'unknown' }}
             </p>
         </article>
@@ -38,7 +49,7 @@
     <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
         <div class="flex items-center justify-between gap-3">
             <h2 class="text-lg font-semibold text-slate-900">Extracted Segments</h2>
-            <span class="text-xs text-slate-500">{{ parser_document.parser_result.segments|length }} segments</span>
+            <span id="segment-count" class="text-xs text-slate-500">{{ parser_document.parser_result.segments|length }} segments</span>
         </div>
         <div id="parser-segments" class="mt-4 space-y-4"></div>
     </section>
@@ -58,92 +69,127 @@
 
 <script>
 (() => {
-    const parserDocument = {{ parser_document|tojson }};
-    const segments = Array.isArray(parserDocument?.parser_result?.segments)
-        ? parserDocument.parser_result.segments
-        : [];
-
-    const groupedSegments = segments.reduce((acc, segment) => {
-        const sourceType = segment?.source_type || "page";
-        const sourceIndex = Number.isFinite(segment?.source_index)
-            ? segment.source_index
-            : (segment?.source_index ?? "unknown");
-        const key = `${sourceType}:${sourceIndex}`;
-        if (!acc[key]) {
-            acc[key] = {
-                source_type: sourceType,
-                source_index: sourceIndex,
-                segments: [],
-            };
-        }
-        acc[key].segments.push(segment);
-        return acc;
-    }, {});
-
-    const groups = Object.values(groupedSegments).sort((a, b) => {
-        const aIndex = Number(a.source_index);
-        const bIndex = Number(b.source_index);
-        if (Number.isFinite(aIndex) && Number.isFinite(bIndex)) {
-            return aIndex - bIndex;
-        }
-        return String(a.source_index).localeCompare(String(b.source_index));
-    });
-
+    let parserDocument = {{ parser_document|tojson }};
+    const conversationId = {{ request.args.get('conversation_id')|tojson }};
+    const statusText = document.getElementById("reparse-status");
+    const reparseBtn = document.getElementById("reparse-btn");
     const container = document.getElementById("parser-segments");
-    if (container) {
-        if (!groups.length) {
-            container.innerHTML = '<p class="text-sm text-slate-500">No extraction segments available.</p>';
-        } else {
-            container.innerHTML = groups.map((group) => {
-                const heading = `${group.source_type || "source"} ${group.source_index}`;
-                const rows = group.segments.map((segment) => {
-                    const sourceIndex = segment?.source_index ?? "-";
-                    const text = (segment?.text || "").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-                    return `
-                        <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                            <div class="flex items-center justify-between text-xs text-slate-500">
-                                <span>source index: ${sourceIndex}</span>
-                                <span>segment index: ${segment?.segment_index ?? "-"}</span>
-                            </div>
-                            <p class="mt-2 whitespace-pre-wrap text-sm text-slate-700">${text || "(empty)"}</p>
-                        </article>
-                    `;
-                }).join("");
-
-                return `
-                    <section class="rounded-xl border border-gray-200 p-3 md:p-4">
-                        <h3 class="text-sm font-semibold text-slate-800 uppercase tracking-wide">${heading}</h3>
-                        <div class="mt-3 space-y-2">${rows}</div>
-                    </section>
-                `;
-            }).join("");
-        }
-    }
-
     const normalizedPre = document.getElementById("normalized-json");
     const rawPre = document.getElementById("raw-json");
     const normalizedBtn = document.getElementById("show-normalized");
     const rawBtn = document.getElementById("show-raw");
+    const statusValue = document.getElementById("parse-status-value");
+    const fileTypeValue = document.getElementById("file-type-value");
+    const segmentCountValue = document.getElementById("segment-count");
 
-    const normalizedPayload = {
-        document_id: parserDocument?.document_id,
-        original_filename: parserDocument?.original_filename,
-        file_extension: parserDocument?.file_extension,
-        mime_type: parserDocument?.mime_type,
-        parser_result: {
-            parser_status: parserDocument?.parser_result?.parser_status,
-            parser_version: parserDocument?.parser_result?.parser_version,
-            file_type: parserDocument?.parser_result?.file_type,
-            extraction_timestamp: parserDocument?.parser_result?.extraction_timestamp,
-            metadata: parserDocument?.parser_result?.metadata || {},
-            errors: parserDocument?.parser_result?.errors || [],
-            grouped_segments: groups,
-        },
+    const setStatusMessage = (message, isError = false) => {
+        if (!statusText) return;
+        statusText.textContent = message || "";
+        statusText.className = `text-sm min-h-[20px] ${isError ? "text-red-600" : "text-slate-500"}`;
     };
 
-    if (normalizedPre) {
-        normalizedPre.textContent = JSON.stringify(normalizedPayload, null, 2);
-    }
+    const renderParserResult = () => {
+        const segments = Array.isArray(parserDocument?.parser_result?.segments)
+            ? parserDocument.parser_result.segments
+            : [];
+        const groupedSegments = segments.reduce((acc, segment) => {
+            const sourceType = segment?.source_type || "page";
+            const sourceIndex = Number.isFinite(segment?.source_index)
+                ? segment.source_index
+                : (segment?.source_index ?? "unknown");
+            const key = `${sourceType}:${sourceIndex}`;
+            if (!acc[key]) {
+                acc[key] = {
+                    source_type: sourceType,
+                    source_index: sourceIndex,
+                    segments: [],
+                };
+            }
+            acc[key].segments.push(segment);
+            return acc;
+        }, {});
+        const groups = Object.values(groupedSegments).sort((a, b) => {
+            const aIndex = Number(a.source_index);
+            const bIndex = Number(b.source_index);
+            if (Number.isFinite(aIndex) && Number.isFinite(bIndex)) {
+                return aIndex - bIndex;
+            }
+            return String(a.source_index).localeCompare(String(b.source_index));
+        });
+
+        if (container) {
+            if (!groups.length) {
+                container.innerHTML = '<p class="text-sm text-slate-500">No extraction segments available.</p>';
+            } else {
+                container.innerHTML = groups.map((group) => {
+                    const heading = `${group.source_type || "source"} ${group.source_index}`;
+                    const rows = group.segments.map((segment) => {
+                        const sourceIndex = segment?.source_index ?? "-";
+                        const text = (segment?.text || "").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+                        return `
+                            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
+                                <div class="flex items-center justify-between text-xs text-slate-500">
+                                    <span>source index: ${sourceIndex}</span>
+                                    <span>segment index: ${segment?.segment_index ?? "-"}</span>
+                                </div>
+                                <p class="mt-2 whitespace-pre-wrap text-sm text-slate-700">${text || "(empty)"}</p>
+                            </article>
+                        `;
+                    }).join("");
+                    return `
+                        <section class="rounded-xl border border-gray-200 p-3 md:p-4">
+                            <h3 class="text-sm font-semibold text-slate-800 uppercase tracking-wide">${heading}</h3>
+                            <div class="mt-3 space-y-2">${rows}</div>
+                        </section>
+                    `;
+                }).join("");
+            }
+        }
+
+        const normalizedPayload = {
+            document_id: parserDocument?.document_id,
+            original_filename: parserDocument?.original_filename,
+            file_extension: parserDocument?.file_extension,
+            mime_type: parserDocument?.mime_type,
+            parser_result: {
+                parser_status: parserDocument?.parser_result?.parser_status,
+                parser_version: parserDocument?.parser_result?.parser_version,
+                file_type: parserDocument?.parser_result?.file_type,
+                extraction_timestamp: parserDocument?.parser_result?.extraction_timestamp,
+                metadata: parserDocument?.parser_result?.metadata || {},
+                errors: parserDocument?.parser_result?.errors || [],
+                grouped_segments: groups,
+            },
+        };
+
+        if (normalizedPre) {
+            normalizedPre.textContent = JSON.stringify(normalizedPayload, null, 2);
+        }
+        if (rawPre) {
+            rawPre.textContent = JSON.stringify(parserDocument, null, 2);
+        }
+        if (segmentCountValue) {
+            segmentCountValue.textContent = `${segments.length} segments`;
+        }
+        if (fileTypeValue) {
+            fileTypeValue.textContent = parserDocument?.parser_result?.file_type
+                || parserDocument?.file_extension
+                || parserDocument?.mime_type
+                || "Unknown";
+        }
+        if (statusValue) {
+            const parserStatus = parserDocument?.parser_result?.parser_status || "unknown";
+            statusValue.textContent = parserStatus;
+            statusValue.classList.remove("text-emerald-700", "text-red-700", "text-amber-700");
+            if (parserStatus === "success") {
+                statusValue.classList.add("text-emerald-700");
+            } else if (parserStatus === "failed") {
+                statusValue.classList.add("text-red-700");
+            } else {
+                statusValue.classList.add("text-amber-700");
+            }
+        }
+    };
 
     const setMode = (mode) => {
         const showRaw = mode === "raw";
@@ -161,6 +207,48 @@
 
     normalizedBtn?.addEventListener("click", () => setMode("normalized"));
     rawBtn?.addEventListener("click", () => setMode("raw"));
+    reparseBtn?.addEventListener("click", async () => {
+        reparseBtn.disabled = true;
+        setStatusMessage("Reparsing from stored file (DB save disabled)...");
+        try {
+            const params = new URLSearchParams();
+            if (conversationId) {
+                params.set("conversation_id", String(conversationId));
+            }
+            const queryString = params.toString();
+            const response = await fetch(
+                `/api/documents/${encodeURIComponent(parserDocument?.document_id || "")}/reparse${queryString ? `?${queryString}` : ""}`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        persist_extraction: false,
+                        conversation_id: conversationId || null,
+                    }),
+                },
+            );
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (_err) {
+                payload = {};
+            }
+            if (!response.ok) {
+                setStatusMessage(payload?.error || "Reparse failed.", true);
+                return;
+            }
+            parserDocument = payload;
+            renderParserResult();
+            setStatusMessage("Reparse complete. Results are shown below and not saved to DB.");
+        } catch (_error) {
+            setStatusMessage("Network error while reparsing.", true);
+        } finally {
+            reparseBtn.disabled = false;
+        }
+    });
+    renderParserResult();
     setMode("normalized");
 })();
 </script>

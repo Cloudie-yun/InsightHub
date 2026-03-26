@@ -36,7 +36,12 @@ def build_pending_extraction_payload(document_id, parser_version=PARSER_VERSION)
 
 def build_extraction_payload(document_id, parser_result, parser_version=PARSER_VERSION):
     parser_errors = parser_result.get("errors", [])
-    parser_status = PARSER_STATUS_SUCCESS if not parser_errors else PARSER_STATUS_FAILED
+    has_segments = bool(parser_result.get("segments"))
+    parser_status = (
+        PARSER_STATUS_SUCCESS if has_segments and not parser_errors
+        else PARSER_STATUS_FAILED if not has_segments
+        else "partial"  # or add a PARSER_STATUS_PARTIAL constant
+    )
     extraction_timestamp = datetime.now(timezone.utc)
 
     return {

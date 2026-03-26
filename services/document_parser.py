@@ -25,15 +25,27 @@ PARSER_BY_TYPE = {
 
 
 def _segment_sort_key(segment):
+    def _safe_int(value, default=0):
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     source_type_order = {
         "page": 0,
         "slide": 1,
+        "paragraph": 2,
+        "table": 3,
+        "formula": 4,
+        "image": 5,
     }
     return (
         source_type_order.get(segment.get("source_type"), 99),
-        segment.get("source_index", 0),
-        segment.get("block_index", 0),
-        segment.get("paragraph_index", 0),
+        _safe_int(segment.get("source_index"), 0),
+        _safe_int(segment.get("block_index"), 0),
+        _safe_int(segment.get("paragraph_index"), 0),
         segment.get("segment_id", ""),
     )
 

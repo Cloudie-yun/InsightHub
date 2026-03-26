@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="min-h-full flex items-center justify-center px-6 py-12">
+    <div class="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-sm p-10 text-center">
+        <div class="mx-auto mb-5 h-16 w-16 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center">
+            <i class="fa-solid fa-triangle-exclamation text-2xl"></i>
+        </div>
+
+        <h1 class="text-3xl font-extrabold text-slate-900">Conversation Not Found</h1>
+        <p class="mt-3 text-slate-600">
+            The conversation you requested does not exist, or you no longer have access to it.
+        </p>
+
+        {% if requested_conversation_id %}
+        <p class="mt-2 text-xs text-slate-400 break-all">
+            Conversation ID: {{ requested_conversation_id }}
+        </p>
+        {% endif %}
+
+        <div class="mt-8">
+            <a href="{{ url_for('dashboard') }}"
+               class="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition-colors">
+                <i class="fa-solid fa-house"></i>
+                <span>Back to Dashboard</span>
+            </a>
+        </div>
+    </div>
+</section>
+{% endblock %}
