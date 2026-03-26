@@ -28,7 +28,7 @@
                     <span class="material-symbols-outlined">dock_to_right</span>
                 </button>
             </div>
-            <div id="floating-tools-body" class="flex-1 min-h-0 h-full flex flex-col">
+            <div id="floating-tools-body" class="relative flex-1 min-h-0 h-full flex flex-col">
                 <div id="floating-tools-default-content" class="flex-1 min-h-0 flex flex-col">
                 <section id="sources-section" class="tool-section flex-1 min-h-0 border-b border-gray-200 flex flex-col" data-open="true">
                     <div id="sources-header" class="px-3 py-2 border-b border-gray-100 flex items-center gap-2">
@@ -56,6 +56,7 @@
                                 data-doc-file="{{ doc.upload_path }}"
                                 data-doc-title="{{ doc.original_filename }}"
                                 data-doc-id="{{ doc.document_id }}"
+                                data-parser-status="{{ doc.parser_status }}"
                             >
                                 <div class="flex items-center gap-3 px-3 py-2.5">
                                     <span class="h-8 w-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-500">
@@ -63,7 +64,13 @@
                                     </span>
                                     <div class="min-w-0 flex-1">
                                         <p class="truncate text-sm font-medium text-slate-700" title="{{ doc.original_filename }}">{{ doc.original_filename }}</p>
+                                        {% if doc.parser_status == "pending" %}
+                                        <p class="mt-0.5 text-xs text-brand-700">
+                                            <i class="fa-solid fa-spinner animate-spin mr-1"></i>Processing document...
+                                        </p>
+                                        {% endif %}
                                     </div>
+                                    {% if doc.parser_status != "pending" %}
                                     <a
                                         href="{{ url_for('document_parser_results', document_id=doc.document_id, conversation_id=current_conversation_id) }}"
                                         class="h-7 px-2 inline-flex items-center rounded-lg border border-gray-200 text-xs text-slate-500 hover:text-brand-700 hover:border-brand-300 hover:bg-brand-50"
@@ -71,6 +78,13 @@
                                     >
                                         Parse
                                     </a>
+                                    {% endif %}
+                                    {% if doc.parser_status == "pending" %}
+                                    <span class="h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-brand-50 text-xs text-brand-700">
+                                        Processing
+                                    </span>
+                                    {% endif %}
+                                    {% if doc.parser_status != "pending" %}
                                     <button
                                         type="button"
                                         class="h-7 w-7 rounded-lg border text-xs transition-colors"
@@ -81,6 +95,7 @@
                                     >
                                         <i class="fa-solid fa-check"></i>
                                     </button>
+                                    {% endif %}
                                 </div>
                             </article>
                             {% endfor %}
@@ -89,12 +104,18 @@
                             {% for doc in conversation_documents %}
                             <button
                                 type="button"
-                                class="h-10 w-10 rounded-lg hover:bg-gray-100 text-slate-500"
+                                class="h-10 w-10 rounded-lg {% if doc.parser_status == 'pending' %}bg-brand-50 text-brand-700 border border-brand-200{% else %}hover:bg-gray-100 text-slate-500{% endif %}"
                                 data-doc-file="{{ doc.upload_path }}"
                                 data-doc-title="{{ doc.original_filename }}"
+                                data-doc-id="{{ doc.document_id }}"
+                                data-parser-status="{{ doc.parser_status }}"
                                 title="{{ doc.original_filename }}"
                             >
+                                {% if doc.parser_status == "pending" %}
+                                <i class="fa-solid fa-spinner animate-spin"></i>
+                                {% else %}
                                 <i class="fa-regular fa-file-lines"></i>
+                                {% endif %}
                             </button>
                             {% endfor %}
                         </div>

@@ -59,8 +59,11 @@ let promptAnchors = [];
 let isConversationUploading = false;
 let conversationDragDepth = 0;
 let pendingConversationUploadFiles = [];
+let pendingSourceStatusPollHandle = null;
 const promptNodeButtons = new Map();
 const PANEL_STORAGE_KEY = "chat.toolsPanelState";
+const PENDING_PARSER_STATUS = "pending";
+const PENDING_SOURCE_POLL_INTERVAL_MS = 5000;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const PANEL_GUTTER = 8;
@@ -125,6 +128,33 @@ const getFileExtension = (fileName) => {
 };
 
 const formatFileCountLabel = (count) => `${count} file${count === 1 ? "" : "s"}`;
+
+const formatDurationLabel = (seconds) => {
+    const safeSeconds = Math.max(1, Math.round(seconds));
+    if (safeSeconds < 60) return `${safeSeconds}s`;
+    const mins = Math.round(safeSeconds / 60);
+    return `${mins} min${mins === 1 ? "" : "s"}`;
+};
+
+const estimateProcessingSecondsForFile = (file) => {
+    const sizeMb = Math.max(0, Number(file?.size || 0) / (1024 * 1024));
+    // Rough heuristic for upload + document parse.
+    // Tuned to avoid under-promising on medium/large PDFs.
+    const seconds = 18 + (sizeMb * 4.2);
+    return Math.min(900, Math.max(20, Math.round(seconds)));
+};
+
+const estimateProcessingWindowForFiles = (files) => {
+    const estimates = files.map(estimateProcessingSecondsForFile);
+    const total = estimates.reduce((sum, value) => sum + value, 0);
+    const minSeconds = Math.round(total * 0.75);
+    const maxSeconds = Math.round(total * 1.35);
+    return {
+        minSeconds,
+        maxSeconds,
+        label: `${formatDurationLabel(minSeconds)} - ${formatDurationLabel(maxSeconds)}`,
+    };
+};
 
 const splitValidAndInvalidUploadFiles = (fileList) => {
     const files = Array.from(fileList || []);
@@ -487,11 +517,16 @@ const initializeDocumentViewer = () => {
 
 const createSourceDetailedItem = (documentPayload) => {
     if (!sourcesDetailedList || !documentPayload?.upload_path || !documentPayload?.original_filename) return;
+    const parserStatus = String(documentPayload?.parser_status || "").toLowerCase() || PENDING_PARSER_STATUS;
+    const isProcessing = parserStatus === PENDING_PARSER_STATUS;
     const article = document.createElement("article");
-    article.className = "group rounded-xl border border-gray-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 transition-colors cursor-pointer";
+    article.className = isProcessing
+        ? "group rounded-xl border border-brand-200 bg-brand-50/40 transition-colors cursor-pointer"
+        : "group rounded-xl border border-gray-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 transition-colors cursor-pointer";
     article.dataset.docFile = documentPayload.upload_path;
     article.dataset.docTitle = documentPayload.original_filename;
     article.dataset.docId = documentPayload.document_id || "";
+    article.dataset.parserStatus = parserStatus;
     const row = document.createElement("div");
     row.className = "flex items-center gap-3 px-3 py-2.5";
 
@@ -506,6 +541,12 @@ const createSourceDetailedItem = (documentPayload) => {
     nameText.title = documentPayload.original_filename;
     nameText.textContent = documentPayload.original_filename;
     nameWrap.appendChild(nameText);
+    if (isProcessing) {
+        const subText = document.createElement("p");
+        subText.className = "mt-0.5 text-xs text-brand-700";
+        subText.innerHTML = '<i class="fa-solid fa-spinner animate-spin mr-1"></i>Processing document...';
+        nameWrap.appendChild(subText);
+    }
 
     const parseLink = document.createElement("a");
     parseLink.className = "h-7 px-2 inline-flex items-center rounded-lg border border-gray-200 text-xs text-slate-500 hover:text-brand-700 hover:border-brand-300 hover:bg-brand-50";
@@ -534,25 +575,187 @@ const createSourceDetailedItem = (documentPayload) => {
 
     row.appendChild(iconWrap);
     row.appendChild(nameWrap);
-    row.appendChild(parseLink);
-    row.appendChild(selectButton);
+    if (!isProcessing) {
+        row.appendChild(parseLink);
+    }
+    if (isProcessing) {
+        const statusBadge = document.createElement("span");
+        statusBadge.className = "h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-white text-xs text-brand-700";
+        statusBadge.textContent = "Processing";
+        row.appendChild(statusBadge);
+    }
+    if (!isProcessing) {
+        row.appendChild(selectButton);
+    }
     article.appendChild(row);
     sourcesDetailedList.prepend(article);
     bindDocumentTrigger(article);
-    bindSourceSelectButton(selectButton);
+    if (!isProcessing) {
+        bindSourceSelectButton(selectButton);
+    }
 };
 
 const createSourceIconItem = (documentPayload) => {
     if (!sourcesIconList || !documentPayload?.upload_path || !documentPayload?.original_filename) return;
+    const parserStatus = String(documentPayload?.parser_status || "").toLowerCase() || PENDING_PARSER_STATUS;
+    const isProcessing = parserStatus === PENDING_PARSER_STATUS;
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "h-10 w-10 rounded-lg hover:bg-gray-100 text-slate-500";
+    button.className = isProcessing
+        ? "h-10 w-10 rounded-lg bg-brand-50 text-brand-700 border border-brand-200"
+        : "h-10 w-10 rounded-lg hover:bg-gray-100 text-slate-500";
     button.dataset.docFile = documentPayload.upload_path;
     button.dataset.docTitle = documentPayload.original_filename;
+    button.dataset.docId = documentPayload.document_id || "";
+    button.dataset.parserStatus = parserStatus;
     button.title = documentPayload.original_filename;
-    button.innerHTML = '<i class="fa-regular fa-file-lines"></i>';
+    button.innerHTML = isProcessing
+        ? '<i class="fa-solid fa-spinner animate-spin"></i>'
+        : '<i class="fa-regular fa-file-lines"></i>';
     sourcesIconList.prepend(button);
     bindDocumentTrigger(button);
+};
+
+const createProcessingSourceItems = (files) => {
+    const ids = [];
+    files.forEach((file, index) => {
+        const tempId = `processing-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+        ids.push(tempId);
+        const etaLabel = formatDurationLabel(estimateProcessingSecondsForFile(file));
+        const fileName = file?.name || "Uploading file";
+
+        if (sourcesDetailedList) {
+            const article = document.createElement("article");
+            article.className = "rounded-xl border border-brand-200 bg-brand-50/40";
+            article.dataset.tempUploadId = tempId;
+
+            const row = document.createElement("div");
+            row.className = "flex items-center gap-3 px-3 py-2.5";
+
+            const iconWrap = document.createElement("span");
+            iconWrap.className = "h-8 w-8 flex items-center justify-center rounded-lg bg-white text-brand-700 border border-brand-100";
+            iconWrap.innerHTML = '<i class="fa-solid fa-spinner animate-spin text-xs"></i>';
+
+            const nameWrap = document.createElement("div");
+            nameWrap.className = "min-w-0 flex-1";
+
+            const nameText = document.createElement("p");
+            nameText.className = "truncate text-sm font-medium text-slate-700";
+            nameText.title = fileName;
+            nameText.textContent = fileName;
+
+            const subText = document.createElement("p");
+            subText.className = "mt-0.5 text-xs text-brand-700";
+            subText.textContent = `Processing... Estimated ${etaLabel}`;
+
+            const badge = document.createElement("span");
+            badge.className = "h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-white text-xs text-brand-700";
+            badge.textContent = "Processing";
+
+            nameWrap.appendChild(nameText);
+            nameWrap.appendChild(subText);
+            row.appendChild(iconWrap);
+            row.appendChild(nameWrap);
+            row.appendChild(badge);
+            article.appendChild(row);
+            sourcesDetailedList.prepend(article);
+        }
+
+        if (sourcesIconList) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "h-10 w-10 rounded-lg bg-brand-50 text-brand-700 border border-brand-200";
+            button.title = `${fileName} (processing)`;
+            button.dataset.tempUploadId = tempId;
+            button.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i>';
+            sourcesIconList.prepend(button);
+        }
+    });
+    return ids;
+};
+
+const removeProcessingSourceItems = (ids) => {
+    ids.forEach((id) => {
+        document.querySelectorAll(`[data-temp-upload-id="${id}"]`).forEach((node) => node.remove());
+    });
+};
+
+const removeSourceItemsByDocId = (documentId) => {
+    const safeId = String(documentId || "").trim();
+    if (!safeId) return;
+    document.querySelectorAll(`[data-doc-id="${safeId}"]`).forEach((node) => node.remove());
+};
+
+const upsertSourceItems = (documentPayload) => {
+    const documentId = String(documentPayload?.document_id || "").trim();
+    if (documentId) {
+        removeSourceItemsByDocId(documentId);
+    }
+    createSourceDetailedItem(documentPayload);
+    createSourceIconItem(documentPayload);
+};
+
+const getPendingDocumentIds = () => {
+    const ids = new Set();
+    document.querySelectorAll("[data-doc-id][data-parser-status]").forEach((node) => {
+        const parserStatus = String(node.dataset.parserStatus || "").toLowerCase();
+        const documentId = String(node.dataset.docId || "").trim();
+        if (documentId && parserStatus === PENDING_PARSER_STATUS) {
+            ids.add(documentId);
+        }
+    });
+    return ids;
+};
+
+const stopPendingSourcePolling = () => {
+    if (!pendingSourceStatusPollHandle) return;
+    window.clearInterval(pendingSourceStatusPollHandle);
+    pendingSourceStatusPollHandle = null;
+};
+
+const refreshPendingSourceStates = async () => {
+    const conversationId = getCurrentConversationId();
+    if (!conversationId) {
+        stopPendingSourcePolling();
+        return;
+    }
+
+    const pendingIds = getPendingDocumentIds();
+    if (!pendingIds.size) {
+        stopPendingSourcePolling();
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/documents`);
+        if (!response.ok) return;
+
+        const payload = await response.json();
+        const documents = Array.isArray(payload.documents) ? payload.documents : [];
+        let changed = false;
+
+        documents.forEach((doc) => {
+            const documentId = String(doc?.document_id || "").trim();
+            if (!documentId || !pendingIds.has(documentId)) return;
+            upsertSourceItems(doc);
+            changed = true;
+        });
+
+        if (changed) {
+            updateSelectAllButtonState();
+            updateSendButtonState();
+        }
+    } catch (_error) {
+        // Keep polling on transient network/backend errors.
+    }
+};
+
+const ensurePendingSourcePolling = () => {
+    if (pendingSourceStatusPollHandle) return;
+    pendingSourceStatusPollHandle = window.setInterval(
+        refreshPendingSourceStates,
+        PENDING_SOURCE_POLL_INTERVAL_MS,
+    );
 };
 
 const openChatUploadModal = () => {
@@ -562,7 +765,9 @@ const openChatUploadModal = () => {
     renderPendingUploadFiles();
 };
 
-const closeChatUploadModal = () => {
+const closeChatUploadModal = (options = {}) => {
+    const { force = false } = options;
+    if (isConversationUploading && !force) return;
     if (!chatUploadModal) return;
     chatUploadModal.classList.add("hidden");
     chatUploadModal.classList.remove("flex");
@@ -593,7 +798,11 @@ const uploadFilesToCurrentConversation = async (fileList, options = {}) => {
     if (chatUploadConfirmBtn) {
         chatUploadConfirmBtn.disabled = true;
     }
-    setChatUploadStatus(`Uploading ${files.length} file(s)...`);
+    const estimateWindow = estimateProcessingWindowForFiles(files);
+    setChatUploadStatus(
+        `Uploading ${formatFileCountLabel(files.length)}... Estimated processing time: ${estimateWindow.label}.`,
+    );
+    const processingItemIds = createProcessingSourceItems(files);
     const formData = new FormData();
     files.forEach((file) => formData.append("documents", file));
 
@@ -611,28 +820,34 @@ const uploadFilesToCurrentConversation = async (fileList, options = {}) => {
 
         if (!response.ok) {
             const errorMessage = payload.error || "Upload failed. Please try again.";
+            removeProcessingSourceItems(processingItemIds);
             setChatUploadStatus(errorMessage, true);
             notify("error", errorMessage);
             return;
         }
 
         const uploadedDocuments = Array.isArray(payload.documents) ? payload.documents : [];
+        removeProcessingSourceItems(processingItemIds);
         uploadedDocuments.forEach((doc) => {
-            createSourceDetailedItem(doc);
-            createSourceIconItem(doc);
+            upsertSourceItems(doc);
         });
         updateSelectAllButtonState();
         updateSendButtonState();
+        if (uploadedDocuments.some((doc) => String(doc?.parser_status || "").toLowerCase() === PENDING_PARSER_STATUS)) {
+            ensurePendingSourcePolling();
+            refreshPendingSourceStates();
+        }
 
         const successMessage = payload.message || `Uploaded ${uploadedDocuments.length} file(s).`;
         setChatUploadStatus(successMessage, false);
         notify("success", successMessage);
 
         if (options.closeModalOnSuccess !== false) {
-            closeChatUploadModal();
+            closeChatUploadModal({ force: true });
         }
     } catch (_error) {
         const networkError = "Network error while uploading documents.";
+        removeProcessingSourceItems(processingItemIds);
         setChatUploadStatus(networkError, true);
         notify("error", networkError);
     } finally {
@@ -714,6 +929,13 @@ const initializeConversationUpload = () => {
         conversationDragDepth = 0;
         setConversationDropOverlay(false);
     });
+};
+
+const initializePendingSourcePolling = () => {
+    if (!getCurrentConversationId()) return;
+    if (!getPendingDocumentIds().size) return;
+    ensurePendingSourcePolling();
+    refreshPendingSourceStates();
 };
 
 const updatePromptRailDockSide = () => {
@@ -918,6 +1140,7 @@ loadPanelState();
 initializeSourceSelectionButtons();
 initializeDocumentViewer();
 initializeConversationUpload();
+initializePendingSourcePolling();
 initializePromptRail();
 applyPanelCollapseState();
 updateSectionLayout();

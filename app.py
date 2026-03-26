@@ -17,6 +17,7 @@ from urllib.error import HTTPError, URLError
 import json
 import logging
 import mimetypes
+import threading
 
 from services.document_parser import parse_document
 from services.extraction_store import (
@@ -34,6 +35,7 @@ from services.extraction_store import (
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
+logger = logging.getLogger(__name__)
 
 UPLOADS_DIR = Path(app.root_path) / "uploads"
 PREVIEW_DIR = UPLOADS_DIR / ".preview"
@@ -171,6 +173,7 @@ def _serialize_conversation_document(row) -> dict:
         "mime_type":         row[4] or "",
         "created_at":        row[5].isoformat() if row[5] else "",
         "upload_path":       f"{row[6]}/{row[2]}" if row[6] and row[2] else "",
+        "parser_status":     row[7] or "pending",
     }
 
 
@@ -251,10 +254,12 @@ def get_conversation_documents(user_id, conversation_id) -> list:
                     d.file_extension,
                     d.mime_type,
                     d.created_at,
-                    c.user_id
+                    c.user_id,
+                    de.parser_status
                 FROM conversations c
                 JOIN conversation_documents cd ON cd.conversation_id = c.conversation_id
                 JOIN documents d              ON d.document_id       = cd.document_id
+                LEFT JOIN document_extractions de ON de.document_id = d.document_id
                 WHERE c.conversation_id = %s
                   AND c.user_id         = %s
                   AND d.is_deleted      = FALSE
@@ -1390,10 +1395,10 @@ def _validate_uploaded_files(incoming_files) -> tuple[list, list]:
     return selected_files, invalid_files
 
 
-def _insert_and_parse_document(cur, user_id, user_upload_dir, incoming_file, original_name, extension) -> dict:
+def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_file, original_name, extension) -> dict:
     """
-    Save one file to disk, insert the documents row, run the parser,
-    persist the extraction, and return the upload result dict.
+    Save one file to disk, insert the documents row, mark extraction as pending,
+    and return the upload result dict plus parse job metadata.
     Raises ValueError on empty file.
     """
     stored_filename = f"{secrets.token_hex(16)}{extension}"
@@ -1433,11 +1438,6 @@ def _insert_and_parse_document(cur, user_id, user_upload_dir, incoming_file, ori
     save_document_extraction(cur, document_id=document_id,
                              extraction_payload=build_pending_extraction_payload(document_id=document_id))
 
-    parser_result     = parse_document(file_path=destination, document_id=document_id,
-                                       mime_type=mime_type, original_filename=original_name)
-    extraction_payload = build_extraction_payload(document_id=document_id, parser_result=parser_result)
-    save_document_extraction(cur, document_id=document_id, extraction_payload=extraction_payload)
-
     return {
         "document_id":       str(document_id),
         "original_filename": original_name,
@@ -1447,9 +1447,96 @@ def _insert_and_parse_document(cur, user_id, user_upload_dir, incoming_file, ori
         "file_extension":    extension.lstrip("."),
         "upload_path":       f"{user_id}/{stored_filename}",
         "created_at":        document_row[1].isoformat() if document_row[1] else None,
-        "parser_result":     parser_result,
+        "parser_status":     "pending",
+        "_parse_job": {
+            "document_id":       document_id,
+            "destination":       destination,
+            "mime_type":         mime_type,
+            "original_filename": original_name,
+        },
         "_destination":      destination,   # kept for rollback cleanup; stripped before response
     }
+
+
+def _run_document_parse_job(job: dict) -> None:
+    document_id = job["document_id"]
+    destination = Path(job["destination"])
+    mime_type = job.get("mime_type")
+    original_filename = job.get("original_filename")
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            parser_result = parse_document(
+                file_path=destination,
+                document_id=document_id,
+                mime_type=mime_type,
+                original_filename=original_filename,
+            )
+            extraction_payload = build_extraction_payload(
+                document_id=document_id,
+                parser_result=parser_result,
+            )
+            save_document_extraction(
+                cur,
+                document_id=document_id,
+                extraction_payload=extraction_payload,
+            )
+        conn.commit()
+    except Exception as exc:
+        logger.exception("Background parse failed for document_id=%s", document_id)
+        if conn is not None:
+            conn.rollback()
+            conn.close()
+            conn = None
+
+        # Best effort: mark extraction as failed instead of leaving it pending forever.
+        fallback_conn = None
+        try:
+            fallback_conn = get_db_connection()
+            with fallback_conn.cursor() as fallback_cur:
+                failed_result = {
+                    "document_id": str(document_id),
+                    "file_type": None,
+                    "metadata": {"source_path": str(destination)},
+                    "segments": [],
+                    "errors": [{
+                        "code": "background_parse_error",
+                        "message": "Unable to parse document in background worker.",
+                        "details": {"exception": str(exc)},
+                    }],
+                }
+                failed_payload = build_extraction_payload(
+                    document_id=document_id,
+                    parser_result=failed_result,
+                )
+                save_document_extraction(
+                    fallback_cur,
+                    document_id=document_id,
+                    extraction_payload=failed_payload,
+                )
+            fallback_conn.commit()
+        except Exception:
+            if fallback_conn is not None:
+                fallback_conn.rollback()
+            logger.exception("Failed to persist background parse failure for document_id=%s", document_id)
+        finally:
+            if fallback_conn is not None:
+                fallback_conn.close()
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _start_background_parse_jobs(parse_jobs: list[dict]) -> None:
+    for job in parse_jobs:
+        thread = threading.Thread(
+            target=_run_document_parse_job,
+            args=(job,),
+            daemon=True,
+        )
+        thread.start()
 
 
 @app.route('/api/documents/upload', methods=['POST'])
@@ -1472,8 +1559,9 @@ def upload_documents():
     user_upload_dir = UPLOADS_DIR / user_id
     user_upload_dir.mkdir(parents=True, exist_ok=True)
 
-    conn        = None
+    conn = None
     saved_paths = []
+    parse_jobs = []
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -1486,9 +1574,10 @@ def upload_documents():
 
             uploaded_documents = []
             for incoming_file, original_name, extension in selected_files:
-                result = _insert_and_parse_document(
+                result = _insert_document_and_mark_pending(
                     cur, user_id, user_upload_dir, incoming_file, original_name, extension
                 )
+                parse_jobs.append(result.pop("_parse_job"))
                 saved_paths.append(result.pop("_destination"))
                 cur.execute(
                     "INSERT INTO conversation_documents (conversation_id, document_id) VALUES (%s, %s)",
@@ -1497,9 +1586,10 @@ def upload_documents():
                 uploaded_documents.append(result)
 
         conn.commit()
+        _start_background_parse_jobs(parse_jobs)
         conversation_url = f"/chat?conversation_id={quote(str(conversation_id))}&new=1"
         return jsonify({
-            'message':          f"Uploaded {len(uploaded_documents)} file(s) successfully.",
+            'message':          f"Uploaded {len(uploaded_documents)} file(s). Documents are processing in the background.",
             'conversation':     {"conversation_id": str(conversation_id), "title": title},
             'conversation_url': conversation_url,
             'documents':        uploaded_documents,
@@ -1545,8 +1635,9 @@ def upload_documents_to_conversation(conversation_id):
     user_upload_dir = UPLOADS_DIR / user_id
     user_upload_dir.mkdir(parents=True, exist_ok=True)
 
-    conn        = None
+    conn = None
     saved_paths = []
+    parse_jobs = []
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -1559,9 +1650,10 @@ def upload_documents_to_conversation(conversation_id):
 
             uploaded_documents = []
             for incoming_file, original_name, extension in selected_files:
-                result = _insert_and_parse_document(
+                result = _insert_document_and_mark_pending(
                     cur, user_id, user_upload_dir, incoming_file, original_name, extension
                 )
+                parse_jobs.append(result.pop("_parse_job"))
                 saved_paths.append(result.pop("_destination"))
                 cur.execute(
                     "INSERT INTO conversation_documents (conversation_id, document_id) VALUES (%s, %s)",
@@ -1575,8 +1667,9 @@ def upload_documents_to_conversation(conversation_id):
             )
 
         conn.commit()
+        _start_background_parse_jobs(parse_jobs)
         return jsonify({
-            'message':      f"Uploaded {len(uploaded_documents)} file(s) successfully.",
+            'message':      f"Uploaded {len(uploaded_documents)} file(s). Documents are processing in the background.",
             'conversation': {"conversation_id": conversation_id},
             'documents':    uploaded_documents,
         }), 201
@@ -1595,6 +1688,26 @@ def upload_documents_to_conversation(conversation_id):
     finally:
         if conn is not None:
             conn.close()
+
+
+@app.route('/api/conversations/<conversation_id>/documents', methods=['GET'])
+def api_conversation_documents(conversation_id):
+    user_id = session.get("user_id")
+    conversation_id = (conversation_id or "").strip()
+
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+
+    if not conversation_exists_for_user(user_id, conversation_id):
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    documents = get_conversation_documents(user_id, conversation_id)
+    return jsonify({
+        "conversation_id": conversation_id,
+        "documents": documents,
+    }), 200
 
 
 @app.route('/api/documents/<document_id>/parser-results', methods=['GET'])
