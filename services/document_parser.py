@@ -3,7 +3,7 @@ import mimetypes
 import re
 
 from services.parsers.docx_parser import parse_docx
-from services.parsers.pdf_parser_with_MinerU import parse_pdf_with_mineru as parse_pdf
+from services.parsers.mineru import parse_pdf_with_mineru as parse_pdf
 from services.parsers.pptx_parser import parse_pptx
 
 EXTENSION_TO_TYPE = {
@@ -115,6 +115,8 @@ def _base_result(document_id=None, file_type=None):
         "document_id": str(document_id) if document_id is not None else None,
         "file_type": file_type,
         "segments": [],
+        "assets": [],
+        "references": [],
         "metadata": {},
         "errors": [],
     }
@@ -167,10 +169,17 @@ def parse_document(file_path, document_id=None, mime_type=None, original_filenam
             return result
 
         if file_type == "pdf":
-            parser_result = parser(file_path, progress_callback=progress_callback)
+            parser_result = parser(
+                file_path,
+                progress_callback=progress_callback,
+                document_id=document_id,
+                original_filename=original_filename,
+            )
         else:
             parser_result = parser(file_path)
         result["segments"] = sorted(parser_result.get("segments", []), key=_segment_sort_key)
+        result["assets"] = parser_result.get("assets", [])
+        result["references"] = parser_result.get("references", [])
         result["metadata"] = parser_result.get("metadata", {})
         markdown_output = _build_markdown_output(result["segments"])
         result["markdown_output"] = markdown_output

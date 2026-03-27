@@ -14,6 +14,8 @@ def parse_pdf_via_mineru_upload(
     file_path: str | Path,
     token: str,
     progress_callback: ProgressCallback | None = None,
+    document_id: str | None = None,
+    original_filename: str | None = None,
     *,
     model_version: str = "vlm",
     language: str = "en",
@@ -35,18 +37,24 @@ def parse_pdf_via_mineru_upload(
     if not file_path.exists() or not file_path.is_file():
         return {
             "segments": [],
+            "assets": [],
+            "references": [],
             "metadata": metadata,
             "errors": [{"code": "file_not_found", "message": f"File not found: {file_path}"}],
         }
     if file_path.suffix.lower() != ".pdf":
         return {
             "segments": [],
+            "assets": [],
+            "references": [],
             "metadata": metadata,
             "errors": [{"code": "invalid_file_type", "message": "Only PDF is supported for MinerU parsing."}],
         }
     if file_path.stat().st_size <= 0:
         return {
             "segments": [],
+            "assets": [],
+            "references": [],
             "metadata": metadata,
             "errors": [{"code": "empty_file", "message": "Uploaded file is empty."}],
         }
@@ -116,21 +124,38 @@ def parse_pdf_via_mineru_upload(
             force=True,
         )
         zip_file = download_zip(zip_url)
-        segments = parse_zip(zip_file, str(file_path))
+        asset_output_dir = file_path.parent / ".extracted" / str(document_id or file_path.stem) / "assets"
+        zip_result = parse_zip(
+            zip_file,
+            str(file_path),
+            document_id=str(document_id) if document_id is not None else None,
+            asset_output_dir=asset_output_dir,
+        )
+        segments = zip_result.get("segments", [])
 
         if segments:
             page_indices = [segment.get("source_index") for segment in segments if segment.get("source_index")]
             metadata["page_count"] = max(page_indices) if page_indices else 0
+        metadata = {
+            **(zip_result.get("metadata") or {}),
+            **metadata,
+        }
+        if original_filename:
+            metadata["original_filename"] = original_filename
 
         return {
             "segments": segments,
+            "assets": zip_result.get("assets", []),
+            "references": zip_result.get("references", []),
             "metadata": metadata,
-            "errors": [],
+            "errors": zip_result.get("errors", []),
         }
     except MinerUError as exc:
         progress.emit("failed", f"MinerU API error: {exc}", provider_state="failed", batch_id=metadata.get("batch_id"), force=True)
         return {
             "segments": [],
+            "assets": [],
+            "references": [],
             "metadata": metadata,
             "errors": [{"code": "mineru_api_error", "message": str(exc)}],
         }
@@ -138,6 +163,8 @@ def parse_pdf_via_mineru_upload(
         progress.emit("failed", f"MinerU HTTP error: {exc}", provider_state="failed", batch_id=metadata.get("batch_id"), force=True)
         return {
             "segments": [],
+            "assets": [],
+            "references": [],
             "metadata": metadata,
             "errors": [{"code": "http_error", "message": str(exc)}],
         }
@@ -145,6 +172,8 @@ def parse_pdf_via_mineru_upload(
         progress.emit("failed", f"Unexpected MinerU error: {exc}", provider_state="failed", batch_id=metadata.get("batch_id"), force=True)
         return {
             "segments": [],
+            "assets": [],
+            "references": [],
             "metadata": metadata,
             "errors": [{"code": "parse_error", "message": str(exc)}],
         }
@@ -154,6 +183,7 @@ def parse_pdf_via_mineru_url(
     file_url: str,
     token: str,
     *,
+    document_id: str | None = None,
     source_path: str | None = None,
     model_version: str = "vlm",
     language: str = "en",
@@ -183,23 +213,41 @@ def parse_pdf_via_mineru_url(
         zip_url = poll_direct_task(token, task_id)
         metadata["zip_url"] = zip_url
         zip_file = download_zip(zip_url)
-        segments = parse_zip(zip_file, source_path or file_url)
+        zip_result = parse_zip(
+            zip_file,
+            source_path or file_url,
+            document_id=str(document_id) if document_id is not None else None,
+            asset_output_dir=None,
+        )
+        segments = zip_result.get("segments", [])
         if segments:
             page_indices = [segment.get("source_index") for segment in segments if segment.get("source_index")]
             metadata["page_count"] = max(page_indices) if page_indices else 0
-        return {"segments": segments, "metadata": metadata, "errors": []}
+        metadata = {
+            **(zip_result.get("metadata") or {}),
+            **metadata,
+        }
+        return {
+            "segments": segments,
+            "assets": zip_result.get("assets", []),
+            "references": zip_result.get("references", []),
+            "metadata": metadata,
+            "errors": zip_result.get("errors", []),
+        }
     except MinerUError as exc:
-        return {"segments": [], "metadata": metadata, "errors": [{"code": "mineru_api_error", "message": str(exc)}]}
+        return {"segments": [], "assets": [], "references": [], "metadata": metadata, "errors": [{"code": "mineru_api_error", "message": str(exc)}]}
     except httpx.HTTPError as exc:
-        return {"segments": [], "metadata": metadata, "errors": [{"code": "http_error", "message": str(exc)}]}
+        return {"segments": [], "assets": [], "references": [], "metadata": metadata, "errors": [{"code": "http_error", "message": str(exc)}]}
     except Exception as exc:
-        return {"segments": [], "metadata": metadata, "errors": [{"code": "parse_error", "message": str(exc)}]}
+        return {"segments": [], "assets": [], "references": [], "metadata": metadata, "errors": [{"code": "parse_error", "message": str(exc)}]}
 
 
 def parse_pdf_with_mineru(
     file_path: str | Path,
     token: str | None = None,
     progress_callback: ProgressCallback | None = None,
+    document_id: str | None = None,
+    original_filename: str | None = None,
 ) -> dict:
     progress = ProgressEmitter(progress_callback, provider="mineru")
     resolved_token = (token or os.getenv("MINERU_API_KEY", "")).strip()
@@ -207,6 +255,8 @@ def parse_pdf_with_mineru(
         progress.emit("failed", "MINERU_API_KEY is not set.", provider_state="failed", force=True)
         return {
             "segments": [],
+            "assets": [],
+            "references": [],
             "metadata": {
                 "source_path": str(file_path),
                 "parser": "mineru_api",
@@ -221,4 +271,6 @@ def parse_pdf_with_mineru(
         file_path,
         resolved_token,
         progress_callback=progress_callback,
+        document_id=document_id,
+        original_filename=original_filename,
     )

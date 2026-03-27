@@ -21,6 +21,38 @@ def _normalize_segment(segment):
     }
 
 
+def _normalize_asset(asset):
+    return {
+        "asset_id": asset.get("asset_id"),
+        "asset_type": asset.get("asset_type"),
+        "storage_path": asset.get("storage_path", ""),
+        "upload_path": asset.get("upload_path", ""),
+        "original_zip_path": asset.get("original_zip_path", ""),
+        "mime_type": asset.get("mime_type"),
+        "byte_size": asset.get("byte_size"),
+        "content_hash": asset.get("content_hash"),
+        "source_index": asset.get("source_index"),
+        "bbox": asset.get("bbox") or [],
+        "caption_segment_id": asset.get("caption_segment_id"),
+        "metadata": asset.get("metadata") or {},
+    }
+
+
+def _normalize_reference(reference):
+    return {
+        "reference_id": reference.get("reference_id"),
+        "source_segment_id": reference.get("source_segment_id"),
+        "reference_kind": reference.get("reference_kind"),
+        "reference_label": reference.get("reference_label", ""),
+        "target_segment_id": reference.get("target_segment_id"),
+        "target_asset_id": reference.get("target_asset_id"),
+        "normalized_target_key": reference.get("normalized_target_key", ""),
+        "confidence": reference.get("confidence"),
+        "resolution_status": reference.get("resolution_status"),
+        "metadata": reference.get("metadata") or {},
+    }
+
+
 def build_pending_extraction_payload(document_id, parser_version=PARSER_VERSION):
     return {
         "document_id": str(document_id),
@@ -31,6 +63,8 @@ def build_pending_extraction_payload(document_id, parser_version=PARSER_VERSION)
         "metadata": {},
         "errors": [],
         "segments": [],
+        "assets": [],
+        "references": [],
     }
 
 
@@ -53,6 +87,8 @@ def build_extraction_payload(document_id, parser_result, parser_version=PARSER_V
         "metadata": parser_result.get("metadata") or {},
         "errors": parser_errors,
         "segments": [_normalize_segment(segment) for segment in parser_result.get("segments", [])],
+        "assets": [_normalize_asset(asset) for asset in parser_result.get("assets", [])],
+        "references": [_normalize_reference(reference) for reference in parser_result.get("references", [])],
     }
 
 
@@ -101,6 +137,20 @@ def save_document_extraction(cur, document_id, extraction_payload):
         """,
         (document_id,),
     )
+    cur.execute(
+        """
+        DELETE FROM document_extraction_assets
+        WHERE document_id = %s
+        """,
+        (document_id,),
+    )
+    cur.execute(
+        """
+        DELETE FROM document_extraction_references
+        WHERE document_id = %s
+        """,
+        (document_id,),
+    )
 
     for segment_index, segment in enumerate(extraction_payload.get("segments") or []):
         cur.execute(
@@ -131,6 +181,80 @@ def save_document_extraction(cur, document_id, extraction_payload):
             ),
         )
 
+    for asset_index, asset in enumerate(extraction_payload.get("assets") or []):
+        cur.execute(
+            """
+            INSERT INTO document_extraction_assets (
+                document_id,
+                asset_index,
+                asset_id,
+                asset_type,
+                storage_path,
+                upload_path,
+                original_zip_path,
+                mime_type,
+                byte_size,
+                content_hash,
+                source_index,
+                bbox,
+                caption_segment_id,
+                metadata
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
+            """,
+            (
+                document_id,
+                asset_index,
+                asset.get("asset_id"),
+                asset.get("asset_type"),
+                asset.get("storage_path", ""),
+                asset.get("upload_path", ""),
+                asset.get("original_zip_path", ""),
+                asset.get("mime_type"),
+                asset.get("byte_size"),
+                asset.get("content_hash"),
+                asset.get("source_index"),
+                Json(asset.get("bbox") or []),
+                asset.get("caption_segment_id"),
+                Json(asset.get("metadata") or {}),
+            ),
+        )
+
+    for reference_index, reference in enumerate(extraction_payload.get("references") or []):
+        cur.execute(
+            """
+            INSERT INTO document_extraction_references (
+                document_id,
+                reference_index,
+                reference_id,
+                source_segment_id,
+                reference_kind,
+                reference_label,
+                target_segment_id,
+                target_asset_id,
+                normalized_target_key,
+                confidence,
+                resolution_status,
+                metadata
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            """,
+            (
+                document_id,
+                reference_index,
+                reference.get("reference_id"),
+                reference.get("source_segment_id"),
+                reference.get("reference_kind"),
+                reference.get("reference_label", ""),
+                reference.get("target_segment_id"),
+                reference.get("target_asset_id"),
+                reference.get("normalized_target_key", ""),
+                reference.get("confidence"),
+                reference.get("resolution_status"),
+                Json(reference.get("metadata") or {}),
+            ),
+        )
+
 
 def _serialize_extraction_row(row):
     return {
@@ -154,6 +278,40 @@ def _serialize_extraction_segment_row(row):
         "block_index": row[5],
         "paragraph_index": row[6],
         "metadata": row[7] or {},
+    }
+
+
+def _serialize_extraction_asset_row(row):
+    return {
+        "asset_index": row[0],
+        "asset_id": row[1],
+        "asset_type": row[2],
+        "storage_path": row[3] or "",
+        "upload_path": row[4] or "",
+        "original_zip_path": row[5] or "",
+        "mime_type": row[6],
+        "byte_size": row[7],
+        "content_hash": row[8],
+        "source_index": row[9],
+        "bbox": row[10] or [],
+        "caption_segment_id": row[11],
+        "metadata": row[12] or {},
+    }
+
+
+def _serialize_extraction_reference_row(row):
+    return {
+        "reference_index": row[0],
+        "reference_id": row[1],
+        "source_segment_id": row[2],
+        "reference_kind": row[3],
+        "reference_label": row[4] or "",
+        "target_segment_id": row[5],
+        "target_asset_id": row[6],
+        "normalized_target_key": row[7] or "",
+        "confidence": float(row[8]) if row[8] is not None else None,
+        "resolution_status": row[9],
+        "metadata": row[10] or {},
     }
 
 
@@ -210,8 +368,56 @@ def get_document_extraction(cur, document_id, conversation_id=None):
     )
     segment_rows = cur.fetchall()
 
+    cur.execute(
+        """
+        SELECT
+            asset_index,
+            asset_id,
+            asset_type,
+            storage_path,
+            upload_path,
+            original_zip_path,
+            mime_type,
+            byte_size,
+            content_hash,
+            source_index,
+            bbox,
+            caption_segment_id,
+            metadata
+        FROM document_extraction_assets
+        WHERE document_id = %s
+        ORDER BY asset_index ASC
+        """,
+        (document_id,),
+    )
+    asset_rows = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT
+            reference_index,
+            reference_id,
+            source_segment_id,
+            reference_kind,
+            reference_label,
+            target_segment_id,
+            target_asset_id,
+            normalized_target_key,
+            confidence,
+            resolution_status,
+            metadata
+        FROM document_extraction_references
+        WHERE document_id = %s
+        ORDER BY reference_index ASC
+        """,
+        (document_id,),
+    )
+    reference_rows = cur.fetchall()
+
     extraction_payload = _serialize_extraction_row(extraction_row)
     extraction_payload["segments"] = [_serialize_extraction_segment_row(row) for row in segment_rows]
+    extraction_payload["assets"] = [_serialize_extraction_asset_row(row) for row in asset_rows]
+    extraction_payload["references"] = [_serialize_extraction_reference_row(row) for row in reference_rows]
     return extraction_payload
 
 

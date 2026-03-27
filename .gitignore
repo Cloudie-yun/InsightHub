@@ -8,4 +8,4 @@ __pycache__/
 uploads/
 
 *.sql
-!migrations/*.sql
+migrations/*.sql
