@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import httpx
+
+from .api import create_direct_task, poll_batch, poll_direct_task, request_upload_url, upload_file
+from .client import MinerUError, ProgressCallback, ProgressEmitter
+from .zip_parser import download_zip, parse_zip
+
+
+def parse_pdf_via_mineru_upload(
+    file_path: str | Path,
+    token: str,
+    progress_callback: ProgressCallback | None = None,
+    *,
+    model_version: str = "vlm",
+    language: str = "en",
+    enable_formula: bool = True,
+    enable_table: bool = True,
+    is_ocr: bool = False,
+) -> dict:
+    file_path = Path(file_path)
+    progress = ProgressEmitter(progress_callback, provider="mineru")
+
+    metadata: dict = {
+        "source_path": str(file_path),
+        "parser": "mineru_api",
+        "page_count": 0,
+        "mode": "upload_batch",
+        "model_version": model_version,
+    }
+
+    if not file_path.exists() or not file_path.is_file():
+        return {
+            "segments": [],
+            "metadata": metadata,
+            "errors": [{"code": "file_not_found", "message": f"File not found: {file_path}"}],
+        }
+    if file_path.suffix.lower() != ".pdf":
+        return {
+            "segments": [],
+            "metadata": metadata,
+            "errors": [{"code": "invalid_file_type", "message": "Only PDF is supported for MinerU parsing."}],
+        }
+    if file_path.stat().st_size <= 0:
+        return {
+            "segments": [],
+            "metadata": metadata,
+            "errors": [{"code": "empty_file", "message": "Uploaded file is empty."}],
+        }
+
+    try:
+        progress.emit("reading_file", "Reading local file for MinerU upload.", provider_state="preparing", force=True)
+        file_bytes = file_path.read_bytes()
+
+        progress.emit(
+            "requesting_upload_url",
+            "Requesting upload URL from MinerU.",
+            provider_state="requesting_upload_url",
+            force=True,
+        )
+        batch_id, put_url = request_upload_url(
+            token,
+            file_path.name,
+            model_version=model_version,
+            language=language,
+            enable_formula=enable_formula,
+            enable_table=enable_table,
+            is_ocr=is_ocr,
+            data_id=file_path.name,
+        )
+        metadata["batch_id"] = batch_id
+
+        progress.emit("uploading", "Uploading file to MinerU.", provider_state="uploading", batch_id=batch_id, force=True)
+        upload_file(put_url, file_bytes, content_type=None)
+
+        progress.emit(
+            "extracting",
+            "Upload complete. MinerU is extracting the document.",
+            provider_state="pending",
+            batch_id=batch_id,
+            force=True,
+        )
+
+        def _on_batch_progress(payload: dict, attempt: int) -> None:
+            result = payload.get("result") or {}
+            state = str(result.get("state") or "waiting")
+            progress_obj = result.get("extract_progress") or {}
+            extracted_pages = progress_obj.get("extracted_pages")
+            total_pages = progress_obj.get("total_pages")
+            if extracted_pages is not None and total_pages is not None:
+                message = f"MinerU extracting, {extracted_pages}/{total_pages} pages processed."
+            else:
+                message = f"MinerU extraction state: {state}"
+            progress.emit(
+                "extracting",
+                message,
+                provider_state=state,
+                batch_id=batch_id,
+                extracted_pages=extracted_pages,
+                total_pages=total_pages,
+                poll_attempt=attempt,
+                force=True,
+            )
+
+        zip_url = poll_batch(token, batch_id, on_progress=_on_batch_progress)
+        metadata["zip_url"] = zip_url
+
+        progress.emit(
+            "parsing_result",
+            "Parsing MinerU extraction output.",
+            provider_state="parsing_result",
+            batch_id=batch_id,
+            force=True,
+        )
+        zip_file = download_zip(zip_url)
+        segments = parse_zip(zip_file, str(file_path))
+
+        if segments:
+            page_indices = [segment.get("source_index") for segment in segments if segment.get("source_index")]
+            metadata["page_count"] = max(page_indices) if page_indices else 0
+
+        return {
+            "segments": segments,
+            "metadata": metadata,
+            "errors": [],
+        }
+    except MinerUError as exc:
+        progress.emit("failed", f"MinerU API error: {exc}", provider_state="failed", batch_id=metadata.get("batch_id"), force=True)
+        return {
+            "segments": [],
+            "metadata": metadata,
+            "errors": [{"code": "mineru_api_error", "message": str(exc)}],
+        }
+    except httpx.HTTPError as exc:
+        progress.emit("failed", f"MinerU HTTP error: {exc}", provider_state="failed", batch_id=metadata.get("batch_id"), force=True)
+        return {
+            "segments": [],
+            "metadata": metadata,
+            "errors": [{"code": "http_error", "message": str(exc)}],
+        }
+    except Exception as exc:
+        progress.emit("failed", f"Unexpected MinerU error: {exc}", provider_state="failed", batch_id=metadata.get("batch_id"), force=True)
+        return {
+            "segments": [],
+            "metadata": metadata,
+            "errors": [{"code": "parse_error", "message": str(exc)}],
+        }
+
+
+def parse_pdf_via_mineru_url(
+    file_url: str,
+    token: str,
+    *,
+    source_path: str | None = None,
+    model_version: str = "vlm",
+    language: str = "en",
+    enable_formula: bool = True,
+    enable_table: bool = True,
+    is_ocr: bool = False,
+) -> dict:
+    metadata: dict = {
+        "source_path": source_path or file_url,
+        "parser": "mineru_api",
+        "page_count": 0,
+        "mode": "direct_task",
+        "model_version": model_version,
+    }
+    try:
+        task_id = create_direct_task(
+            token,
+            file_url,
+            model_version=model_version,
+            language=language,
+            enable_formula=enable_formula,
+            enable_table=enable_table,
+            is_ocr=is_ocr,
+            data_id=source_path or file_url,
+        )
+        metadata["task_id"] = task_id
+        zip_url = poll_direct_task(token, task_id)
+        metadata["zip_url"] = zip_url
+        zip_file = download_zip(zip_url)
+        segments = parse_zip(zip_file, source_path or file_url)
+        if segments:
+            page_indices = [segment.get("source_index") for segment in segments if segment.get("source_index")]
+            metadata["page_count"] = max(page_indices) if page_indices else 0
+        return {"segments": segments, "metadata": metadata, "errors": []}
+    except MinerUError as exc:
+        return {"segments": [], "metadata": metadata, "errors": [{"code": "mineru_api_error", "message": str(exc)}]}
+    except httpx.HTTPError as exc:
+        return {"segments": [], "metadata": metadata, "errors": [{"code": "http_error", "message": str(exc)}]}
+    except Exception as exc:
+        return {"segments": [], "metadata": metadata, "errors": [{"code": "parse_error", "message": str(exc)}]}
+
+
+def parse_pdf_with_mineru(
+    file_path: str | Path,
+    token: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
+    progress = ProgressEmitter(progress_callback, provider="mineru")
+    resolved_token = (token or os.getenv("MINERU_API_KEY", "")).strip()
+    if not resolved_token:
+        progress.emit("failed", "MINERU_API_KEY is not set.", provider_state="failed", force=True)
+        return {
+            "segments": [],
+            "metadata": {
+                "source_path": str(file_path),
+                "parser": "mineru_api",
+            },
+            "errors": [{
+                "code": "missing_mineru_api_key",
+                "message": "MINERU_API_KEY is not set.",
+            }],
+        }
+
+    return parse_pdf_via_mineru_upload(
+        file_path,
+        resolved_token,
+        progress_callback=progress_callback,
+    )

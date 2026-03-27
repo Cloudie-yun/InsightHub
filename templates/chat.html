@@ -18,7 +18,7 @@
 
     <div id="chat-workspace" class="flex-1 min-h-0 relative bg-slate-50 overflow-hidden">
         <!-- Floating Sources / Study Aid Tool -->
-        <aside id="floating-tools-panel" class="hidden md:flex absolute z-20 left-4 top-2 bottom-2 h-auto max-h-none bg-white border border-gray-200 rounded-2xl shadow-xl flex-col overflow-hidden transition-[left,width] duration-200 ease-out" style="width: 320px;">         
+        <aside id="floating-tools-panel" class="hidden md:flex absolute z-20 left-4 top-2 bottom-2 h-auto max-h-none bg-white border border-gray-200 rounded-2xl shadow-xl flex-col overflow-hidden transition-[left,width] duration-200 ease-out" style="width: 340px;">         
             <div id="floating-tools-drag-handle" class="h-12 px-4 border-b border-gray-200 flex items-center justify-between cursor-move select-none">
                 <div id="floating-tools-title-container" class="flex items-center gap-2 text-sm font-semibold text-slate-700">
                     <i class="fa-solid fa-grip-lines text-slate-400"></i>
@@ -44,6 +44,29 @@
                         <button id="sources-add-btn" class="w-full flex items-center text-center justify-center gap-3 p-3 bg-gray-50 border border-brand-100 rounded-full text-sm text-brand-800 hover:bg-brand-50 hover:text-brand-600 hover:font-medium transition duration-200 ease-in-out">
                             <i class="fa-solid fa-plus"></i> Add
                         </button>
+                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                            <label for="sources-search-input" class="relative block">
+                                <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                                    <i class="fa-solid fa-magnifying-glass text-xs"></i>
+                                </span>
+                                <input
+                                    id="sources-search-input"
+                                    type="search"
+                                    placeholder="Search documents"
+                                    class="w-full rounded-xl border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                                >
+                            </label>
+                            <label for="sources-sort-select" class="sr-only">Sort documents</label>
+                            <select
+                                id="sources-sort-select"
+                                class="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                            >
+                                <option value="upload_desc" selected>Newest</option>
+                                <option value="upload_asc">Oldest</option>
+                                <option value="name_asc">A-Z</option>
+                                <option value="name_desc">Z-A</option>
+                            </select>
+                        </div>
                         <div class="flex justify-end">
                             <button id="sources-select-all-btn" type="button" class="text-sm text-slate-500 hover:text-brand-600 transition-colors">
                                 Select All
@@ -52,10 +75,11 @@
                         <div id="sources-detailed-list" class="space-y-2">
                             {% for doc in conversation_documents %}
                             <article
-                                class="group rounded-xl border border-gray-200 bg-white hover:border-brand-200 hover:bg-brand-50/30 transition-colors cursor-pointer"
+                                class="group rounded-xl bg-transparent hover:bg-brand-50/30 transition-colors cursor-pointer"
                                 data-doc-file="{{ doc.upload_path }}"
                                 data-doc-title="{{ doc.original_filename }}"
                                 data-doc-id="{{ doc.document_id }}"
+                                data-doc-created-at="{{ doc.created_at }}"
                                 data-parser-status="{{ doc.parser_status }}"
                             >
                                 <div class="flex items-center gap-3 px-3 py-2.5">
@@ -87,7 +111,7 @@
                                     {% if doc.parser_status != "pending" %}
                                     <button
                                         type="button"
-                                        class="h-7 w-7 rounded-lg border text-xs transition-colors"
+                                        class="h-5 w-5 rounded border text-[10px] transition-colors"
                                         data-source-select-btn="true"
                                         data-selected="true"
                                         aria-pressed="true"
@@ -108,6 +132,7 @@
                                 data-doc-file="{{ doc.upload_path }}"
                                 data-doc-title="{{ doc.original_filename }}"
                                 data-doc-id="{{ doc.document_id }}"
+                                data-doc-created-at="{{ doc.created_at }}"
                                 data-parser-status="{{ doc.parser_status }}"
                                 title="{{ doc.original_filename }}"
                             >
@@ -118,6 +143,9 @@
                                 {% endif %}
                             </button>
                             {% endfor %}
+                        </div>
+                        <div id="sources-empty-state" class="hidden rounded-xl border border-dashed border-gray-200 bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
+                            No documents match your search.
                         </div>
                     </div>
                 </section>
@@ -285,5 +313,10 @@
         </div>
     </div>
 </div>
+<script src="{{ url_for('static', filename='script/chat/shared.js') }}"></script>
+<script src="{{ url_for('static', filename='script/chat/panel.js') }}"></script>
+<script src="{{ url_for('static', filename='script/chat/sources.js') }}"></script>
+<script src="{{ url_for('static', filename='script/chat/upload.js') }}"></script>
+<script src="{{ url_for('static', filename='script/chat/prompt-rail.js') }}"></script>
 <script src="{{ url_for('static', filename='script/chat.js') }}"></script>
 {% endblock %}

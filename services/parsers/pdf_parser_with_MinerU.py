@@ -908,7 +908,7 @@ def parse_pdf_with_mineru(
             "errors": [{
                 "code": "missing_mineru_api_key",
                 "message": "MINERU_API_KEY is not set.",
-            }],
+            }], 
         }
 
     return parse_pdf_via_mineru_upload(

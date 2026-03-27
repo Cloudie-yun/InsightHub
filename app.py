@@ -1,6 +1,7 @@
 from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session, redirect, url_for
 from db import get_db_connection
 from email_service import send_email
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import psycopg2
@@ -17,7 +18,6 @@ from urllib.error import HTTPError, URLError
 import json
 import logging
 import mimetypes
-import threading
 import time
 
 from services.document_parser import parse_document
@@ -37,6 +37,11 @@ from services.extraction_store import (
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 logger = logging.getLogger(__name__)
+DOCUMENT_PARSE_MAX_WORKERS = max(1, int(os.getenv("DOCUMENT_PARSE_MAX_WORKERS", "2")))
+document_parse_executor = ThreadPoolExecutor(
+    max_workers=DOCUMENT_PARSE_MAX_WORKERS,
+    thread_name_prefix="document-parse",
+)
 
 UPLOADS_DIR = Path(app.root_path) / "uploads"
 PREVIEW_DIR = UPLOADS_DIR / ".preview"
@@ -81,14 +86,7 @@ def build_external_url(path: str) -> str:
 
 
 def _compose_upload_conversation_title(file_names: list[str]) -> str:
-    safe_names = [name for name in file_names if name]
-    if not safe_names:
-        return "Uploaded documents"
-    if len(safe_names) == 1:
-        return safe_names[0][:255]
-    suffix = f" +{len(safe_names) - 1} more"
-    max_base_len = max(1, 255 - len(suffix))
-    return f"{safe_names[0][:max_base_len]}{suffix}"
+    return "New conversation"
 
 
 def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
@@ -1591,6 +1589,11 @@ def _run_document_parse_job(job: dict) -> None:
                 original_filename=original_filename,
                 progress_callback=on_progress,
             )
+            parser_metadata = parser_result.get("metadata") or {}
+            parser_result["metadata"] = {
+                **parser_metadata,
+                "processing": None,
+            }
             extraction_payload = build_extraction_payload(
                 document_id=document_id,
                 parser_result=parser_result,
@@ -1648,12 +1651,7 @@ def _run_document_parse_job(job: dict) -> None:
 
 def _start_background_parse_jobs(parse_jobs: list[dict]) -> None:
     for job in parse_jobs:
-        thread = threading.Thread(
-            target=_run_document_parse_job,
-            args=(job,),
-            daemon=True,
-        )
-        thread.start()
+        document_parse_executor.submit(_run_document_parse_job, job)
 
 
 @app.route('/api/documents/upload', methods=['POST'])
