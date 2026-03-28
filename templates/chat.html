@@ -79,7 +79,8 @@
                                 data-doc-file="{{ doc.upload_path }}"
                                 data-doc-title="{{ doc.original_filename }}"
                                 data-doc-id="{{ doc.document_id }}"
-                                data-doc-created-at="{{ doc.created_at }}"
+                                data-doc-created-at="{{ doc.uploaded_at or doc.created_at }}"
+                                data-doc-created-at-ts="{{ doc.uploaded_at_ts or doc.created_at_ts or 0 }}"
                                 data-parser-status="{{ doc.parser_status }}"
                             >
                                 <div class="flex items-center gap-3 px-3 py-2.5">
@@ -132,7 +133,8 @@
                                 data-doc-file="{{ doc.upload_path }}"
                                 data-doc-title="{{ doc.original_filename }}"
                                 data-doc-id="{{ doc.document_id }}"
-                                data-doc-created-at="{{ doc.created_at }}"
+                                data-doc-created-at="{{ doc.uploaded_at or doc.created_at }}"
+                                data-doc-created-at-ts="{{ doc.uploaded_at_ts or doc.created_at_ts or 0 }}"
                                 data-parser-status="{{ doc.parser_status }}"
                                 title="{{ doc.original_filename }}"
                             >

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from importlib import metadata
 import io
 import json
 import re
@@ -16,6 +17,9 @@ _FIGURE_REF_PATTERN = re.compile(r"\b(?:fig(?:ure)?)[\.\s]+(\d+)\b", re.IGNORECA
 _TABLE_REF_PATTERN = re.compile(r"\btable\s+(\d+)\b", re.IGNORECASE)
 _SECTION_REF_PATTERN = re.compile(r"\b(?:sect(?:ion)?)[\.\s]+((?:\d+\.)*\d+)\b", re.IGNORECASE)
 _SECTION_NUMBER_PATTERN = re.compile(r"^\s*((?:\d+\.)*\d+)\b")
+
+PARAGRAPH_BOUNDARY = "\n\n"
+WORD_CONTINUATION = " "
 
 
 def safe_int(value, default: int = 0) -> int:
@@ -42,6 +46,8 @@ def parse_zip(
     normalized_artifacts = normalize_coordinates(raw_artifacts)
     intermediate_blocks = build_intermediate_blocks(normalized_artifacts)
     segments, segment_context = build_segments_from_blocks(intermediate_blocks)
+    segments, postprocess_stats = post_process_segments(segments)
+    segment_context["post_processing"] = postprocess_stats
     segments, heading_stats = attach_section_paths(segments)
     assets, asset_warnings = extract_assets(
         intermediate_blocks,
@@ -285,8 +291,11 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                     "heading_level": block.get("heading_level") or 1,
                     "bbox": bbox,
                     "reading_order": order_index,
+                    "source_locator": block.get("source_locator") or "",
                     "source_file": source_file,
                     "mineru_type": "title",
+                    "layout_role": "heading",
+                    "can_merge_text": False,
                 },
             ))
             continue
@@ -306,8 +315,11 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                     "role": "paragraph",
                     "bbox": bbox,
                     "reading_order": order_index,
+                    "source_locator": block.get("source_locator") or "",
                     "source_file": source_file,
                     "mineru_type": block.get("original_type") or "paragraph",
+                    "layout_role": "body_text",
+                    "can_merge_text": True,
                 },
             ))
             continue
@@ -328,9 +340,12 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                         "role": "list_item",
                         "bbox": bbox,
                         "reading_order": order_index,
+                        "source_locator": block.get("source_locator") or "",
                         "source_file": source_file,
                         "mineru_type": "list",
                         "list_type": block.get("list_type") or "list",
+                        "layout_role": "body_text",
+                        "can_merge_text": True,
                     },
                 ))
             continue
@@ -351,8 +366,11 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                         "role": "reference_entry",
                         "bbox": bbox,
                         "reading_order": order_index,
+                        "source_locator": block.get("source_locator") or "",
                         "source_file": source_file,
                         "mineru_type": "reference_list",
+                        "layout_role": "body_text",
+                        "can_merge_text": True,
                     },
                 ))
             continue
@@ -365,8 +383,12 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                 "role": "table",
                 "bbox": bbox,
                 "reading_order": order_index,
+                "source_locator": block.get("source_locator") or "",
                 "source_file": source_file,
                 "mineru_type": "table",
+                "layout_role": "table",
+                "can_merge_text": False,
+                "is_merge_interruptor": True,
             }
             if block.get("table_html"):
                 metadata["table_html"] = block["table_html"]
@@ -394,8 +416,12 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                 "role": "figure_caption",
                 "bbox": bbox,
                 "reading_order": order_index,
+                "source_locator": block.get("source_locator") or "",
                 "source_file": source_file,
                 "mineru_type": "image",
+                "layout_role": "figure_caption",
+                "can_merge_text": False,
+                "is_merge_interruptor": True,
             }
             if label:
                 metadata["reference_label"] = label
@@ -415,6 +441,296 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
             ))
 
     return segments, {"suppressed_counts": suppressed_counts}
+
+
+def _segment_bbox(segment: dict) -> list[float]:
+    bbox = segment.get("metadata", {}).get("bbox") or []
+    return bbox if isinstance(bbox, list) and len(bbox) == 4 else []
+
+
+def _segment_reading_order(segment: dict) -> int:
+    return safe_int(segment.get("metadata", {}).get("reading_order"), safe_int(segment.get("block_index"), 0))
+
+
+def _segment_page_index(segment: dict) -> int:
+    return safe_int(segment.get("source_index"), 0)
+
+
+def _segment_role(segment: dict) -> str:
+    return str(segment.get("metadata", {}).get("role") or "").strip().lower()
+
+
+def _can_merge_text_segment(segment: dict) -> bool:
+    metadata = segment.get("metadata") or {}
+    if metadata.get("can_merge_text") is True:
+        return True
+    return _segment_role(segment) in {"paragraph", "list_item", "reference_entry"}
+
+
+def _is_interruptor_segment(segment: dict) -> bool:
+    metadata = segment.get("metadata") or {}
+    if metadata.get("is_merge_interruptor") is True:
+        return True
+    return _segment_role(segment) in {"figure_caption", "table"}
+
+
+def _is_hard_boundary_segment(segment: dict) -> bool:
+    return _segment_role(segment) == "heading"
+
+
+def _infer_column_bucket(segment: dict) -> str:
+    bbox = _segment_bbox(segment)
+    if len(bbox) != 4:
+        return "unknown"
+    x0, _, x1, _ = [float(value) for value in bbox]
+    width = max(0.0, x1 - x0)
+    center = (x0 + x1) / 2.0
+    if width >= 0.72:
+        return "full"
+    if center <= 0.42:
+        return "left"
+    if center >= 0.58:
+        return "right"
+    return "center"
+
+
+def _bbox_vertical_gap(previous: dict, current: dict) -> float | None:
+    prev_bbox = _segment_bbox(previous)
+    curr_bbox = _segment_bbox(current)
+    if len(prev_bbox) != 4 or len(curr_bbox) != 4:
+        return None
+    return float(curr_bbox[1]) - float(prev_bbox[3])
+
+
+def _text_ends_open(text: str) -> bool:
+    compact = str(text or "").strip()
+    if not compact:
+        return False
+    if compact.endswith("-"):
+        return True
+    return not bool(re.search(r'[.!?;:)\]"\']\s*$', compact))
+
+
+def _text_starts_like_continuation(text: str) -> bool:
+    compact = str(text or "").strip()
+    if not compact:
+        return False
+    if re.match(r'^[a-z(\["\']', compact):
+        return True
+    if re.match(r"^\d", compact):
+        return True
+    if re.match(r"^\[[0-9,\-\s]+\]", compact):
+        return True
+    if re.match(r"^(and|or|but|for|nor|so|yet|to|of|in|on|with|by|from|as|that|which|who|whose|where|when)\b", compact, re.IGNORECASE):
+        return True
+    return False
+
+
+def _sections_compatible(previous: dict, current: dict) -> bool:
+    prev_sections = previous.get("metadata", {}).get("section_path") or []
+    curr_sections = current.get("metadata", {}).get("section_path") or []
+    if not prev_sections or not curr_sections:
+        return True
+    return prev_sections == curr_sections
+
+def _is_new_paragraph_boundary(prev_text: str, curr_text: str) -> bool:
+    """True when evidence suggests curr_text starts a new paragraph, not a continuation."""
+    ends_closed = prev_text and prev_text[-1] in ".?!:"
+    starts_fresh = curr_text and curr_text[0].isupper()
+    starts_like_continuation = _text_starts_like_continuation(curr_text)
+    return ends_closed and starts_fresh and not starts_like_continuation
+
+def _continuation_score(previous: dict, current: dict, interruptors: list[dict]) -> int:
+    prev_text = str(previous.get("text") or "").strip()
+    curr_text = str(current.get("text") or "").strip()
+    if not prev_text or not curr_text:
+        return -999
+
+    prev_role = _segment_role(previous)
+    curr_role = _segment_role(current)
+    if prev_role != curr_role and {prev_role, curr_role} != {"paragraph", "list_item"}:
+        return -999
+
+    score = 0
+    if _text_ends_open(prev_text):
+        score += 3
+    if _text_starts_like_continuation(curr_text):
+        score += 3
+
+    prev_page = _segment_page_index(previous)
+    curr_page = _segment_page_index(current)
+    page_gap = curr_page - prev_page
+    if page_gap == 0:
+        score += 2
+    elif page_gap == 1:
+        score += 1
+    else:
+        return -999
+
+    prev_col = _infer_column_bucket(previous)
+    curr_col = _infer_column_bucket(current)
+    if page_gap == 0 and prev_col == "left" and curr_col == "right":
+        score += 2
+    elif page_gap == 0 and prev_col == curr_col:
+        vertical_gap = _bbox_vertical_gap(previous, current)
+        if vertical_gap is not None and vertical_gap <= 0.12:
+            score += 2
+    elif page_gap == 1 and curr_col in {"left", "full", "unknown"}:
+        score += 2
+
+    order_gap = _segment_reading_order(current) - _segment_reading_order(previous)
+    if page_gap == 0 and order_gap in {1, 2, 3}:
+        score += 1
+    if interruptors:
+        score -= len(interruptors)
+        if any(_segment_role(item) == "heading" for item in interruptors):
+            return -999
+        if len(interruptors) <= 2:
+            score += 1
+
+    if _sections_compatible(previous, current):
+        score += 1
+
+    if prev_text.endswith("-"):
+        score += 1
+
+    # After all existing score computation, before return:
+    if _is_new_paragraph_boundary(prev_text, curr_text):
+        score -= 4  # strong penalty — pushes most same-page cases below threshold 6
+
+    return score
+
+
+def _merge_segment_pair(base_segment: dict, continuation_segment: dict, interruptors: list[dict]) -> dict:
+    base_text = str(base_segment.get("text") or "").strip()
+    continuation_text = str(continuation_segment.get("text") or "").strip() 
+    
+    if base_text.endswith("-"):
+        merged_text = f"{base_text[:-1]}{continuation_text}"
+    else:
+        if _is_new_paragraph_boundary(base_text, continuation_text):
+            merged_text = f"{base_text}\n\n{continuation_text}"
+        else:
+            merged_text = f"{base_text} {continuation_text}".strip()
+
+    metadata = {
+        **(base_segment.get("metadata") or {}),
+    }
+    merged_from = list(metadata.get("merged_from_segment_ids") or [])
+    merged_from.extend([base_segment.get("segment_id"), continuation_segment.get("segment_id")])
+    seen_ids: list[str] = []
+    for segment_id in merged_from:
+        safe_id = str(segment_id or "").strip()
+        if safe_id and safe_id not in seen_ids:
+            seen_ids.append(safe_id)
+    metadata["merged_from_segment_ids"] = seen_ids
+
+    interruption_ids = list(metadata.get("interruption_segment_ids") or [])
+    for interruptor in interruptors:
+        interrupt_id = str(interruptor.get("segment_id") or "").strip()
+        if interrupt_id and interrupt_id not in interruption_ids:
+            interruption_ids.append(interrupt_id)
+    if interruption_ids:
+        metadata["interruption_segment_ids"] = interruption_ids
+
+    metadata["char_count"] = len(merged_text)
+    metadata["merged_continuation_count"] = safe_int(metadata.get("merged_continuation_count"), 0) + 1
+    metadata["paragraph_boundary_count"] = safe_int(metadata.get("paragraph_boundary_count"), 0) + (
+        1 if _is_new_paragraph_boundary(base_text, continuation_text) else 0
+    )
+    metadata["continued_into_page"] = _segment_page_index(continuation_segment)
+    metadata["continued_into_reading_order"] = _segment_reading_order(continuation_segment)
+
+    return {
+        **base_segment,
+        "text": merged_text,
+        "metadata": metadata,
+    }
+
+
+def post_process_segments(segments: list[dict]) -> tuple[list[dict], dict]:
+    ordered_segments = sorted(
+        segments,
+        key=lambda segment: (
+            _segment_page_index(segment),
+            _segment_reading_order(segment),
+            safe_int(segment.get("paragraph_index"), 0),
+            str(segment.get("segment_id") or ""),
+        ),
+    )
+
+    consumed_ids: set[str] = set()
+    merged_count = 0
+    interruption_merge_count = 0
+
+    for index, segment in enumerate(ordered_segments):
+        segment_id = str(segment.get("segment_id") or "").strip()
+        if not segment_id or segment_id in consumed_ids or not _can_merge_text_segment(segment):
+            continue
+
+        current = segment
+        cursor = index + 1
+        while cursor < len(ordered_segments):
+            interruptors: list[dict] = []
+            candidate = None
+            scan = cursor
+
+            while scan < len(ordered_segments):
+                nxt = ordered_segments[scan]
+                nxt_id = str(nxt.get("segment_id") or "").strip()
+                if not nxt_id or nxt_id in consumed_ids:
+                    scan += 1
+                    continue
+
+                page_gap = _segment_page_index(nxt) - _segment_page_index(current)
+                if page_gap > 1:
+                    break
+
+                if _is_hard_boundary_segment(nxt):
+                    candidate = None
+                    break
+                if _is_interruptor_segment(nxt):
+                    interruptors.append(nxt)
+                    if len(interruptors) > 2:
+                        candidate = None
+                        break
+                    scan += 1
+                    continue
+                if not _can_merge_text_segment(nxt):
+                    candidate = None
+                    break
+
+                candidate = nxt
+                break
+
+            if not candidate:
+                break
+
+            score = _continuation_score(current, candidate, interruptors)
+            if score < 6:
+                break
+
+            consumed_ids.add(str(candidate.get("segment_id") or "").strip())
+            current = _merge_segment_pair(current, candidate, interruptors)
+            ordered_segments[index] = current
+            merged_count += 1
+            if interruptors:
+                interruption_merge_count += 1
+            cursor = scan + 1
+
+    final_segments = []
+    for segment in ordered_segments:
+        segment_id = str(segment.get("segment_id") or "").strip()
+        if segment_id and segment_id in consumed_ids:
+            continue
+        final_segments.append(segment)
+
+    stats = {
+        "merged_segment_count": merged_count,
+        "interruption_merge_count": interruption_merge_count,
+        "output_segment_count": len(final_segments),
+    }
+    return final_segments, stats
 
 
 def attach_section_paths(segments: list[dict]) -> tuple[list[dict], dict]:
@@ -645,6 +961,7 @@ def build_metadata(
         "reference_count": len(references),
         "unresolved_reference_count": unresolved_reference_count,
         "header_footer_suppression_stats": segment_context.get("suppressed_counts") or {},
+        "post_processing": segment_context.get("post_processing") or {},
         "heading_stats": heading_stats,
     }
 

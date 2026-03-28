@@ -9,3 +9,5 @@ uploads/
 
 *.sql
 migrations/*.sql
+migrations/*.md
+

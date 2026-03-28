@@ -180,6 +180,12 @@
                     <span id="email-verify-resend-status" class="text-xs font-semibold"></span>
                 </div>
             </div>
+            <script>
+                window.__AUTH_USER__ = {{ auth_user|tojson }};
+                window.__SIDEBAR_CONVERSATIONS__ = {{ sidebar_conversations|default([], true)|tojson }};
+                window.__CURRENT_CONVERSATION_ID__ = {{ current_conversation_id|default('', true)|tojson }};
+                window.__NEW_CONVERSATION_ID__ = {{ (current_conversation_id if highlight_new_conversation else '')|default('', true)|tojson }};
+            </script>
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -200,13 +206,6 @@
             </button>
         </div>
     </div>
-
-    <script>
-        window.__AUTH_USER__ = {{ auth_user|tojson }};
-        window.__SIDEBAR_CONVERSATIONS__ = {{ sidebar_conversations|default([], true)|tojson }};
-        window.__CURRENT_CONVERSATION_ID__ = {{ current_conversation_id|default('', true)|tojson }};
-        window.__NEW_CONVERSATION_ID__ = {{ (current_conversation_id if highlight_new_conversation else '')|default('', true)|tojson }};
-    </script>
     <script src="/static/script/base.js"></script>
 </body>
 </html>

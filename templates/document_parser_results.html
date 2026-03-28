@@ -72,50 +72,113 @@
         </div>
     </section>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
-        <div class="flex items-center justify-between gap-3">
-            <h2 class="text-lg font-semibold text-slate-900">Extracted Segments</h2>
+    <details id="rendered-markdown-section" class="group rounded-xl border border-gray-200 bg-white" open>
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-900">Rendered Markdown</h2>
+                <p class="text-sm text-slate-500">Primary reading view generated from the extracted markdown output.</p>
+            </div>
             <div class="flex items-center gap-2">
                 <button
-                    id="copy-extracted-text"
+                    id="copy-rendered-text"
                     type="button"
                     class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-gray-50"
                 >
                     <i class="fa-regular fa-copy"></i>
-                    Copy Extracted Text
+                    Copy Text
                 </button>
+                <span class="text-slate-400 transition-transform group-open:rotate-180">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </span>
+            </div>
+        </summary>
+        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
+            <article id="rendered-markdown" class="max-w-none text-slate-800"></article>
+        </div>
+    </details>
+
+    <details id="extracted-images-section" class="group hidden rounded-xl border border-gray-200 bg-white">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-900">Extracted Images</h2>
+                <p class="text-sm text-slate-500">Images captured during parsing, shown separately from the markdown body.</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="image-count" class="text-xs text-slate-500">0 images</span>
+                <span class="text-slate-400 transition-transform group-open:rotate-180">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </span>
+            </div>
+        </summary>
+        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
+            <div id="extracted-images" class="grid gap-4 md:grid-cols-2"></div>
+        </div>
+    </details>
+
+    <details id="segment-breakdown-section" class="group rounded-xl border border-gray-200 bg-white">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-900">Segment Breakdown</h2>
+                <p class="text-sm text-slate-500">Debug-oriented source groups rendered after the markdown view.</p>
+            </div>
+            <div class="flex items-center gap-2">
                 <span id="segment-count" class="text-xs text-slate-500">{{ parser_document.parser_result.segments|length }} segments</span>
+                <span class="text-slate-400 transition-transform group-open:rotate-180">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </span>
             </div>
+        </summary>
+        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
+            <div id="parser-segments" class="space-y-4"></div>
         </div>
-        <div id="parser-segments" class="mt-4 space-y-4"></div>
-    </section>
+    </details>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
-        <div class="flex items-center justify-between gap-3">
-            <h2 class="text-lg font-semibold text-slate-900">Markdown Output</h2>
-            <button
-                id="copy-markdown-output"
-                type="button"
-                class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-gray-50"
-            >
-                <i class="fa-regular fa-copy"></i>
-                Copy Markdown
-            </button>
-        </div>
-        <pre id="markdown-output" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs whitespace-pre-wrap"></pre>
-    </section>
-
-    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
-        <div class="flex items-center justify-between gap-3">
-            <h2 class="text-lg font-semibold text-slate-900">Extraction JSON</h2>
-            <div class="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
-                <button id="show-normalized" type="button" class="px-3 py-1.5 text-sm rounded-md bg-white shadow-sm text-slate-800">Normalized</button>
-                <button id="show-raw" type="button" class="px-3 py-1.5 text-sm rounded-md text-slate-500">Raw</button>
+    <details id="markdown-source-section" class="group rounded-xl border border-gray-200 bg-white">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-900">Markdown Source</h2>
+                <p class="text-sm text-slate-500">Raw markdown emitted by the parser.</p>
             </div>
+            <div class="flex items-center gap-2">
+                <button
+                    id="copy-markdown-output"
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-gray-50"
+                >
+                    <i class="fa-regular fa-copy"></i>
+                    Copy Markdown
+                </button>
+                <span class="text-slate-400 transition-transform group-open:rotate-180">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </span>
+            </div>
+        </summary>
+        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
+            <pre id="markdown-output" class="max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs whitespace-pre-wrap"></pre>
         </div>
-        <pre id="normalized-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs"></pre>
-        <pre id="raw-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs hidden">{{ parser_json }}</pre>
-    </section>
+    </details>
+
+    <details id="json-section" class="group rounded-xl border border-gray-200 bg-white">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-900">Extraction JSON</h2>
+                <p class="text-sm text-slate-500">Normalized and raw payloads for parser debugging.</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
+                    <button id="show-normalized" type="button" class="px-3 py-1.5 text-sm rounded-md bg-white shadow-sm text-slate-800">Normalized</button>
+                    <button id="show-raw" type="button" class="px-3 py-1.5 text-sm rounded-md text-slate-500">Raw</button>
+                </div>
+                <span class="text-slate-400 transition-transform group-open:rotate-180">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </span>
+            </div>
+        </summary>
+        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
+            <pre id="normalized-json" class="max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs"></pre>
+            <pre id="raw-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs hidden">{{ parser_json }}</pre>
+        </div>
+    </details>
 </div>
 
 <button
@@ -135,6 +198,10 @@
     const statusText = document.getElementById("reparse-status");
     const reparseBtn = document.getElementById("reparse-btn");
     const container = document.getElementById("parser-segments");
+    const renderedMarkdown = document.getElementById("rendered-markdown");
+    const extractedImages = document.getElementById("extracted-images");
+    const extractedImagesSection = document.getElementById("extracted-images-section");
+    const imageCountValue = document.getElementById("image-count");
     const normalizedPre = document.getElementById("normalized-json");
     const rawPre = document.getElementById("raw-json");
     const markdownPre = document.getElementById("markdown-output");
@@ -143,7 +210,7 @@
     const statusValue = document.getElementById("parse-status-value");
     const fileTypeValue = document.getElementById("file-type-value");
     const segmentCountValue = document.getElementById("segment-count");
-    const copyExtractedBtn = document.getElementById("copy-extracted-text");
+    const copyRenderedBtn = document.getElementById("copy-rendered-text");
     const copyMarkdownBtn = document.getElementById("copy-markdown-output");
     const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
     const paperTitleValue = document.getElementById("paper-title-value");
@@ -155,65 +222,197 @@
     const escapeHtml = (value) => String(value || "")
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+
+    const slugify = (value) => String(value || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+
+    const getCurrentSegments = () => (
+        Array.isArray(parserDocument?.parser_result?.segments)
+            ? parserDocument.parser_result.segments
+            : []
+    );
+
+    const getCurrentAssets = () => (
+        Array.isArray(parserDocument?.parser_result?.assets)
+            ? parserDocument.parser_result.assets
+            : []
+    );
+
+    const getBestMarkdownText = () => {
+        const markdownText = String(parserDocument?.parser_result?.metadata?.markdown_output || "").trim();
+        if (markdownText) return markdownText;
+        return buildCopyableExtractedText();
+    };
+
+    const getUploadAssetUrl = (uploadPath) => {
+        const safePath = String(uploadPath || "").trim();
+        if (!safePath) return "";
+        return `/uploads/${encodeURIComponent(safePath)}`;
+    };
+
+    const resolveMarkdownUrl = (url) => {
+        const safeUrl = String(url || "").trim();
+        if (!safeUrl) return "";
+        if (/^(https?:)?\/\//i.test(safeUrl) || safeUrl.startsWith("data:") || safeUrl.startsWith("/")) {
+            return safeUrl;
+        }
+
+        const matchingAsset = getCurrentAssets().find((asset) => {
+            const uploadPath = String(asset?.upload_path || "").trim();
+            const originalZipPath = String(asset?.original_zip_path || "").trim();
+            return safeUrl === uploadPath
+                || safeUrl === originalZipPath
+                || safeUrl === uploadPath.split("/").pop()
+                || safeUrl === originalZipPath.split("/").pop();
+        });
+
+        return matchingAsset?.upload_path ? getUploadAssetUrl(matchingAsset.upload_path) : safeUrl;
+    };
 
     const renderMarkdownInline = (line) => {
         let safe = escapeHtml(line);
-        safe = safe.replace(/`([^`]+)`/g, "<code class=\"rounded bg-slate-100 px-1 py-0.5 text-xs\">$1</code>");
+        safe = safe.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, altText, url) => {
+            const resolvedUrl = resolveMarkdownUrl(url);
+            return resolvedUrl
+                ? `<img src="${escapeHtml(resolvedUrl)}" alt="${escapeHtml(altText)}" class="my-5 block max-h-80 w-auto max-w-full rounded-xl border border-gray-200 bg-white object-contain shadow-sm mx-auto" loading="lazy">`
+                : escapeHtml(altText);
+        });
+        safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
+            const resolvedUrl = resolveMarkdownUrl(url);
+            return `<a class="text-brand-700 underline decoration-brand-300 underline-offset-2" href="${escapeHtml(resolvedUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+        });
+        safe = safe.replace(/`([^`]+)`/g, "<code class=\"rounded bg-slate-100 px-1 py-0.5 text-[0.85em] text-slate-800\">$1</code>");
         safe = safe.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
         safe = safe.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-        safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a class="text-brand-700 underline" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
         return safe;
+    };
+
+    const isTableSeparatorLine = (line) => {
+        const trimmed = String(line || "").trim();
+        return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed);
+    };
+
+    const splitMarkdownRow = (line) => {
+        const trimmed = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
+        return trimmed.split("|").map((cell) => cell.trim());
+    };
+
+    const renderMarkdownTable = (tableLines) => {
+        if (tableLines.length < 2) return "";
+        const headerCells = splitMarkdownRow(tableLines[0]);
+        const bodyLines = isTableSeparatorLine(tableLines[1]) ? tableLines.slice(2) : tableLines.slice(1);
+        const bodyRows = bodyLines.map(splitMarkdownRow);
+        const headerHtml = headerCells.map((cell) => `<th class="border border-gray-200 bg-slate-100 px-3 py-2 text-left font-semibold text-slate-800">${renderMarkdownInline(cell)}</th>`).join("");
+        const bodyHtml = bodyRows.map((cells) => {
+            const rowHtml = cells.map((cell) => `<td class="border border-gray-200 px-3 py-2 align-top text-slate-700">${renderMarkdownInline(cell)}</td>`).join("");
+            return `<tr>${rowHtml}</tr>`;
+        }).join("");
+        return `<div class="my-5 overflow-x-auto rounded-xl border border-gray-200"><table class="min-w-full border-collapse text-sm"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
     };
 
     const markdownToHtml = (text) => {
         const lines = String(text || "").split(/\r?\n/);
         const html = [];
-        let inList = false;
+        const paragraphBuffer = [];
+        let listItems = [];
+        let tableLines = [];
+        let inCodeFence = false;
+        let codeLines = [];
 
-        const closeList = () => {
-            if (inList) {
-                html.push("</ul>");
-                inList = false;
-            }
+        const flushParagraph = () => {
+            if (!paragraphBuffer.length) return;
+            html.push(`<p class="my-4 text-[15px] leading-7 text-slate-700">${renderMarkdownInline(paragraphBuffer.join(" "))}</p>`);
+            paragraphBuffer.length = 0;
+        };
+
+        const flushList = () => {
+            if (!listItems.length) return;
+            const itemsHtml = listItems.map((item) => `<li class="leading-7 text-slate-700">${renderMarkdownInline(item)}</li>`).join("");
+            html.push(`<ul class="my-4 list-disc space-y-2 pl-6">${itemsHtml}</ul>`);
+            listItems = [];
+        };
+
+        const flushTable = () => {
+            if (!tableLines.length) return;
+            html.push(renderMarkdownTable(tableLines));
+            tableLines = [];
+        };
+
+        const flushCode = () => {
+            if (!inCodeFence) return;
+            html.push(`<pre class="my-5 overflow-x-auto rounded-xl bg-slate-950 p-4 text-sm text-slate-100"><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+            inCodeFence = false;
+            codeLines = [];
         };
 
         for (const rawLine of lines) {
-            const line = rawLine.trimEnd();
-            if (!line.trim()) {
-                closeList();
-                continue;
-            }
-            if (line.startsWith("### ")) {
-                closeList();
-                html.push(`<h5 class="mt-2 text-sm font-semibold text-slate-800">${renderMarkdownInline(line.slice(4))}</h5>`);
-                continue;
-            }
-            if (line.startsWith("## ")) {
-                closeList();
-                html.push(`<h4 class="mt-2 text-base font-semibold text-slate-900">${renderMarkdownInline(line.slice(3))}</h4>`);
-                continue;
-            }
-            if (line.startsWith("# ")) {
-                closeList();
-                html.push(`<h3 class="mt-2 text-lg font-semibold text-slate-900">${renderMarkdownInline(line.slice(2))}</h3>`);
-                continue;
-            }
-            if (/^\s*[-*]\s+/.test(line)) {
-                if (!inList) {
-                    html.push('<ul class="list-disc pl-5 space-y-1">');
-                    inList = true;
+            const line = rawLine.replace(/\t/g, "    ");
+            const trimmed = line.trim();
+
+            if (trimmed.startsWith("```")) {
+                flushParagraph();
+                flushList();
+                flushTable();
+                if (inCodeFence) {
+                    flushCode();
+                } else {
+                    inCodeFence = true;
+                    codeLines = [];
                 }
-                html.push(`<li class="text-sm text-slate-700">${renderMarkdownInline(line.replace(/^\s*[-*]\s+/, ""))}</li>`);
                 continue;
             }
 
-            closeList();
-            html.push(`<p class="text-sm text-slate-700 leading-relaxed">${renderMarkdownInline(line)}</p>`);
+            if (inCodeFence) {
+                codeLines.push(rawLine);
+                continue;
+            }
+
+            if (!trimmed) {
+                flushParagraph();
+                flushList();
+                flushTable();
+                continue;
+            }
+
+            if (trimmed.includes("|") && !trimmed.startsWith("#")) {
+                flushParagraph();
+                flushList();
+                tableLines.push(trimmed);
+                continue;
+            }
+            flushTable();
+
+            if (/^#{1,6}\s+/.test(trimmed)) {
+                flushParagraph();
+                flushList();
+                const level = Math.min(6, (trimmed.match(/^#+/) || ["#"])[0].length);
+                const headingText = trimmed.slice(level).trim();
+                const tag = `h${Math.min(6, level + 1)}`;
+                const sizeClass = ["text-3xl", "text-2xl", "text-xl", "text-lg", "text-base", "text-sm"][level - 1] || "text-lg";
+                html.push(`<${tag} id="${escapeHtml(slugify(headingText))}" class="mt-8 mb-3 font-semibold text-slate-900 ${sizeClass}">${renderMarkdownInline(headingText)}</${tag}>`);
+                continue;
+            }
+
+            if (/^\s*[-*]\s+/.test(line)) {
+                flushParagraph();
+                listItems.push(line.replace(/^\s*[-*]\s+/, "").trim());
+                continue;
+            }
+
+            paragraphBuffer.push(trimmed);
         }
 
-        closeList();
-        return html.join("");
+        flushParagraph();
+        flushList();
+        flushTable();
+        flushCode();
+
+        return html.join("") || '<p class="text-sm text-slate-500">No markdown content available.</p>';
     };
 
     const setStatusMessage = (message, isError = false) => {
@@ -289,10 +488,64 @@
         pendingStatusPollHandle = window.setInterval(refreshParserStatus, 5000);
     };
 
+    const buildSegmentLookup = () => {
+        const map = new Map();
+        getCurrentSegments().forEach((segment) => {
+            const segmentId = String(segment?.segment_id || "").trim();
+            if (segmentId) {
+                map.set(segmentId, segment);
+            }
+        });
+        return map;
+    };
+
+    const renderExtractedImages = () => {
+        if (!extractedImages || !extractedImagesSection) return;
+
+        const imageAssets = getCurrentAssets().filter((asset) => String(asset?.asset_type || "").toLowerCase() === "image");
+        extractedImagesSection.classList.toggle("hidden", imageAssets.length === 0);
+        if (imageCountValue) {
+            imageCountValue.textContent = `${imageAssets.length} image${imageAssets.length === 1 ? "" : "s"}`;
+        }
+        if (!imageAssets.length) {
+            extractedImages.innerHTML = "";
+            return;
+        }
+
+        const segmentsById = buildSegmentLookup();
+        extractedImagesSection.open = true;
+        extractedImages.innerHTML = imageAssets.map((asset, index) => {
+            const imageUrl = getUploadAssetUrl(asset?.upload_path || "");
+            const captionSegment = segmentsById.get(String(asset?.caption_segment_id || "").trim());
+            const captionText = String(captionSegment?.text || asset?.metadata?.caption || "").trim();
+            const sourceIndex = asset?.source_index ?? "-";
+            const originalPath = String(asset?.original_zip_path || "").trim();
+
+            return `
+                <article class="overflow-hidden rounded-2xl border border-gray-200 bg-slate-50">
+                    <div class="aspect-[4/3] bg-white">
+                        ${imageUrl
+                            ? `<img src="${escapeHtml(imageUrl)}" alt="Extracted image ${index + 1}" class="h-full w-full object-contain" loading="lazy">`
+                            : '<div class="flex h-full items-center justify-center text-sm text-slate-400">Image preview unavailable</div>'}
+                    </div>
+                    <div class="space-y-2 border-t border-gray-200 p-4">
+                        <div class="flex items-center justify-between gap-3 text-xs uppercase tracking-wide text-slate-500">
+                            <span>Image ${index + 1}</span>
+                            <span>Source ${escapeHtml(sourceIndex)}</span>
+                        </div>
+                        <p class="text-sm leading-6 text-slate-700">${captionText ? escapeHtml(captionText) : "No caption linked to this image."}</p>
+                        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                            ${originalPath ? `<span class="rounded-full bg-white px-2 py-1">${escapeHtml(originalPath)}</span>` : ""}
+                            ${imageUrl ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener noreferrer" class="text-brand-700 underline">Open image</a>` : ""}
+                        </div>
+                    </div>
+                </article>
+            `;
+        }).join("");
+    };
+
     const renderParserResult = () => {
-        const segments = Array.isArray(parserDocument?.parser_result?.segments)
-            ? parserDocument.parser_result.segments
-            : [];
+        const segments = getCurrentSegments();
         const groupedSegments = segments.reduce((acc, segment) => {
             const sourceType = segment?.source_type || "page";
             const sourceIndex = Number.isFinite(segment?.source_index)
@@ -329,23 +582,30 @@
                         const textHtml = markdownToHtml(segment?.text || "");
                         return `
                             <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                                <div class="flex items-center justify-between text-xs text-slate-500">
-                                    <span>source index: ${sourceIndex}</span>
-                                    <span>segment index: ${segment?.segment_index ?? "-"}</span>
+                                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                                    <span>source index: ${escapeHtml(sourceIndex)}</span>
+                                    <span>segment index: ${escapeHtml(segment?.segment_index ?? "-")}</span>
+                                    <span>paragraph index: ${escapeHtml(segment?.paragraph_index ?? "-")}</span>
                                 </div>
-                                <div class="mt-2 space-y-1">${textHtml || '<p class="text-sm text-slate-500">(empty)</p>'}</div>
+                                <div class="mt-3">${textHtml || '<p class="text-sm text-slate-500">(empty)</p>'}</div>
                             </article>
                         `;
                     }).join("");
                     return `
                         <section class="rounded-xl border border-gray-200 p-3 md:p-4">
-                            <h3 class="text-sm font-semibold text-slate-800 uppercase tracking-wide">${heading}</h3>
+                            <h3 class="text-sm font-semibold text-slate-800 uppercase tracking-wide">${escapeHtml(heading)}</h3>
                             <div class="mt-3 space-y-2">${rows}</div>
                         </section>
                     `;
                 }).join("");
             }
         }
+
+        const markdownText = getBestMarkdownText();
+        if (renderedMarkdown) {
+            renderedMarkdown.innerHTML = markdownToHtml(markdownText);
+        }
+        renderExtractedImages();
 
         const normalizedPayload = {
             document_id: parserDocument?.document_id,
@@ -359,6 +619,7 @@
                 extraction_timestamp: parserDocument?.parser_result?.extraction_timestamp,
                 metadata: parserDocument?.parser_result?.metadata || {},
                 markdown_output: parserDocument?.parser_result?.metadata?.markdown_output || "",
+                assets: getCurrentAssets(),
                 errors: parserDocument?.parser_result?.errors || [],
                 grouped_segments: groups,
             },
@@ -371,12 +632,10 @@
             rawPre.textContent = JSON.stringify(parserDocument, null, 2);
         }
         if (markdownPre) {
-            const markdownText = parserDocument?.parser_result?.metadata?.markdown_output
-                || buildCopyableExtractedText();
             markdownPre.textContent = markdownText || "(empty)";
         }
         if (segmentCountValue) {
-            segmentCountValue.textContent = `${segments.length} segments`;
+            segmentCountValue.textContent = `${segments.length} segment${segments.length === 1 ? "" : "s"}`;
         }
         if (fileTypeValue) {
             fileTypeValue.textContent = parserDocument?.parser_result?.file_type
@@ -405,10 +664,7 @@
     };
 
     const buildCopyableExtractedText = () => {
-        const segments = Array.isArray(parserDocument?.parser_result?.segments)
-            ? parserDocument.parser_result.segments
-            : [];
-        const ordered = [...segments].sort((a, b) => {
+        const ordered = [...getCurrentSegments()].sort((a, b) => {
             const ai = Number(a?.source_index ?? 0);
             const bi = Number(b?.source_index ?? 0);
             if (ai !== bi) return ai - bi;
@@ -481,14 +737,11 @@
 
     normalizedBtn?.addEventListener("click", () => setMode("normalized"));
     rawBtn?.addEventListener("click", () => setMode("raw"));
-    copyExtractedBtn?.addEventListener("click", async () => {
-        const text = buildCopyableExtractedText();
-        await copyToClipboard(text);
+    copyRenderedBtn?.addEventListener("click", async () => {
+        await copyToClipboard(buildCopyableExtractedText());
     });
     copyMarkdownBtn?.addEventListener("click", async () => {
-        const text = parserDocument?.parser_result?.metadata?.markdown_output
-            || buildCopyableExtractedText();
-        await copyToClipboard(text);
+        await copyToClipboard(getBestMarkdownText());
     });
     reparseBtn?.addEventListener("click", async () => {
         stopPendingStatusPolling();
@@ -540,6 +793,12 @@
     }, { passive: true });
     scrollToTopBtn?.addEventListener("click", () => {
         window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    document.querySelectorAll("summary button").forEach((button) => {
+        button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
     });
     renderParserResult();
     setMode("normalized");

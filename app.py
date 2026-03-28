@@ -164,10 +164,13 @@ def _serialize_sidebar_conversation(row) -> dict:
 
 
 def _serialize_conversation_document(row) -> dict:
-    raw_metadata = row[8] if len(row) > 8 else None
+    raw_metadata = row[9] if len(row) > 9 else None
     metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     raw_progress = metadata.get("processing") if isinstance(metadata, dict) else None
     parser_progress = raw_progress if isinstance(raw_progress, dict) else None
+    created_at_value = row[5]
+    created_at = created_at_value.isoformat() if created_at_value else ""
+    created_at_ts = int(created_at_value.timestamp() * 1000) if created_at_value else 0
 
     return {
         "document_id":       str(row[0]),
@@ -175,9 +178,12 @@ def _serialize_conversation_document(row) -> dict:
         "stored_filename":   row[2] or "",
         "file_extension":    row[3] or "",
         "mime_type":         row[4] or "",
-        "created_at":        row[5].isoformat() if row[5] else "",
+        "created_at":        created_at,
+        "uploaded_at":       created_at,
+        "created_at_ts":     created_at_ts,
+        "uploaded_at_ts":    created_at_ts,
         "upload_path":       f"{row[6]}/{row[2]}" if row[6] and row[2] else "",
-        "parser_status":     row[7] or "pending",
+        "parser_status":     row[8] or "pending",
         "parser_progress":   parser_progress,
     }
 
@@ -259,7 +265,7 @@ def get_conversation_documents(user_id, conversation_id) -> list:
                     d.file_extension,
                     d.mime_type,
                     d.created_at,
-                    c.user_id,
+                    d.storage_path,
                     de.parser_status,
                     de.metadata
                 FROM conversations c

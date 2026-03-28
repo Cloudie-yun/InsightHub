@@ -267,12 +267,20 @@
         return Number.isFinite(parsed) ? parsed : 0;
     };
 
-    ns.getDocumentCreatedAtTimestamp = (documentPayload) => ns.getSourceTimestampValue(documentPayload?.created_at);
+    ns.getDocumentCreatedAtTimestamp = (documentPayload) => ns.getSourceTimestampValue(
+        documentPayload?.uploaded_at_ts
+        || documentPayload?.created_at_ts
+        || documentPayload?.uploaded_at
+        || documentPayload?.created_at,
+    );
 
     ns.getSourceNodeTitle = (node) => String(node?.dataset.docTitle || node?.title || "").trim();
 
     ns.getSourceNodeTimestamp = (node) => ns.getSourceTimestampValue(
-        node?.dataset.docCreatedAtTs || node?.dataset.docCreatedAt,
+        node?.dataset.docCreatedAtTs
+        || node?.dataset.docCreatedAt
+        || node?.dataset.docUploadedAtTs
+        || node?.dataset.docUploadedAt,
     );
 
     ns.compareSourceNodes = (leftNode, rightNode, sortMode) => {
@@ -361,7 +369,7 @@
 
         const parserStatus = String(documentPayload?.parser_status || "").toLowerCase() || constants.PENDING_PARSER_STATUS;
         const isProcessing = parserStatus === constants.PENDING_PARSER_STATUS;
-        const createdAt = String(documentPayload?.created_at || "").trim();
+        const createdAt = String(documentPayload?.uploaded_at || documentPayload?.created_at || "").trim();
         const article = document.createElement("article");
         article.className = isProcessing
             ? "group rounded-xl bg-brand-50/40 transition-colors cursor-pointer"
@@ -451,7 +459,7 @@
 
         const parserStatus = String(documentPayload?.parser_status || "").toLowerCase() || constants.PENDING_PARSER_STATUS;
         const isProcessing = parserStatus === constants.PENDING_PARSER_STATUS;
-        const createdAt = String(documentPayload?.created_at || "").trim();
+        const createdAt = String(documentPayload?.uploaded_at || documentPayload?.created_at || "").trim();
         const button = document.createElement("button");
         button.type = "button";
         button.className = isProcessing

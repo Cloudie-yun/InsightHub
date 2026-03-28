@@ -7,6 +7,12 @@ PARSER_VERSION = "1.0.0"
 PARSER_STATUS_PENDING = "pending"
 PARSER_STATUS_SUCCESS = "success"
 PARSER_STATUS_FAILED = "failed"
+PARSER_STATUS_PARTIAL = "partial"
+
+
+def _relation_exists(cur, relation_name: str) -> bool:
+    cur.execute("SELECT to_regclass(%s)", (relation_name,))
+    return bool(cur.fetchone()[0])
 
 
 def _normalize_segment(segment):
@@ -74,7 +80,7 @@ def build_extraction_payload(document_id, parser_result, parser_version=PARSER_V
     parser_status = (
         PARSER_STATUS_SUCCESS if has_segments and not parser_errors
         else PARSER_STATUS_FAILED if not has_segments
-        else "partial"  # or add a PARSER_STATUS_PARTIAL constant
+        else PARSER_STATUS_PARTIAL
     )
     extraction_timestamp = datetime.now(timezone.utc)
 
@@ -96,6 +102,11 @@ def save_document_extraction(cur, document_id, extraction_payload):
     extraction_timestamp = extraction_payload.get("extraction_timestamp")
     if extraction_timestamp:
         extraction_timestamp = datetime.fromisoformat(extraction_timestamp)
+    parser_status = extraction_payload.get("parser_status")
+    if parser_status == PARSER_STATUS_PARTIAL:
+        # The original schema only allows pending/success/failed.
+        # Persist partial parses as success while keeping errors in JSON payload.
+        parser_status = PARSER_STATUS_SUCCESS
 
     cur.execute(
         """
@@ -121,7 +132,7 @@ def save_document_extraction(cur, document_id, extraction_payload):
         """,
         (
             document_id,
-            extraction_payload.get("parser_status"),
+            parser_status,
             extraction_payload.get("parser_version"),
             extraction_timestamp,
             extraction_payload.get("file_type"),
@@ -137,20 +148,24 @@ def save_document_extraction(cur, document_id, extraction_payload):
         """,
         (document_id,),
     )
-    cur.execute(
-        """
-        DELETE FROM document_extraction_assets
-        WHERE document_id = %s
-        """,
-        (document_id,),
-    )
-    cur.execute(
-        """
-        DELETE FROM document_extraction_references
-        WHERE document_id = %s
-        """,
-        (document_id,),
-    )
+    has_assets_table = _relation_exists(cur, "document_extraction_assets")
+    has_references_table = _relation_exists(cur, "document_extraction_references")
+    if has_assets_table:
+        cur.execute(
+            """
+            DELETE FROM document_extraction_assets
+            WHERE document_id = %s
+            """,
+            (document_id,),
+        )
+    if has_references_table:
+        cur.execute(
+            """
+            DELETE FROM document_extraction_references
+            WHERE document_id = %s
+            """,
+            (document_id,),
+        )
 
     for segment_index, segment in enumerate(extraction_payload.get("segments") or []):
         cur.execute(
@@ -182,6 +197,8 @@ def save_document_extraction(cur, document_id, extraction_payload):
         )
 
     for asset_index, asset in enumerate(extraction_payload.get("assets") or []):
+        if not has_assets_table:
+            break
         cur.execute(
             """
             INSERT INTO document_extraction_assets (
@@ -221,6 +238,8 @@ def save_document_extraction(cur, document_id, extraction_payload):
         )
 
     for reference_index, reference in enumerate(extraction_payload.get("references") or []):
+        if not has_references_table:
+            break
         cur.execute(
             """
             INSERT INTO document_extraction_references (
@@ -368,51 +387,55 @@ def get_document_extraction(cur, document_id, conversation_id=None):
     )
     segment_rows = cur.fetchall()
 
-    cur.execute(
-        """
-        SELECT
-            asset_index,
-            asset_id,
-            asset_type,
-            storage_path,
-            upload_path,
-            original_zip_path,
-            mime_type,
-            byte_size,
-            content_hash,
-            source_index,
-            bbox,
-            caption_segment_id,
-            metadata
-        FROM document_extraction_assets
-        WHERE document_id = %s
-        ORDER BY asset_index ASC
-        """,
-        (document_id,),
-    )
-    asset_rows = cur.fetchall()
+    asset_rows = []
+    reference_rows = []
+    if _relation_exists(cur, "document_extraction_assets"):
+        cur.execute(
+            """
+            SELECT
+                asset_index,
+                asset_id,
+                asset_type,
+                storage_path,
+                upload_path,
+                original_zip_path,
+                mime_type,
+                byte_size,
+                content_hash,
+                source_index,
+                bbox,
+                caption_segment_id,
+                metadata
+            FROM document_extraction_assets
+            WHERE document_id = %s
+            ORDER BY asset_index ASC
+            """,
+            (document_id,),
+        )
+        asset_rows = cur.fetchall()
 
-    cur.execute(
-        """
-        SELECT
-            reference_index,
-            reference_id,
-            source_segment_id,
-            reference_kind,
-            reference_label,
-            target_segment_id,
-            target_asset_id,
-            normalized_target_key,
-            confidence,
-            resolution_status,
-            metadata
-        FROM document_extraction_references
-        WHERE document_id = %s
-        ORDER BY reference_index ASC
-        """,
-        (document_id,),
-    )
-    reference_rows = cur.fetchall()
+    if _relation_exists(cur, "document_extraction_references"):
+        cur.execute(
+            """
+            SELECT
+                reference_index,
+                reference_id,
+                source_segment_id,
+                reference_kind,
+                reference_label,
+                target_segment_id,
+                target_asset_id,
+                normalized_target_key,
+                confidence,
+                resolution_status,
+                metadata
+            FROM document_extraction_references
+            WHERE document_id = %s
+            ORDER BY reference_index ASC
+            """,
+            (document_id,),
+        )
+        reference_rows = cur.fetchall()
 
     extraction_payload = _serialize_extraction_row(extraction_row)
     extraction_payload["segments"] = [_serialize_extraction_segment_row(row) for row in segment_rows]
