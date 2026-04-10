@@ -3,25 +3,27 @@ import mimetypes
 import re
 
 from services.parsers.docx_parser import parse_docx
-from services.parsers.mineru import parse_pdf_with_mineru as parse_pdf
-from services.parsers.pptx_parser import parse_pptx
+from services.parsers.mineru import parse_document_with_mineru
 
 EXTENSION_TO_TYPE = {
     ".pdf": "pdf",
+    ".ppt": "ppt",
     ".docx": "docx",
     ".pptx": "pptx",
 }
 
 MIME_TO_TYPE = {
     "application/pdf": "pdf",
+    "application/vnd.ms-powerpoint": "ppt",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
 }
 
 PARSER_BY_TYPE = {
-    "pdf": parse_pdf,
+    "pdf": parse_document_with_mineru,
+    "ppt": parse_document_with_mineru,
     "docx": parse_docx,
-    "pptx": parse_pptx,
+    "pptx": parse_document_with_mineru,
 }
 
 
@@ -168,7 +170,7 @@ def parse_document(file_path, document_id=None, mime_type=None, original_filenam
             )
             return result
 
-        if file_type == "pdf":
+        if file_type in {"pdf", "ppt", "pptx"}:
             parser_result = parser(
                 file_path,
                 progress_callback=progress_callback,

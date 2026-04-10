@@ -9,8 +9,10 @@ from .api import create_direct_task, poll_batch, poll_direct_task, request_uploa
 from .client import MinerUError, ProgressCallback, ProgressEmitter
 from .zip_parser import download_zip, parse_zip
 
+MINERU_SUPPORTED_EXTENSIONS = {".pdf", ".ppt", ".pptx"}
 
-def parse_pdf_via_mineru_upload(
+
+def parse_document_via_mineru_upload(
     file_path: str | Path,
     token: str,
     progress_callback: ProgressCallback | None = None,
@@ -42,13 +44,18 @@ def parse_pdf_via_mineru_upload(
             "metadata": metadata,
             "errors": [{"code": "file_not_found", "message": f"File not found: {file_path}"}],
         }
-    if file_path.suffix.lower() != ".pdf":
+    file_extension = file_path.suffix.lower()
+    if file_extension not in MINERU_SUPPORTED_EXTENSIONS:
+        supported_extensions = ", ".join(sorted(MINERU_SUPPORTED_EXTENSIONS))
         return {
             "segments": [],
             "assets": [],
             "references": [],
             "metadata": metadata,
-            "errors": [{"code": "invalid_file_type", "message": "Only PDF is supported for MinerU parsing."}],
+            "errors": [{
+                "code": "invalid_file_type",
+                "message": f"MinerU parsing supports: {supported_extensions}.",
+            }],
         }
     if file_path.stat().st_size <= 0:
         return {
@@ -179,7 +186,7 @@ def parse_pdf_via_mineru_upload(
         }
 
 
-def parse_pdf_via_mineru_url(
+def parse_document_via_mineru_url(
     file_url: str,
     token: str,
     *,
@@ -242,7 +249,7 @@ def parse_pdf_via_mineru_url(
         return {"segments": [], "assets": [], "references": [], "metadata": metadata, "errors": [{"code": "parse_error", "message": str(exc)}]}
 
 
-def parse_pdf_with_mineru(
+def parse_document_with_mineru(
     file_path: str | Path,
     token: str | None = None,
     progress_callback: ProgressCallback | None = None,
@@ -267,9 +274,77 @@ def parse_pdf_with_mineru(
             }],
         }
 
-    return parse_pdf_via_mineru_upload(
+    return parse_document_via_mineru_upload(
         file_path,
         resolved_token,
+        progress_callback=progress_callback,
+        document_id=document_id,
+        original_filename=original_filename,
+    )
+
+
+def parse_pdf_via_mineru_upload(
+    file_path: str | Path,
+    token: str,
+    progress_callback: ProgressCallback | None = None,
+    document_id: str | None = None,
+    original_filename: str | None = None,
+    *,
+    model_version: str = "vlm",
+    language: str = "en",
+    enable_formula: bool = True,
+    enable_table: bool = True,
+    is_ocr: bool = False,
+) -> dict:
+    return parse_document_via_mineru_upload(
+        file_path,
+        token,
+        progress_callback=progress_callback,
+        document_id=document_id,
+        original_filename=original_filename,
+        model_version=model_version,
+        language=language,
+        enable_formula=enable_formula,
+        enable_table=enable_table,
+        is_ocr=is_ocr,
+    )
+
+
+def parse_pdf_via_mineru_url(
+    file_url: str,
+    token: str,
+    *,
+    document_id: str | None = None,
+    source_path: str | None = None,
+    model_version: str = "vlm",
+    language: str = "en",
+    enable_formula: bool = True,
+    enable_table: bool = True,
+    is_ocr: bool = False,
+) -> dict:
+    return parse_document_via_mineru_url(
+        file_url,
+        token,
+        document_id=document_id,
+        source_path=source_path,
+        model_version=model_version,
+        language=language,
+        enable_formula=enable_formula,
+        enable_table=enable_table,
+        is_ocr=is_ocr,
+    )
+
+
+def parse_pdf_with_mineru(
+    file_path: str | Path,
+    token: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    document_id: str | None = None,
+    original_filename: str | None = None,
+) -> dict:
+    return parse_document_with_mineru(
+        file_path,
+        token=token,
         progress_callback=progress_callback,
         document_id=document_id,
         original_filename=original_filename,
