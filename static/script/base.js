@@ -1,4 +1,5 @@
 const authModal = document.getElementById("auth-modal");
+const authDialog = document.getElementById("auth-dialog");
 const loginForm = document.getElementById("auth-login");
 const signupForm = document.getElementById("auth-signup");
 const forgotForm = document.getElementById("auth-forgot");
@@ -359,6 +360,7 @@ const setAuthMode = (mode) => {
     signupForm.classList.toggle("hidden", !isSignup);
     forgotForm.classList.toggle("hidden", !isForgot);
     resetForm.classList.toggle("hidden", !isReset);
+    authDialog?.classList.toggle("auth-dialog-wide", isSignup);
 
     if (isLogin) {
         authTitle.textContent = "Welcome Back";

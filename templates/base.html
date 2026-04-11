@@ -78,26 +78,29 @@
                     </div>
                 </div>
 
-                <!--New Chat Button-->
+                <!-- Primary Navigation -->
                 <div class="space-y-1 pt-5">
-                    <a href="/chat" class="sidebar-new-chat w-full flex items-center gap-3 px-4 py-2 rounded-lg text-base font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors">
-                        <i class="fa-solid fa-square-plus text-xl w-6 flex-shrink-0"></i>
+                    <a href="/chat" class="sidebar-panel-link sidebar-new-chat flex w-full items-center gap-3 rounded-lg px-4 py-2 text-sm font-medium transition-colors">
+                        <i class="fa-solid fa-square-plus w-6 flex-shrink-0 text-xl"></i>
                         <span class="sidebar-label">New Chat</span>
                     </a>
                 </div>
 
-                <a href="/dashboard" class="flex items-center gap-3 px-4 py-2 rounded-lg transition-colors {{ 'bg-brand-50 text-brand-700 font-medium' if active_page == 'dashboard' else 'text-gray-500 hover:bg-gray-100 hover:text-gray-900' }}">
-                    <i class="fa-solid fa-house text-lg w-6 flex-shrink-0"></i>
-                    <span class="sidebar-label">Dashboard</span>
-                </a>
-                
                 <div class="space-y-1">
-                    <button type="button" id="convo-toggle" class="w-full justify-center align-self-center flex items-center gap-3 px-4 py-2 rounded-lg transition-colors group {{ 'bg-brand-50 text-brand-700 font-medium' if active_page == 'chat' else 'text-gray-500 hover:bg-gray-100 hover:text-gray-900' }}">
-                        <i class="fa-solid fa-comments text-lg w-6 flex-shrink-0 "></i>
+                    <a href="/dashboard" class="sidebar-panel-link flex w-full items-center gap-3 rounded-lg px-4 py-2 text-sm font-medium transition-colors {{ 'bg-brand-50 text-brand-700' if active_page == 'dashboard' else 'text-gray-500 hover:bg-gray-100 hover:text-gray-900' }}">
+                        <i class="fa-solid fa-house w-6 flex-shrink-0 text-lg"></i>
+                        <span class="sidebar-label">Dashboard</span>
+                    </a>
+                </div>
+
+                <div class="space-y-1">
+                    <button type="button" id="convo-toggle" class="sidebar-panel-link group flex w-full items-center gap-3 rounded-lg px-4 py-2 text-sm font-medium transition-colors {{ 'bg-brand-50 text-brand-700' if active_page == 'chat' else 'text-gray-500 hover:bg-gray-100 hover:text-gray-900' }}">
+                        <i class="fa-solid fa-comments w-6 flex-shrink-0 text-lg"></i>
                         <span class="sidebar-label flex-1 text-left">Conversations</span>
-                        <i id="convo-caret" class="fa-solid fa-chevron-down text-xs transition-transform sidebar-label"></i>
+                        <i id="convo-caret" class="fa-solid fa-chevron-down sidebar-label text-xs transition-transform"></i>
                     </button>
-                    <div id="convo-submenu" class="pl-3 pr-3 space-y-1"></div>
+                    <div id="convo-submenu" class="sidebar-submenu space-y-1 px-3"></div>
+                </div>
             </nav>
         </div>
 

@@ -4,745 +4,604 @@
 {% set is_logged_in = session.get("user_id") %}
 {% set has_conversations = conversations|length > 0 %}
 <style>
-    /* Base Card (Grid View) */
-    .recent-convo-card {
-        position: relative;
+    @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+
+    .dashboard-page {
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+    }
+
+    .dashboard-page * {
+        min-width: 0;
+    }
+
+    /* ── Top panel ── */
+    .top-panel {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 1fr;
+    }
+    @media (min-width: 900px) {
+        .top-panel {
+            grid-template-columns: minmax(0, 1.9fr) minmax(260px, 0.8fr);
+        }
+    }
+
+    /* ── Recent conversations — card grid ── */
+    #recent-convo-container.history-view-cards {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 1fr;
+    }
+    @media (min-width: 640px) {
+        #recent-convo-container.history-view-cards {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    @media (min-width: 1100px) {
+        #recent-convo-container.history-view-cards {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+
+    /* ── Recent conversations — list view ── */
+    #recent-convo-container.history-view-list {
         display: flex;
         flex-direction: column;
+        gap: 0.5rem;
     }
-
-    /* Provide space for absolute actions menu in Grid view */
-    .recent-convo-card:not(.list-view) [data-card-title-area] {
-        padding-right: 32px;
-        flex-grow: 1;
-    }
-    
-    .recent-convo-card:not(.list-view) [data-card-actions] {
-        position: absolute;
-        top: 16px;
-        right: 16px;
-    }
-
-    /* List View Styles (Table Row Layout) */
-    article.recent-convo-card.list-view {
+    #recent-convo-container.history-view-list .recent-convo-card {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 120px 180px 40px;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
-        gap: 16px;
-        padding: 12px 24px;
-        border: none;
-        border-bottom: 1px solid #e5e7eb; /* Tailwind gray-200 */
-        border-radius: 0;
-        box-shadow: none;
-        background-color: #fff;
+        gap: 1rem;
+        padding: 0.875rem 1rem;
     }
-
-    article.recent-convo-card.list-view:last-child {
-        border-bottom: none;
+    #recent-convo-container.history-view-list .recent-doc-tags {
+        display: none;
     }
-
-    article.recent-convo-card.list-view:hover {
-        background-color: #f9fafb; /* Tailwind gray-50 */
-    }
-
-    .recent-convo-card.list-view [data-card-actions] {
-        position: static;
-        display: flex;
+    #recent-convo-container.history-view-list .recent-open-row {
         justify-content: flex-end;
     }
-
-    .recent-convo-card.list-view [data-card-title-area] {
-        padding-right: 0;
+    @media (max-width: 640px) {
+        #recent-convo-container.history-view-list .recent-convo-card {
+            grid-template-columns: 1fr;
+        }
+        #recent-convo-container.history-view-list .recent-open-row {
+            justify-content: flex-start;
+        }
     }
 
-    .recent-convo-card.list-view [data-card-title] {
-        font-size: 14px;
-        font-weight: 500;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+    /* ── Tip badge ── */
+    
+
+    /* ── View-toggle active ── */
+    
+
+    /* ── Card hover lift ── */
+    .recent-convo-card {
+        transition: border-color .15s, box-shadow .15s, transform .15s;
+    }
+    .recent-convo-card:hover {
+        border-color: var(--color-brand-300, #ddbeff);
+        box-shadow: 0 4px 16px 0 rgb(169 106 244 / .10);
+        transform: translateY(-2px);
     }
 
-    /* Remove standard margins & borders from areas to fit perfectly in list */
-    .recent-convo-card.list-view [data-card-sources-section] { margin-top: 0; }
-    .recent-convo-card.list-view [data-card-footer] {
-        margin-top: 0;
-        padding-top: 0;
-        border-top: none;
+    /* ── Dropzone drag-over ── */
+    .dropzone-drag-over {
+        border-color: var(--color-brand-400, #c493fc) !important;
+        background-color: var(--color-brand-50, #fdf8ff) !important;
     }
 
-    .recent-convo-card.list-view .grid-view-only { display: none; }
+    .dashboard-drop-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        background: rgba(18, 12, 30, 0.28);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0.18s ease, visibility 0.18s ease;
+    }
 
-	    .upload-drag-active {
-	        border-color: #9147e8 !important;
-	        background-color: #f7eeff !important;
-	    }
+    .dashboard-drop-overlay.is-active {
+        opacity: 1;
+        visibility: visible;
+    }
 
-        .dashboard-shell {
-            background:
-                radial-gradient(circle at top left, rgba(145, 71, 232, 0.12), transparent 32%),
-                radial-gradient(circle at top right, rgba(59, 130, 246, 0.08), transparent 28%),
-                linear-gradient(180deg, #faf7ff 0%, #f8fafc 36%, #ffffff 100%);
-            border-radius: 32px;
-        }
+    .dashboard-drop-overlay-card {
+        width: min(100%, 38rem);
+        border-radius: 1.75rem;
+        border: 1px solid var(--color-brand-200, #eedcff);
+        background: rgba(253, 248, 255, 0.94);
+        box-shadow: 0 24px 60px rgba(85, 41, 140, 0.16);
+        padding: 2rem;
+        text-align: center;
+    }
 
-        .dashboard-panel {
-            background: rgba(255, 255, 255, 0.88);
-            backdrop-filter: blur(14px);
-            border: 1px solid rgba(226, 232, 240, 0.9);
-            box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
-        }
+    .dashboard-drop-overlay-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 4.5rem;
+        height: 4.5rem;
+        border-radius: 1.5rem;
+        border: 1px solid var(--color-brand-200, #eedcff);
+        background: linear-gradient(180deg, var(--color-brand-50, #fdf8ff), white);
+        color: var(--color-brand-700, #7a2ed0);
+        font-size: 1.5rem;
+    }
 
-        .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 14px;
-            border-radius: 999px;
-            background: rgba(255, 255, 255, 0.86);
-            border: 1px solid rgba(196, 181, 253, 0.7);
-            color: #6d28d9;
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-        }
+    body.theme-dark .dashboard-drop-overlay-card {
+        border-color: rgba(160, 140, 200, 0.22);
+        background: rgba(37, 37, 37, 0.94);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+    }
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 999px;
-            background: linear-gradient(135deg, #9147e8, #60a5fa);
-            box-shadow: 0 0 0 6px rgba(145, 71, 232, 0.12);
-        }
+    body.theme-dark .dashboard-drop-overlay-icon {
+        border-color: rgba(160, 140, 200, 0.22);
+        background: rgba(160, 140, 200, 0.1);
+        color: #bfb0d8;
+    }
 
-        .dashboard-stage-card {
-            position: relative;
-            overflow: hidden;
-        }
+    /* ── Rename row ── */
+    .history-rename-row { display: none; }
+    .history-rename-row.flex { display: flex; }
+</style>
 
-        .dashboard-stage-card::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(135deg, rgba(145, 71, 232, 0.12), rgba(96, 165, 250, 0.08));
-            pointer-events: none;
-        }
+<div class="dashboard-page w-full min-h-screen px-3 py-4 sm:px-5 sm:py-5 md:px-7 md:py-6">
+    <div id="dashboard-drop-overlay" class="dashboard-drop-overlay" aria-hidden="true">
+        <div class="dashboard-drop-overlay-card">
+            <div class="dashboard-drop-overlay-icon">
+                <i class="fa-solid fa-cloud-arrow-down"></i>
+            </div>
+            <p class="mt-5 text-xs font-bold uppercase tracking-[0.22em] text-brand-500">Upload Ready</p>
+            <h2 class="mt-2 text-2xl font-bold tracking-tight text-slate-900">Release to drop files and create a conversation</h2>
+            <p class="mt-3 text-sm leading-6 text-slate-600">
+                Your files are detected. Drop them anywhere on the dashboard to start parsing immediately.
+            </p>
+        </div>
+    </div>
+    <div class="mx-auto w-full max-w-[1600px] flex flex-col gap-6">
 
-        .journey-step {
-            position: relative;
-            border: 1px solid #e2e8f0;
-            background: rgba(248, 250, 252, 0.9);
-        }
+        <!-- ══════════════════════════════════════════════ TOP PANEL ══ -->
+        <div class="top-panel">
 
-        .module-card {
-            position: relative;
-            overflow: hidden;
-            border: 1px solid #e5e7eb;
-            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-        }
+            <!-- Upload card -->
+            <section class="flex flex-col rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
+                <input
+                    id="dashboard-upload-input"
+                    type="file"
+                    class="hidden"
+                    multiple
+                    accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp"
+                >
 
-        .module-card::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            transform: translateX(-100%);
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.72), transparent);
-            animation: dashboard-shimmer 2.2s ease-in-out infinite;
-        }
+                <div class="mb-4">
+                    <p class="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-slate-400">Upload</p>
+                    <h2 class="mt-1.5 text-xl font-bold leading-tight tracking-tight text-slate-900">
+                        {% if not is_logged_in %}
+                        Preview the upload flow before signing in.
+                        {% elif has_conversations %}
+                        Add a new source without leaving the dashboard.
+                        {% else %}
+                        Start the workspace with one upload.
+                        {% endif %}
+                    </h2>
+                    <p class="mt-1.5 text-sm leading-6 text-slate-500">
+                        {% if not is_logged_in %}
+                        Learn the upload flow now, then activate it after account sign-in.
+                        {% elif has_conversations %}
+                        Drop a file here or choose one from your device to open a fresh conversation.
+                        {% else %}
+                        One file is enough to create the first conversation and continue into chat.
+                        {% endif %}
+                    </p>
+                </div>
 
-        .module-line {
-            border-radius: 999px;
-            background: linear-gradient(90deg, #e2e8f0, #f8fafc, #e2e8f0);
-            background-size: 200% 100%;
-            animation: dashboard-pulse 2.4s ease-in-out infinite;
-        }
+                <div
+                    id="dashboard-upload-dropzone"
+                    class="flex flex-1 flex-col items-center justify-center rounded-[18px] border-2 border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center transition-colors cursor-pointer hover:border-brand-300 hover:bg-brand-50/40"
+                >
+                    <div class="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-brand-200 bg-brand-50 text-lg text-brand-500">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                    </div>
+                    <h3 class="text-base font-bold text-slate-900">
+                        {% if not is_logged_in %}
+                        Sign in to upload documents
+                        {% elif has_conversations %}
+                        Drop files here or choose from your device
+                        {% else %}
+                        Upload your first document
+                        {% endif %}
+                    </h3>
+                    <p class="mt-1.5 text-xs text-slate-400">Upload starts immediately after selection.</p>
 
-        .module-orb {
-            width: 42px;
-            height: 42px;
-            border-radius: 14px;
-            background: linear-gradient(135deg, rgba(145, 71, 232, 0.14), rgba(96, 165, 250, 0.18));
-            border: 1px solid rgba(196, 181, 253, 0.8);
-        }
+                    <div class="mt-3 flex flex-wrap justify-center gap-1.5">
+                        <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-500"><i class="fa-regular fa-file-pdf"></i>PDF</span>
+                        <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-500"><i class="fa-regular fa-file-word"></i>DOCX</span>
+                        <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-500"><i class="fa-regular fa-file-powerpoint"></i>PPTX</span>
+                        <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-500"><i class="fa-regular fa-file-image"></i>Images</span>
+                    </div>
 
-        .module-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 6px 10px;
-            border-radius: 999px;
-            border: 1px solid #dbeafe;
-            background: #eff6ff;
-            color: #2563eb;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-        }
+                    <div class="mt-4">
+                        <button type="button" class="inline-flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 active:scale-95">
+                            <i class="fa-solid fa-folder-open text-xs"></i>
+                            Choose files
+                        </button>
+                    </div>
 
-        @keyframes dashboard-shimmer {
-            100% {
-                transform: translateX(100%);
-            }
-        }
+                    <p id="dashboard-upload-status" class="mt-3 min-h-[20px] text-center text-xs text-slate-400"></p>
+                </div>
+            </section>
 
-        @keyframes dashboard-pulse {
-            0%, 100% {
-                background-position: 100% 50%;
-                opacity: 0.72;
-            }
+            <!-- Quick Guide card -->
+            <aside class="flex flex-col rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div class="mb-4">
+                    <p class="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-slate-400">Quick Guide</p>
+                    <h2 class="mt-1.5 text-lg font-bold text-slate-900">Tips & shortcuts</h2>
+                </div>
 
-            50% {
-                background-position: 0% 50%;
-                opacity: 1;
-            }
-        }
-	</style>
+                <!-- Steps -->
+                <div class="grid gap-2">
+                    <div class="flex items-start gap-3 rounded-xl bg-slate-50 px-3.5 py-3">
+                        <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-600">1</span>
+                        <p class="text-sm font-semibold text-slate-800">Upload a file</p>
+                    </div>
+                    <div class="flex items-start gap-3 rounded-xl bg-slate-50 px-3.5 py-3">
+                        <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-600">2</span>
+                        <p class="text-sm font-semibold text-slate-800">Parser extracts content</p>
+                    </div>
+                    <div class="flex items-start gap-3 rounded-xl bg-slate-50 px-3.5 py-3">
+                        <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand-600">3</span>
+                        <p class="text-sm font-semibold text-slate-800">Continue in chat</p>
+                    </div>
+                </div>
 
-<div class="p-6 md:p-8 max-w-8xl mx-auto">
-	    <div class="dashboard-shell p-4 md:p-6">
-	        <div class="mb-10 grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.95fr)]">
-	            <section class="dashboard-panel dashboard-stage-card rounded-[28px] p-8 md:p-10">
-	                <input
-	                    id="dashboard-upload-input"
-	                    type="file"
-	                    class="hidden"
-	                    multiple
-	                    accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp"
-	                >
-	                <div class="relative z-10 flex h-full flex-col justify-between gap-8">
-	                    <div class="space-y-5">
-	                        <span class="status-pill">
-	                            <span class="status-dot"></span>
-	                            {% if not is_logged_in %}
-	                            Guest landing workspace
-	                            {% elif has_conversations %}
-	                            Workspace active
-	                            {% else %}
-	                            First session ready
-	                            {% endif %}
-	                        </span>
-	                        <div class="max-w-3xl space-y-4">
-	                            <h1 class="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">
-	                                {% if not is_logged_in %}
-	                                Start with a quick look around, then sign in to upload and save your research journey.
-	                                {% elif has_conversations %}
-	                                Keep your document workspace moving with another upload whenever you're ready.
-	                                {% else %}
-	                                Upload your first document now and let the workspace build your first conversation.
-	                                {% endif %}
-	                            </h1>
-	                            <p class="max-w-2xl text-sm md:text-base leading-7 text-slate-600">
-	                                {% if not is_logged_in %}
-	                                New here? The dashboard is your launch pad. Explore the workspace, preview how conversation history is organized, and sign in when you're ready to unlock uploads and saved chats.
-	                                {% elif has_conversations %}
-	                                Your saved conversations stay ready on the dashboard. Add fresh files, branch into a new chat, or jump back into a previous thread with the same source context.
-	                                {% else %}
-	                                No active chats yet. Once your first file lands, we'll create the workspace, parse the sources, and open a new conversation for you automatically.
-	                                {% endif %}
-	                            </p>
-	                        </div>
-	                    </div>
-	                    <div
-	                        id="dashboard-upload-dropzone"
-	                        class="relative z-10 min-h-[280px] rounded-[26px] border-2 border-dashed border-brand-300 bg-white/90 p-8 md:p-10 flex flex-col items-center justify-center text-center transition-colors cursor-pointer group"
-	                    >
-	                        <div class="flex h-20 w-20 items-center justify-center rounded-[22px] bg-brand-50 text-brand-500 text-4xl mb-5 shadow-sm group-hover:scale-105 transition-transform">
-	                            <i class="fa-solid fa-cloud-arrow-up"></i>
-	                        </div>
-	                        <h2 class="text-2xl font-bold text-brand-900">
-	                            {% if not is_logged_in %}
-	                            Sign in to upload your first document
-	                            {% elif has_conversations %}
-	                            Drop in another file
-	                            {% else %}
-	                            Upload your first document now
-	                            {% endif %}
-	                        </h2>
-	                        <p class="mt-3 max-w-xl text-sm text-slate-500">
-	                            {% if not is_logged_in %}
-	                            Guests can explore the workspace layout here. Log in when you're ready to upload PDFs, slides, Word docs, and image-based sources into a saved conversation.
-	                            {% elif has_conversations %}
-	                            Choose a file or drag it anywhere on the page. We'll attach it to a fresh conversation so your previous threads stay untouched.
-	                            {% else %}
-	                            Choose a file or drag it anywhere on the page. We'll parse it, prepare the source cards, and open your first chat automatically.
-	                            {% endif %}
-	                        </p>
-	                        <div class="flex flex-wrap justify-center gap-5 mt-7 opacity-80">
-	                            <div class="flex flex-col items-center text-slate-500 group-hover:text-brand-700 transition-colors">
-	                                <i class="fa-regular fa-file-word text-2xl"></i>
-	                                <span class="text-xs mt-1">Word</span>
-	                            </div>
-	                            <div class="flex flex-col items-center text-slate-500 group-hover:text-brand-700 transition-colors">
-	                                <i class="fa-regular fa-file-powerpoint text-2xl"></i>
-	                                <span class="text-xs mt-1">PPT</span>
-	                            </div>
-	                            <div class="flex flex-col items-center text-slate-500 group-hover:text-brand-700 transition-colors">
-	                                <i class="fa-regular fa-file-image text-2xl"></i>
-	                                <span class="text-xs mt-1">Images</span>
-	                            </div>
-	                            <div class="flex flex-col items-center text-slate-500 group-hover:text-brand-700 transition-colors">
-	                                <i class="fa-regular fa-file-pdf text-2xl"></i>
-	                                <span class="text-xs mt-1">PDF</span>
-	                            </div>
-	                        </div>
-	                        <p id="dashboard-upload-status" class="mt-5 text-sm text-gray-500 text-center"></p>
-	                    </div>
-	                </div>
-	            </section>
+                <!-- Shortcuts -->
+                <div class="mt-4 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
+                    <p class="mb-2.5 text-xs font-bold uppercase tracking-[0.16em] text-brand-500">Keyboard shortcuts</p>
+                    <ul class="space-y-2.5">
+                        <li class="flex items-center gap-2 text-sm text-slate-700">
+                            <i class="fa-solid fa-upload w-4 text-center text-xs text-brand-400"></i>
+                            <span class="flex-1">Drop files <em class="not-italic font-semibold">anywhere</em> to upload</span>
+                        </li>
+                        <li class="flex items-center gap-2 text-sm text-slate-700">
+                            <i class="fa-solid fa-magnifying-glass w-4 text-center text-xs text-brand-400"></i>
+                            <span class="flex-1">Search conversations</span>
+                            <span class="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700">
+                                <kbd class="inline-flex items-center rounded-[5px] border border-brand-300 bg-white px-[0.35rem] font-mono text-[0.7rem] font-bold leading-[1.6] text-brand-800">Ctrl</kbd>
+                                <kbd class="inline-flex items-center rounded-[5px] border border-brand-300 bg-white px-[0.35rem] font-mono text-[0.7rem] font-bold leading-[1.6] text-brand-800">K</kbd>
+                            </span>
+                        </li>
+                        <li class="flex items-center gap-2 text-sm text-slate-700">
+                            <i class="fa-solid fa-plus w-4 text-center text-xs text-brand-400"></i>
+                            <span class="flex-1">New conversation</span>
+                            <span class="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700">
+                                <kbd class="inline-flex items-center rounded-[5px] border border-brand-300 bg-white px-[0.35rem] font-mono text-[0.7rem] font-bold leading-[1.6] text-brand-800">Ctrl</kbd>
+                                <kbd class="inline-flex items-center rounded-[5px] border border-brand-300 bg-white px-[0.35rem] font-mono text-[0.7rem] font-bold leading-[1.6] text-brand-800">⇧</kbd>
+                                <kbd class="inline-flex items-center rounded-[5px] border border-brand-300 bg-white px-[0.35rem] font-mono text-[0.7rem] font-bold leading-[1.6] text-brand-800">O</kbd>
+                            </span>
+                        </li>
+                    </ul>
+                </div>
+            </aside>
+        </div>
+        <!-- ══ end TOP PANEL ══ -->
 
-	            <aside class="dashboard-panel rounded-[28px] p-6 md:p-7">
-	                <div class="flex items-center justify-between gap-4">
-	                    <div>
-	                        <p class="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Journey overview</p>
-	                        <h2 class="mt-2 text-2xl font-bold text-slate-900">
-	                            {% if has_conversations %}
-	                            Your workspace is already in motion
-	                            {% else %}
-	                            The dashboard is standing by for your first move
-	                            {% endif %}
-	                        </h2>
-	                    </div>
-	                    <span class="module-badge">
-	                        {% if has_conversations %}
-	                        Live history
-	                        {% else %}
-	                        Awaiting launch
-	                        {% endif %}
-	                    </span>
-	                </div>
+        <!-- ════════════════════════════ RECENT CONVERSATIONS ══════ -->
+        <section>
+            <!-- Section header -->
+            <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <p class="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-slate-400">Recent Histories</p>
+                    <h2 class="mt-1 text-xl font-bold tracking-tight text-slate-900">Recent conversations</h2>
+                </div>
 
-	                <div class="mt-6 grid gap-3">
-	                    <div class="journey-step rounded-2xl p-4">
-	                        <div class="flex items-start gap-4">
-	                            <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-50 text-violet-700">
-	                                <i class="fa-solid fa-file-arrow-up"></i>
-	                            </div>
-	                            <div>
-	                                <p class="text-sm font-semibold text-slate-900">Step 1: Add a source</p>
-	                                <p class="mt-1 text-sm leading-6 text-slate-500">
-	                                    {% if not is_logged_in %}
-	                                    Sign in first, then upload a document to unlock the full workspace.
-	                                    {% elif has_conversations %}
-	                                    Add a new document whenever you want to branch into another analysis thread.
-	                                    {% else %}
-	                                    Upload your first file and the dashboard will spin up a brand new conversation.
-	                                    {% endif %}
-	                                </p>
-	                            </div>
-	                        </div>
-	                    </div>
-	                    <div class="journey-step rounded-2xl p-4">
-	                        <div class="flex items-start gap-4">
-	                            <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-50 text-sky-700">
-	                                <i class="fa-solid fa-gears"></i>
-	                            </div>
-	                            <div>
-	                                <p class="text-sm font-semibold text-slate-900">Step 2: Parsing modules warm up</p>
-	                                <p class="mt-1 text-sm leading-6 text-slate-500">Source extraction, references, and conversation scaffolding appear here once the first upload is ready.</p>
-	                            </div>
-	                        </div>
-	                    </div>
-	                    <div class="journey-step rounded-2xl p-4">
-	                        <div class="flex items-start gap-4">
-	                            <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-	                                <i class="fa-solid fa-comments"></i>
-	                            </div>
-	                            <div>
-	                                <p class="text-sm font-semibold text-slate-900">Step 3: Continue from history</p>
-	                                <p class="mt-1 text-sm leading-6 text-slate-500">
-	                                    {% if has_conversations %}
-	                                    Your recent threads below are ready to reopen, rename, filter, or continue.
-	                                    {% else %}
-	                                    No active chats yet. Conversation history will appear below in a ready-state as soon as your journey begins.
-	                                    {% endif %}
-	                                </p>
-	                            </div>
-	                        </div>
-	                    </div>
-	                </div>
-	            </aside>
-	        </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <!-- Search -->
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[17px]">search</span>
+                        <input
+                            id="recent-convo-search"
+                            type="text"
+                            placeholder="Search conversations…"
+                            class="h-10 w-52 rounded-xl border border-slate-200 bg-white pl-9 pr-4 text-sm text-slate-700 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                        >
+                    </div>
+                    <!-- Filter -->
+                    <select id="recent-convo-filter" class="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100">
+                        <option value="all">All time</option>
+                        <option value="today">Today</option>
+                        <option value="7d">Last 7 days</option>
+                        <option value="30d">Last 30 days</option>
+                    </select>
+                    <!-- Clear -->
+                    <button id="recent-convo-clear-filters" type="button" class="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                        Clear
+                    </button>
 
-	        <!-- Recent Conversations -->
-	        <div class="space-y-4">
-	            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-	                <div>
-	                    <h2 class="text-lg font-semibold text-slate-700">Conversation History</h2>
-	                    <p class="text-sm text-slate-500">
-	                        {% if has_conversations %}
-	                        Reopen any saved thread, inspect attached sources, or tidy up titles from here.
-	                        {% else %}
-	                        Conversation modules are loading and waiting for you to start your journey.
-	                        {% endif %}
-	                    </p>
-	                </div>
-	                {% if has_conversations %}
-	                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-	                    <div class="relative">
-	                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">search</span>
-	                        <input
-	                            id="recent-convo-search"
-	                            type="text"
-	                            placeholder="Search conversations or sources..."
-	                            class="w-full sm:w-72 h-10 pl-10 pr-3 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-	                        >
-	                    </div>
-	                    <select id="recent-convo-filter" class="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-brand-500">
-	                        <option value="all">All time</option>
-	                        <option value="today">Today</option>
-	                        <option value="7d">Last 7 days</option>
-	                        <option value="30d">Last 30 days</option>
-	                    </select>
-	                    <div class="inline-flex h-10 items-center rounded-lg border border-gray-200 bg-white p-1">
-	                        <button
-	                            id="recent-convo-grid-btn"
-	                            type="button"
-	                            class="h-8 px-3 rounded-md bg-brand-50 text-brand-700 text-sm font-semibold"
-	                            aria-pressed="true"
-	                        >
-	                            <i class="fa-solid fa-table-cells mr-1"></i>Grid
-	                        </button>
-	                        <button
-	                            id="recent-convo-list-btn"
-	                            type="button"
-	                            class="h-8 px-3 rounded-md text-sm font-semibold text-gray-500 hover:bg-gray-100"
-	                            aria-pressed="false"
-	                        >
-	                            <i class="fa-solid fa-list mr-1"></i>List
-	                        </button>
-	                    </div>
-	                    <button
-	                        id="recent-convo-clear-filters"
-	                        type="button"
-	                        class="h-10 px-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-600 hover:bg-gray-100"
-	                    >
-	                        Clear
-	                    </button>
-	                </div>
-	                {% endif %}
-	            </div>
+                    {% if has_conversations %}
+                    <!-- View toggle -->
+                    <div class="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-0.5">
+                        <button id="history-card-view" type="button" class="rounded-[10px] bg-white px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm transition">
+                            <i class="fa-solid fa-grip"></i>
+                        </button>
+                        <button id="history-list-view" type="button" class="rounded-[10px] px-3 py-2 text-sm font-semibold text-slate-500 transition hover:text-slate-900">
+                            <i class="fa-solid fa-list"></i>
+                        </button>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
 
-            {% if not has_conversations %}
-            <div id="recent-convo-placeholder" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {% for module in [
-                    ('History stream', 'Awaiting first upload', 'Module 01'),
-                    ('Source index', 'Preparing parser slots', 'Module 02'),
-                    ('Chat workspace', 'No active chats yet', 'Module 03')
-                ] %}
-                <article class="module-card rounded-3xl p-5 shadow-sm">
-                    <div class="relative z-10">
-                        <div class="flex items-start justify-between gap-4">
-                            <div class="flex items-center gap-3">
-                                <div class="module-orb"></div>
-                                <div>
-                                    <p class="text-sm font-semibold text-slate-800">{{ module[0] }}</p>
-                                    <p class="text-xs uppercase tracking-[0.22em] text-slate-400 mt-1">{{ module[2] }}</p>
-                                </div>
+            {% if has_conversations %}
+            <div id="recent-convo-container" class="history-view-cards">
+                {% for convo in conversations %}
+                <article
+                    class="recent-convo-card flex flex-col gap-3 rounded-[18px] border border-slate-200 bg-white p-4"
+                    data-id="{{ convo.id }}"
+                    data-updated-at="{{ convo.updated_at }}"
+                    data-title="{{ convo.title }}"
+                    data-sources="{{ convo.sources_joined }}"
+                >
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0 flex-1">
+                            <h3 class="truncate text-sm font-bold text-slate-900" data-card-title>{{ convo.title }}</h3>
+                            <div class="history-rename-row mt-2 flex-wrap gap-2" data-rename-row>
+                                <input type="text" class="h-9 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100" data-rename-input>
+                                <button type="button" class="inline-flex h-9 items-center justify-center rounded-xl bg-brand-600 px-3 text-sm font-semibold text-white hover:bg-brand-700" data-rename-save>Save</button>
+                                <button type="button" class="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50" data-rename-cancel>Cancel</button>
                             </div>
-                            <span class="module-badge">Loading</span>
+                            <div class="mt-2 flex flex-wrap gap-1.5">
+                                <span class="inline-flex items-center gap-1 rounded-full border border-slate-100 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+                                    <i class="fa-solid fa-layer-group text-[10px]"></i>
+                                    {{ convo.source_count }} sources
+                                </span>
+                                <span class="inline-flex items-center gap-1 rounded-full border border-slate-100 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+                                    <i class="fa-regular fa-clock text-[10px]"></i>
+                                    {{ convo.formatted_date }}
+                                </span>
+                            </div>
                         </div>
-                        <div class="mt-6 space-y-3">
-                            <div class="module-line h-3 w-2/3"></div>
-                            <div class="module-line h-3 w-full"></div>
-                            <div class="module-line h-3 w-5/6"></div>
+
+                        <!-- Context menu -->
+                        <div class="relative shrink-0">
+                            <button type="button" class="recent-convo-menu-btn inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition hover:bg-slate-50 hover:text-slate-700" aria-expanded="false">
+                                <i class="fa-solid fa-ellipsis text-xs"></i>
+                            </button>
+                            <div class="recent-convo-menu hidden absolute right-0 top-10 z-10 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                                <button type="button" class="recent-convo-edit w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-600 hover:bg-slate-50">Edit name</button>
+                                <button type="button" class="recent-convo-delete w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50">Delete</button>
+                            </div>
                         </div>
-                        <div class="mt-8 rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4">
-                            <p class="text-sm font-medium text-slate-700">{{ module[1] }}</p>
-                            <p class="mt-1 text-sm leading-6 text-slate-500">This slot is reserved for your future conversation history once the first document enters the workspace.</p>
-                        </div>
+                    </div>
+
+                    {% if convo.documents %}
+                    <div class="recent-doc-tags flex flex-wrap gap-1.5">
+                        {% for doc in convo.documents[:2] %}
+                        <a
+                            href="{{ url_for('document_parser_results', document_id=doc.document_id, conversation_id=convo.id) }}"
+                            class="inline-flex max-w-full items-center gap-1 rounded-full border border-brand-100 bg-brand-50 px-2.5 py-1 text-[11px] font-semibold text-brand-600 transition hover:bg-brand-100"
+                            title="{{ doc.original_filename }}"
+                        >
+                            <i class="fa-solid fa-code text-[9px]"></i>
+                            <span class="max-w-[120px] truncate">{{ doc.original_filename }}</span>
+                        </a>
+                        {% endfor %}
+                        {% if convo.documents|length > 2 %}
+                        <span class="inline-flex items-center rounded-full border border-slate-100 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-400">+{{ convo.documents|length - 2 }}</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    <div class="recent-open-row mt-auto flex">
+                        <a href="{{ url_for('chat', conversation_id=convo.id) }}" class="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 active:scale-[.98]">
+                            <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                            Open conversation
+                        </a>
                     </div>
                 </article>
                 {% endfor %}
+            </div>
+
+            {% else %}
+            <div id="recent-convo-placeholder">
+                <article class="rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-6 py-8">
+                    <p class="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">No recent histories yet</p>
+                    <h3 class="mt-2 text-lg font-bold text-slate-900">Recent work will appear here after the first upload.</h3>
+                    <p class="mt-2 text-sm leading-6 text-slate-500">Titles, source counts, dates, and actions will show up as soon as a conversation is created.</p>
+                </article>
             </div>
             {% endif %}
 
-	        <!-- Structure for switching seamlessly between Views -->
-	        <div id="recent-convo-container" class="transition-all {% if not has_conversations %}hidden{% endif %}">
-            <!-- Table Headers for List View -->
-            <div id="list-view-header" class="hidden">
-                <div class="px-6 py-3">Title</div>
-                <div class="py-3">No of sources</div>
-                <div class="py-3">Last interaction</div>
-                <div class="py-3"></div>
-            </div>
+            <p id="recent-convo-empty" class="hidden mt-4 rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-6 py-8 text-center text-sm text-slate-500">
+                No histories match the current search or time range.
+            </p>
+        </section>
+        <!-- ══ end RECENT CONVERSATIONS ══ -->
 
-            <!-- Cards Grid -->
-            <div id="recent-convo-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                
-                <!-- Dynamic Loop for Database Data -->
-                {% for convo in conversations %}
-                <article class="recent-convo-card bg-white rounded-xl p-5 shadow-sm border border-gray-200 hover:shadow-md transition-shadow" 
-                         data-id="{{ convo.id }}"
-                         data-updated-at="{{ convo.updated_at }}" 
-                         data-title="{{ convo.title }}" 
-                         data-sources="{{ convo.sources_joined }}">
-                    
-                    <!-- Title Column -->
-                    <div data-card-title-area class="min-w-0">
-                        <h3 class="text-base font-bold text-gray-800 leading-snug break-words" data-card-title>{{ convo.title }}</h3>
-                        <div class="hidden mt-3 gap-2" data-rename-row>
-                            <input type="text" class="h-9 flex-1 rounded-lg border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" data-rename-input>
-                            <button type="button" class="h-9 px-3 rounded-lg bg-brand-600 text-white text-sm hover:bg-brand-700" data-rename-save>Save</button>
-                            <button type="button" class="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm text-gray-600 hover:bg-gray-100" data-rename-cancel>Cancel</button>
-                        </div>
-                    </div>
-
-                    <!-- Sources Column -->
-                    <div class="mt-4" data-card-sources-section>
-                        <span class="inline-flex items-center px-3 py-1 rounded-full bg-gray-50 text-gray-600 border border-gray-200 text-xs font-medium" data-card-source-count>
-                            {{ convo.source_count }} sources
-                        </span>
-                        {% if convo.documents %}
-                        <div class="mt-3 flex flex-wrap gap-2">
-                            {% for doc in convo.documents[:3] %}
-                            <a
-                                href="{{ url_for('document_parser_results', document_id=doc.document_id, conversation_id=convo.id) }}"
-                                class="inline-flex items-center gap-1 rounded-full border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs text-brand-700 hover:bg-brand-100"
-                                title="Inspect parser results for {{ doc.original_filename }}"
-                            >
-                                <i class="fa-solid fa-code text-[10px]"></i>
-                                <span class="max-w-[150px] truncate">{{ doc.original_filename }}</span>
-                            </a>
-                            {% endfor %}
-                            {% if convo.documents|length > 3 %}
-                            <span class="inline-flex items-center rounded-full border border-gray-200 px-2.5 py-1 text-xs text-gray-500">
-                                +{{ convo.documents|length - 3 }} more
-                            </span>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                    </div>
-
-                    <!-- Date Column -->
-                    <div class="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400" data-card-footer>
-                        <span class="grid-view-only">Recent conversation: </span>
-                        <span data-time-label class="text-gray-500 font-medium">{{ convo.formatted_date }}</span>
-                    </div>
-
-                    <!-- Actions Column -->
-                    <div data-card-actions>
-                        <div class="relative">
-                            <button type="button" class="recent-convo-menu-btn h-8 w-8 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" aria-expanded="false" title="Conversation actions">
-                                <i class="fa-solid fa-ellipsis"></i>
-                            </button>
-                            <div class="recent-convo-menu hidden absolute right-0 top-10 z-10 w-40 rounded-lg border border-gray-200 bg-white shadow-lg p-1">
-                                <button type="button" class="recent-convo-edit w-full text-left px-3 py-2 text-sm text-gray-600 rounded-md hover:bg-gray-100">Edit name</button>
-                                <button type="button" class="recent-convo-delete w-full text-left px-3 py-2 text-sm text-red-600 rounded-md hover:bg-red-50">Delete conversation</button>
-                            </div>
-                        </div>
-                    </div>
-                </article>
-                {% endfor %}
-
-            </div>
-        </div>
-
-        <!-- Empty State displayed if no records or no filter matches -->
-	        <p id="recent-convo-empty" class="hidden text-sm text-gray-500 bg-white border border-dashed border-gray-300 rounded-xl p-6 text-center">
-	            No conversations match your search or selected time range.
-	        </p>
-	    </div>
-	</div>
+    </div>
+</div>
 
 <script>
 (() => {
+    const HISTORY_VIEW_KEY = "insighthub.dashboardHistoryView";
+    const dropOverlay  = document.getElementById("dashboard-drop-overlay");
     const uploadDropzone = document.getElementById("dashboard-upload-dropzone");
-    const uploadInput = document.getElementById("dashboard-upload-input");
-    const uploadStatus = document.getElementById("dashboard-upload-status");
+    const uploadInput   = document.getElementById("dashboard-upload-input");
+    const uploadStatus  = document.getElementById("dashboard-upload-status");
+
+    const container          = document.getElementById("recent-convo-container");
+    const historyPlaceholder = document.getElementById("recent-convo-placeholder");
+    const searchInput        = document.getElementById("recent-convo-search");
+    const filterSelect       = document.getElementById("recent-convo-filter");
+    const clearFiltersBtn    = document.getElementById("recent-convo-clear-filters");
+    const emptyState         = document.getElementById("recent-convo-empty");
+    const cardViewBtn        = document.getElementById("history-card-view");
+    const listViewBtn        = document.getElementById("history-list-view");
+    let cards = Array.from(document.querySelectorAll(".recent-convo-card"));
+
     let isUploading = false;
-    let dragDepth = 0;
+    let dragDepth   = 0;
 
-	    const container = document.getElementById("recent-convo-container");
-	    const grid = document.getElementById("recent-convo-grid");
-	    const header = document.getElementById("list-view-header");
-	    const cards = Array.from(document.querySelectorAll(".recent-convo-card"));
-        const historyPlaceholder = document.getElementById("recent-convo-placeholder");
-	    
-	    const searchInput = document.getElementById("recent-convo-search");
-    const filterSelect = document.getElementById("recent-convo-filter");
-    const clearFiltersBtn = document.getElementById("recent-convo-clear-filters");
-    const emptyState = document.getElementById("recent-convo-empty");
-    const gridBtn = document.getElementById("recent-convo-grid-btn");
-    const listBtn = document.getElementById("recent-convo-list-btn");
-
+    /* ── Helpers ── */
     const notify = (type, message) => {
-        const toastMethod = window.toast && typeof window.toast[type] === "function"
-            ? window.toast[type]
-            : null;
-        if (toastMethod) {
-            toastMethod(message);
-            return;
-        }
-        if (message) {
-            window.alert(message);
-        }
+        const fn = window.toast?.[type];
+        fn ? fn(message) : message && alert(message);
     };
 
-    const setUploadStatus = (message, isError = false) => {
+    const setUploadStatus = (msg, isError = false) => {
         if (!uploadStatus) return;
-        uploadStatus.textContent = message || "";
-        uploadStatus.className = `mt-5 text-sm text-center ${isError ? "text-red-600" : "text-gray-500"}`;
+        uploadStatus.textContent = msg || "";
+        uploadStatus.className = `mt-3 min-h-[20px] text-center text-xs ${isError ? "text-red-500" : "text-slate-400"}`;
     };
 
     const setDropzoneActive = (active) => {
-        if (!uploadDropzone) return;
-        uploadDropzone.classList.toggle("upload-drag-active", active);
+        uploadDropzone?.classList.toggle("dropzone-drag-over", active);
     };
 
-    const hasDraggedFiles = (event) => {
-        const types = Array.from(event.dataTransfer?.types || []);
-        return types.includes("Files");
+    const setDropOverlayActive = (active) => {
+        if (!dropOverlay) return;
+        dropOverlay.classList.toggle("is-active", active);
+        dropOverlay.setAttribute("aria-hidden", active ? "false" : "true");
     };
 
+    const hasDraggedFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files");
+
+    /* ── Upload ── */
     const uploadFiles = async (fileList) => {
         if (isUploading) return;
         const files = Array.from(fileList || []);
         if (!files.length) return;
 
-        if (!window.__AUTH_USER__ || !window.__AUTH_USER__.user_id) {
+        if (!window.__AUTH_USER__?.user_id) {
             notify("warning", "Please log in to upload documents.");
             setUploadStatus("Please log in to upload documents.", true);
+            setDropOverlayActive(false);
             return;
         }
 
         isUploading = true;
-        setUploadStatus(`Uploading ${files.length} file(s)...`);
+        setUploadStatus(`Uploading ${files.length} file(s)…`);
         setDropzoneActive(false);
+        setDropOverlayActive(false);
 
         const formData = new FormData();
-        files.forEach((file) => formData.append("documents", file));
+        files.forEach((f) => formData.append("documents", f));
 
         try {
-            const response = await fetch("/api/documents/upload", {
-                method: "POST",
-                body: formData,
-            });
+            const response = await fetch("/api/documents/upload", { method: "POST", body: formData });
             let payload = {};
-            try {
-                payload = await response.json();
-            } catch (error) {
-                payload = {};
-            }
+            try { payload = await response.json(); } catch {}
 
             if (!response.ok) {
-                const errorMessage = payload.error || "Upload failed. Please try again.";
-                setUploadStatus(errorMessage, true);
-                notify("error", errorMessage);
+                const msg = payload.error || "Upload failed. Please try again.";
+                setUploadStatus(msg, true);
+                notify("error", msg);
                 return;
             }
 
-            const successMessage = payload.message || `Uploaded ${files.length} file(s) successfully.`;
-            setUploadStatus(successMessage, false);
-            notify("success", successMessage);
-            const conversationId = payload?.conversation?.conversation_id;
-            if (conversationId) {
-                window.location.href = payload.conversation_url || `/chat?conversation_id=${encodeURIComponent(conversationId)}&new=1`;
+            const msg = payload.message || `Uploaded ${files.length} file(s) successfully.`;
+            setUploadStatus(msg);
+            notify("success", msg);
+
+            const cid = payload?.conversation?.conversation_id;
+            if (cid) {
+                window.location.href = payload.conversation_url || `/chat?conversation_id=${encodeURIComponent(cid)}&new=1`;
                 return;
             }
             window.location.reload();
-        } catch (error) {
-            console.error("Dashboard upload UI error:", error);
-            const isLikelyNetworkError = error instanceof TypeError;
-            const message = isLikelyNetworkError
-                ? "Network error while uploading documents."
-                : "Upload completed but the UI failed to finish. Please refresh.";
-            setUploadStatus(message, true);
-            notify("error", message);
+        } catch (err) {
+            const msg = err instanceof TypeError ? "Network error while uploading." : "Upload completed but the UI failed. Please refresh.";
+            setUploadStatus(msg, true);
+            notify("error", msg);
         } finally {
             isUploading = false;
-            if (uploadInput) {
-                uploadInput.value = "";
-            }
+            if (uploadInput) uploadInput.value = "";
+            setDropOverlayActive(false);
         }
     };
 
+    /* ── Context menus ── */
     const closeAllMenus = () => {
-        document.querySelectorAll(".recent-convo-menu").forEach((menu) => menu.classList.add("hidden"));
-        document.querySelectorAll(".recent-convo-menu-btn").forEach((btn) => btn.setAttribute("aria-expanded", "false"));
+        document.querySelectorAll(".recent-convo-menu").forEach((m) => m.classList.add("hidden"));
+        document.querySelectorAll(".recent-convo-menu-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
     };
 
-    const getFilterWindowStart = (value) => {
+    /* ── Filtering ── */
+    const getFilterWindowStart = (v) => {
         const now = new Date();
-        if (value === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        if (value === "7d") return now.getTime() - (7 * 24 * 60 * 60 * 1000);
-        if (value === "30d") return now.getTime() - (30 * 24 * 60 * 60 * 1000);
+        if (v === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        if (v === "7d")    return now.getTime() - 7  * 86400000;
+        if (v === "30d")   return now.getTime() - 30 * 86400000;
         return null;
     };
 
-	    const applyCardFilters = () => {
-            if (!cards.length) {
-                container?.classList.add("hidden");
-                historyPlaceholder?.classList.remove("hidden");
-                emptyState?.classList.toggle("hidden", Boolean(historyPlaceholder));
-                return;
-            }
-
-	        const keyword = (searchInput.value || "").trim().toLowerCase();
-	        const filterWindowStart = getFilterWindowStart(filterSelect.value);
-	        let visibleCount = 0;
-
-        cards.forEach((card) => {
-            const title = (card.dataset.title || "").toLowerCase();
-            const sources = (card.dataset.sources || "").toLowerCase();
-            const updatedAt = new Date(card.dataset.updatedAt || "");
-            const matchesKeyword = !keyword || title.includes(keyword) || sources.includes(keyword);
-            const matchesDate = !filterWindowStart || (!Number.isNaN(updatedAt.getTime()) && updatedAt.getTime() >= filterWindowStart);
-            const show = matchesKeyword && matchesDate;
-            card.classList.toggle("hidden", !show);
-            if (show) visibleCount += 1;
-        });
-
-	        // Hide main container entirely if empty
-	        container.classList.toggle("hidden", visibleCount === 0);
-	        emptyState.classList.toggle("hidden", visibleCount !== 0);
-            historyPlaceholder?.classList.add("hidden");
-	    };
-
-    const applyDisplayMode = (mode) => {
-        const isGrid = mode === "grid";
-
-        // Toggle Table Header & Outer Container Styles 
-        if (isGrid) {
-            container.className = "transition-all";
-            header.className = "hidden";
-            grid.className = "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4";
-        } else {
-            container.className = "flex flex-col border border-gray-200 rounded-xl bg-white shadow-sm overflow-hidden transition-all";
-            header.className = "grid grid-cols-[minmax(0,1fr)_120px_180px_40px] gap-4 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider rounded-t-xl";
-            grid.className = "flex flex-col"; // removes gap, cards handle border
+    const applyCardFilters = () => {
+        if (!cards.length) {
+            container?.classList.add("hidden");
+            historyPlaceholder?.classList.remove("hidden");
+            emptyState?.classList.add("hidden");
+            return;
         }
 
-        // Toggle Views directly on each card
-        document.querySelectorAll(".recent-convo-card").forEach(card => {
-            card.classList.toggle("list-view", !isGrid);
+        const keyword     = (searchInput?.value || "").trim().toLowerCase();
+        const windowStart = getFilterWindowStart(filterSelect?.value || "all");
+        let visible = 0;
+
+        cards.forEach((card) => {
+            const title   = (card.dataset.title   || "").toLowerCase();
+            const sources = (card.dataset.sources || "").toLowerCase();
+            const updated = new Date(card.dataset.updatedAt || "");
+            const okKw    = !keyword     || title.includes(keyword) || sources.includes(keyword);
+            const okDate  = !windowStart || (!isNaN(updated) && updated.getTime() >= windowStart);
+            const show    = okKw && okDate;
+            card.classList.toggle("hidden", !show);
+            if (show) visible++;
         });
 
-        // Set Active states on toggle buttons
-        gridBtn.className = isGrid
-            ? "h-8 px-3 rounded-md bg-brand-50 text-brand-700 text-sm font-semibold transition-colors"
-            : "h-8 px-3 rounded-md text-sm font-semibold text-gray-500 hover:bg-gray-100 transition-colors";
-        listBtn.className = isGrid
-            ? "h-8 px-3 rounded-md text-sm font-semibold text-gray-500 hover:bg-gray-100 transition-colors"
-            : "h-8 px-3 rounded-md bg-brand-50 text-brand-700 text-sm font-semibold transition-colors";
-
-        gridBtn.setAttribute("aria-pressed", String(isGrid));
-        listBtn.setAttribute("aria-pressed", String(!isGrid));
+        container?.classList.toggle("hidden", visible === 0);
+        emptyState?.classList.toggle("hidden", visible !== 0);
+        historyPlaceholder?.classList.add("hidden");
     };
-    
-    cards.forEach((card) => {
-        const menuBtn = card.querySelector(".recent-convo-menu-btn");
-        const menu = card.querySelector(".recent-convo-menu");
-        const editBtn = card.querySelector(".recent-convo-edit");
-        const deleteBtn = card.querySelector(".recent-convo-delete");
-        const titleEl = card.querySelector("[data-card-title]");
-        const renameRow = card.querySelector("[data-rename-row]");
-        const renameInput = card.querySelector("[data-rename-input]");
-        const renameSave = card.querySelector("[data-rename-save]");
-        const renameCancel = card.querySelector("[data-rename-cancel]");
 
-        menuBtn?.addEventListener("click", (event) => {
-            event.stopPropagation();
+    /* ── View toggle ── */
+    const setHistoryView = (mode, persist = true) => {
+        if (!container || !cardViewBtn || !listViewBtn) return;
+        const isList = mode === "list";
+        container.classList.toggle("history-view-list",  isList);
+        container.classList.toggle("history-view-cards", !isList);
+        cardViewBtn.className = `rounded-[10px] px-3 py-2 text-sm font-semibold transition ${isList ? "text-slate-500 hover:text-slate-900" : "bg-white text-slate-900 shadow-sm"}`;
+        listViewBtn.className = `rounded-[10px] px-3 py-2 text-sm font-semibold transition ${isList ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`;
+        if (persist) localStorage.setItem(HISTORY_VIEW_KEY, isList ? "list" : "cards");
+    };
+
+    const restoreHistoryView = () => {
+        const stored = localStorage.getItem(HISTORY_VIEW_KEY);
+        setHistoryView(stored === "list" ? "list" : "cards", false);
+    };
+
+    /* ── Wire up each card ── */
+    const wireCard = (card) => {
+        const menuBtn     = card.querySelector(".recent-convo-menu-btn");
+        const menu        = card.querySelector(".recent-convo-menu");
+        const editBtn     = card.querySelector(".recent-convo-edit");
+        const deleteBtn   = card.querySelector(".recent-convo-delete");
+        const titleEl     = card.querySelector("[data-card-title]");
+        const renameRow   = card.querySelector("[data-rename-row]");
+        const renameInput = card.querySelector("[data-rename-input]");
+        const renameSave  = card.querySelector("[data-rename-save]");
+        const renameCancel= card.querySelector("[data-rename-cancel]");
+
+        menuBtn?.addEventListener("click", (e) => {
+            e.stopPropagation();
             const open = menu.classList.contains("hidden");
             closeAllMenus();
             menu.classList.toggle("hidden", !open);
@@ -759,114 +618,107 @@
         });
 
         renameSave?.addEventListener("click", async () => {
-            const nextName = renameInput.value.trim();
-            if (!nextName) return;
-
-            const previousName = titleEl.textContent.trim();
-            titleEl.textContent = nextName;
-            card.dataset.title = nextName;
+            const next = renameInput.value.trim();
+            if (!next) return;
+            const prev = titleEl.textContent.trim();
+            titleEl.textContent = next;
+            card.dataset.title = next;
             renameRow.classList.add("hidden");
             renameRow.classList.remove("flex");
             applyCardFilters();
-
             try {
-                const response = await fetch(`/api/conversations/${encodeURIComponent(card.dataset.id)}`, {
+                const r = await fetch(`/api/conversations/${encodeURIComponent(card.dataset.id)}`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ title: nextName }),
+                    body: JSON.stringify({ title: next }),
                 });
-
-                if (!response.ok) {
-                    throw new Error("Failed to update conversation name.");
-                }
-            } catch (error) {
-                titleEl.textContent = previousName;
-                card.dataset.title = previousName;
-                renameInput.value = previousName;
+                if (!r.ok) throw new Error();
+            } catch {
+                titleEl.textContent = prev;
+                card.dataset.title = prev;
                 applyCardFilters();
             }
         });
-        
+
         renameCancel?.addEventListener("click", () => {
             renameRow.classList.add("hidden");
             renameRow.classList.remove("flex");
         });
 
         deleteBtn?.addEventListener("click", () => {
-            const conversationId = card.dataset.id;
-            if (conversationId) {
-                fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
-                    method: "DELETE",
-                }).catch((error) => {
-                    console.error("Failed to delete conversation:", error);
-                });
-            }
-
+            const id = card.dataset.id;
+            if (id) fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(console.error);
             card.remove();
-            const nextCards = Array.from(document.querySelectorAll(".recent-convo-card"));
-            cards.length = 0;
-            cards.push(...nextCards);
+            cards = Array.from(document.querySelectorAll(".recent-convo-card"));
             applyCardFilters();
             closeAllMenus();
         });
-    });
+    };
 
-    uploadDropzone?.addEventListener("click", () => {
-        if (isUploading) return;
-        uploadInput?.click();
-    });
+    cards.forEach(wireCard);
 
-    uploadInput?.addEventListener("change", () => {
-        uploadFiles(uploadInput.files);
-    });
+    /* ── Upload events ── */
+    uploadDropzone?.addEventListener("click", () => { if (!isUploading) uploadInput?.click(); });
+    uploadInput?.addEventListener("change", () => uploadFiles(uploadInput.files));
 
-    document.addEventListener("dragenter", (event) => {
-        if (!hasDraggedFiles(event)) return;
-        event.preventDefault();
-        dragDepth += 1;
+    document.addEventListener("dragenter", (e) => {
+        if (!hasDraggedFiles(e)) return;
+        e.preventDefault();
+        dragDepth++;
         setDropzoneActive(true);
+        setDropOverlayActive(true);
         setUploadStatus("Drop files anywhere to upload.");
     });
-
-    document.addEventListener("dragover", (event) => {
-        if (!hasDraggedFiles(event)) return;
-        event.preventDefault();
-    });
-
-    document.addEventListener("dragleave", (event) => {
-        if (!hasDraggedFiles(event)) return;
-        event.preventDefault();
+    document.addEventListener("dragover", (e) => { if (hasDraggedFiles(e)) e.preventDefault(); });
+    document.addEventListener("dragleave", (e) => {
+        if (!hasDraggedFiles(e)) return;
+        e.preventDefault();
         dragDepth = Math.max(0, dragDepth - 1);
         if (dragDepth === 0) {
             setDropzoneActive(false);
+            setDropOverlayActive(false);
             setUploadStatus("");
         }
     });
-
-    document.addEventListener("drop", (event) => {
-        if (!hasDraggedFiles(event)) return;
-        event.preventDefault();
+    document.addEventListener("drop", (e) => {
+        if (!hasDraggedFiles(e)) return;
+        e.preventDefault();
         dragDepth = 0;
         setDropzoneActive(false);
-        uploadFiles(event.dataTransfer.files);
+        setDropOverlayActive(false);
+        uploadFiles(e.dataTransfer.files);
     });
 
+    /* ── Search / filter / clear ── */
     document.addEventListener("click", closeAllMenus);
-	    searchInput?.addEventListener("input", applyCardFilters);
-	    filterSelect?.addEventListener("change", applyCardFilters);
-	    clearFiltersBtn?.addEventListener("click", () => {
-	        if (searchInput) searchInput.value = "";
-	        if (filterSelect) filterSelect.value = "all";
-	        applyCardFilters();
-	    });
-	    gridBtn?.addEventListener("click", () => applyDisplayMode("grid"));
-	    listBtn?.addEventListener("click", () => applyDisplayMode("list"));
-	
-	    // Initialize View
-	    if (gridBtn && listBtn) {
-	        applyDisplayMode("grid");
-	    }
-	    applyCardFilters();
+    searchInput?.addEventListener("input", applyCardFilters);
+    filterSelect?.addEventListener("change", applyCardFilters);
+    clearFiltersBtn?.addEventListener("click", () => {
+        if (searchInput)  searchInput.value = "";
+        if (filterSelect) filterSelect.value = "all";
+        applyCardFilters();
+    });
+
+    /* ── View toggle buttons ── */
+    cardViewBtn?.addEventListener("click", () => setHistoryView("cards"));
+    listViewBtn?.addEventListener("click",  () => setHistoryView("list"));
+
+    /* ── Keyboard shortcuts ── */
+    document.addEventListener("keydown", (e) => {
+        const ctrl = e.ctrlKey || e.metaKey;
+        if (ctrl && e.key === "k") {
+            e.preventDefault();
+            searchInput?.focus();
+        }
+        if (ctrl && e.shiftKey && e.key.toLowerCase() === "o") {
+            e.preventDefault();
+            uploadInput?.click();
+        }
+    });
+
+    /* ── Init ── */
+    restoreHistoryView();
+    applyCardFilters();
 })();
 </script>
 {% endblock %}
