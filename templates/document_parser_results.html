@@ -46,31 +46,23 @@
         </article>
     </section>
 
-    <section class="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
-        <h2 class="text-lg font-semibold text-slate-900">Paper Profile (First Page)</h2>
-        <div class="mt-3 grid gap-3 md:grid-cols-2">
-            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                <p class="text-xs uppercase tracking-wide text-slate-500">Title</p>
-                <p id="paper-title-value" class="mt-1 text-sm text-slate-800">-</p>
-            </article>
-            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                <p class="text-xs uppercase tracking-wide text-slate-500">Authors</p>
-                <p id="paper-authors-value" class="mt-1 text-sm text-slate-800">-</p>
-            </article>
-            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                <p class="text-xs uppercase tracking-wide text-slate-500">DOI</p>
-                <p id="paper-doi-value" class="mt-1 text-sm text-slate-800">-</p>
-            </article>
-            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                <p class="text-xs uppercase tracking-wide text-slate-500">ISBN</p>
-                <p id="paper-isbn-value" class="mt-1 text-sm text-slate-800">-</p>
-            </article>
-            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                <p class="text-xs uppercase tracking-wide text-slate-500">ISSN</p>
-                <p id="paper-issn-value" class="mt-1 text-sm text-slate-800">-</p>
-            </article>
+    <details id="extracted-tables-section" class="group hidden rounded-xl border border-gray-200 bg-white" open>
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-900">Tables In The Paper</h2>
+                <p class="text-sm text-slate-500">Structured tables detected during parsing, rendered separately for inspection.</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="table-count" class="text-xs text-slate-500">0 tables</span>
+                <span class="text-slate-400 transition-transform group-open:rotate-180">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </span>
+            </div>
+        </summary>
+        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
+            <div id="extracted-tables" class="space-y-4"></div>
         </div>
-    </section>
+    </details>
 
     <details id="rendered-markdown-section" class="group rounded-xl border border-gray-200 bg-white" open>
         <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
@@ -162,12 +154,13 @@
         <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
             <div>
                 <h2 class="text-lg font-semibold text-slate-900">Extraction JSON</h2>
-                <p class="text-sm text-slate-500">Normalized and raw payloads for parser debugging.</p>
+                <p class="text-sm text-slate-500">Normalized view, stored backend payload, and untouched MinerU artifacts for parser debugging.</p>
             </div>
             <div class="flex items-center gap-2">
                 <div class="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
                     <button id="show-normalized" type="button" class="px-3 py-1.5 text-sm rounded-md bg-white shadow-sm text-slate-800">Normalized</button>
                     <button id="show-raw" type="button" class="px-3 py-1.5 text-sm rounded-md text-slate-500">Raw</button>
+                    <button id="show-mineru-raw" type="button" class="px-3 py-1.5 text-sm rounded-md text-slate-500">MinerU Raw</button>
                 </div>
                 <span class="text-slate-400 transition-transform group-open:rotate-180">
                     <i class="fa-solid fa-chevron-down"></i>
@@ -177,6 +170,7 @@
         <div class="border-t border-gray-100 px-4 py-4 md:px-5">
             <pre id="normalized-json" class="max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs"></pre>
             <pre id="raw-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs hidden">{{ parser_json }}</pre>
+            <pre id="mineru-raw-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs hidden"></pre>
         </div>
     </details>
 </div>
@@ -202,22 +196,22 @@
     const extractedImages = document.getElementById("extracted-images");
     const extractedImagesSection = document.getElementById("extracted-images-section");
     const imageCountValue = document.getElementById("image-count");
+    const extractedTables = document.getElementById("extracted-tables");
+    const extractedTablesSection = document.getElementById("extracted-tables-section");
+    const tableCountValue = document.getElementById("table-count");
     const normalizedPre = document.getElementById("normalized-json");
     const rawPre = document.getElementById("raw-json");
+    const mineruRawPre = document.getElementById("mineru-raw-json");
     const markdownPre = document.getElementById("markdown-output");
     const normalizedBtn = document.getElementById("show-normalized");
     const rawBtn = document.getElementById("show-raw");
+    const mineruRawBtn = document.getElementById("show-mineru-raw");
     const statusValue = document.getElementById("parse-status-value");
     const fileTypeValue = document.getElementById("file-type-value");
     const segmentCountValue = document.getElementById("segment-count");
     const copyRenderedBtn = document.getElementById("copy-rendered-text");
     const copyMarkdownBtn = document.getElementById("copy-markdown-output");
     const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
-    const paperTitleValue = document.getElementById("paper-title-value");
-    const paperAuthorsValue = document.getElementById("paper-authors-value");
-    const paperDoiValue = document.getElementById("paper-doi-value");
-    const paperIsbnValue = document.getElementById("paper-isbn-value");
-    const paperIssnValue = document.getElementById("paper-issn-value");
 
     const escapeHtml = (value) => String(value || "")
         .replaceAll("&", "&amp;")
@@ -240,6 +234,12 @@
     const getCurrentAssets = () => (
         Array.isArray(parserDocument?.parser_result?.assets)
             ? parserDocument.parser_result.assets
+            : []
+    );
+
+    const getCurrentDocumentBlocks = () => (
+        Array.isArray(parserDocument?.parser_result?.document_blocks)
+            ? parserDocument.parser_result.document_blocks
             : []
     );
 
@@ -544,6 +544,74 @@
         }).join("");
     };
 
+    const renderExtractedTables = () => {
+        if (!extractedTables || !extractedTablesSection) return;
+
+        const canonicalTables = getCurrentDocumentBlocks()
+            .filter((block) => String(block?.block_type || "").toLowerCase() === "table");
+        const fallbackTables = getCurrentSegments()
+            .filter((segment) => String(segment?.source_type || "").toLowerCase() === "table")
+            .map((segment) => ({
+                block_id: segment?.segment_id || "",
+                source_unit_index: segment?.source_index ?? "-",
+                caption_text: "",
+                display_text: segment?.text || "",
+                normalized_content: {},
+                raw_content: { primary_segment: segment },
+            }));
+        const tables = canonicalTables.length ? canonicalTables : fallbackTables;
+
+        extractedTablesSection.classList.toggle("hidden", tables.length === 0);
+        if (tableCountValue) {
+            tableCountValue.textContent = `${tables.length} table${tables.length === 1 ? "" : "s"}`;
+        }
+        if (!tables.length) {
+            extractedTables.innerHTML = "";
+            return;
+        }
+
+        extractedTablesSection.open = true;
+        extractedTables.innerHTML = tables.map((table, index) => {
+            const normalized = table?.normalized_content || {};
+            const headerRows = Array.isArray(normalized?.header_rows) ? normalized.header_rows : [];
+            const bodyRows = Array.isArray(normalized?.body_rows) ? normalized.body_rows : [];
+            const matrix = Array.isArray(normalized?.matrix) ? normalized.matrix : [];
+            const tableRows = matrix.length ? matrix : [...headerRows, ...bodyRows];
+            const caption = String(table?.caption_text || normalized?.caption || normalized?.title || "").trim();
+            const sourceIndex = table?.source_unit_index ?? table?.source_index ?? table?.raw_content?.primary_segment?.source_index ?? "-";
+            const linearizedText = String(normalized?.linearized_text || table?.display_text || "").trim();
+
+            const tableHtml = tableRows.length
+                ? (() => {
+                    const header = tableRows[0] || [];
+                    const body = tableRows.slice(1);
+                    const headerHtml = header.map((cell) => `<th class="border border-gray-200 bg-slate-100 px-3 py-2 text-left font-semibold text-slate-800">${renderMarkdownInline(cell)}</th>`).join("");
+                    const bodyHtml = body.map((row) => {
+                        const rowHtml = row.map((cell) => `<td class="border border-gray-200 px-3 py-2 align-top text-slate-700">${renderMarkdownInline(cell)}</td>`).join("");
+                        return `<tr>${rowHtml}</tr>`;
+                    }).join("");
+                    return `<div class="overflow-x-auto rounded-xl border border-gray-200 bg-white"><table class="min-w-full border-collapse text-sm"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
+                })()
+                : `<div class="rounded-xl border border-dashed border-gray-200 bg-white p-4 text-sm text-slate-500">Structured table matrix unavailable.</div>`;
+
+            return `
+                <article class="rounded-2xl border border-gray-200 bg-slate-50 p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-800">Table ${index + 1}</h3>
+                            <p class="mt-1 text-sm text-slate-600">${caption ? escapeHtml(caption) : "No caption detected."}</p>
+                        </div>
+                        <span class="rounded-full bg-white px-3 py-1 text-xs text-slate-500">Source ${escapeHtml(sourceIndex)}</span>
+                    </div>
+                    <div class="mt-4">${tableHtml}</div>
+                    ${linearizedText
+                        ? `<div class="mt-4 rounded-xl border border-gray-200 bg-white p-3"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Linearized Text</p><p class="mt-2 text-sm leading-6 text-slate-700">${escapeHtml(linearizedText)}</p></div>`
+                        : ""}
+                </article>
+            `;
+        }).join("");
+    };
+
     const renderParserResult = () => {
         const segments = getCurrentSegments();
         const groupedSegments = segments.reduce((acc, segment) => {
@@ -606,6 +674,7 @@
             renderedMarkdown.innerHTML = markdownToHtml(markdownText);
         }
         renderExtractedImages();
+        renderExtractedTables();
 
         const normalizedPayload = {
             document_id: parserDocument?.document_id,
@@ -631,6 +700,15 @@
         if (rawPre) {
             rawPre.textContent = JSON.stringify(parserDocument, null, 2);
         }
+        if (mineruRawPre) {
+            mineruRawPre.textContent = JSON.stringify(
+                parserDocument?.parser_result?.metadata?.mineru_raw_artifacts || {
+                    message: "No MinerU raw artifacts available for this parse result.",
+                },
+                null,
+                2,
+            );
+        }
         if (markdownPre) {
             markdownPre.textContent = markdownText || "(empty)";
         }
@@ -655,12 +733,6 @@
                 statusValue.classList.add("text-amber-700");
             }
         }
-        const profile = parserDocument?.parser_result?.metadata?.paper_profile || {};
-        if (paperTitleValue) paperTitleValue.textContent = profile?.title || "-";
-        if (paperAuthorsValue) paperAuthorsValue.textContent = profile?.authors || "-";
-        if (paperDoiValue) paperDoiValue.textContent = profile?.doi || "-";
-        if (paperIsbnValue) paperIsbnValue.textContent = profile?.isbn || "-";
-        if (paperIssnValue) paperIssnValue.textContent = profile?.issn || "-";
     };
 
     const buildCopyableExtractedText = () => {
@@ -722,21 +794,33 @@
     };
 
     const setMode = (mode) => {
+        const showNormalized = mode === "normalized";
         const showRaw = mode === "raw";
+        const showMineruRaw = mode === "mineru_raw";
+
+        normalizedPre?.classList.toggle("hidden", !showNormalized);
         rawPre?.classList.toggle("hidden", !showRaw);
-        normalizedPre?.classList.toggle("hidden", showRaw);
+        mineruRawPre?.classList.toggle("hidden", !showMineruRaw);
+
+        normalizedBtn?.classList.toggle("bg-white", showNormalized);
+        normalizedBtn?.classList.toggle("shadow-sm", showNormalized);
+        normalizedBtn?.classList.toggle("text-slate-800", showNormalized);
+        normalizedBtn?.classList.toggle("text-slate-500", !showNormalized);
+
         rawBtn?.classList.toggle("bg-white", showRaw);
         rawBtn?.classList.toggle("shadow-sm", showRaw);
         rawBtn?.classList.toggle("text-slate-800", showRaw);
         rawBtn?.classList.toggle("text-slate-500", !showRaw);
-        normalizedBtn?.classList.toggle("bg-white", !showRaw);
-        normalizedBtn?.classList.toggle("shadow-sm", !showRaw);
-        normalizedBtn?.classList.toggle("text-slate-800", !showRaw);
-        normalizedBtn?.classList.toggle("text-slate-500", showRaw);
+
+        mineruRawBtn?.classList.toggle("bg-white", showMineruRaw);
+        mineruRawBtn?.classList.toggle("shadow-sm", showMineruRaw);
+        mineruRawBtn?.classList.toggle("text-slate-800", showMineruRaw);
+        mineruRawBtn?.classList.toggle("text-slate-500", !showMineruRaw);
     };
 
     normalizedBtn?.addEventListener("click", () => setMode("normalized"));
     rawBtn?.addEventListener("click", () => setMode("raw"));
+    mineruRawBtn?.addEventListener("click", () => setMode("mineru_raw"));
     copyRenderedBtn?.addEventListener("click", async () => {
         await copyToClipboard(buildCopyableExtractedText());
     });

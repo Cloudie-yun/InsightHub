@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="min-h-full flex items-center justify-center px-6 py-12">
+    <div class="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-sm p-10 text-center">
+        <div class="mx-auto mb-5 h-16 w-16 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center">
+            <i class="fa-solid fa-file-circle-xmark text-2xl"></i>
+        </div>
+
+        <h1 class="text-3xl font-extrabold text-slate-900">Parser Results Not Found</h1>
+        <p class="mt-3 text-slate-600">
+            The document parser results you requested do not exist, or you no longer have access to this document.
+        </p>
+
+        {% if requested_document_name %}
+        <p class="mt-2 text-sm text-slate-500 break-words">
+            Document: <span class="font-medium text-slate-700">{{ requested_document_name }}</span>
+        </p>
+        {% endif %}
+
+        {% if requested_conversation_title %}
+        <p class="mt-1 text-sm text-slate-500 break-words">
+            Conversation: <span class="font-medium text-slate-700">{{ requested_conversation_title }}</span>
+        </p>
+        {% endif %}
+
+        <div class="mt-8 flex items-center justify-center gap-3">
+            <a href="{{ url_for('chat') }}{% if requested_conversation_id %}?conversation_id={{ requested_conversation_id }}{% endif %}"
+               class="inline-flex items-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-5 py-3 text-sm font-semibold text-brand-700 hover:bg-brand-100 transition-colors">
+                <i class="fa-solid fa-arrow-left"></i>
+                <span>{% if requested_conversation_title %}Back to {{ requested_conversation_title }}{% else %}Back to Chat{% endif %}</span>
+            </a>
+            <a href="{{ url_for('dashboard') }}"
+               class="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition-colors">
+                <i class="fa-solid fa-house"></i>
+                <span>Back to Dashboard</span>
+            </a>
+        </div>
+    </div>
+</section>
+{% endblock %}

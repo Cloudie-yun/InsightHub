@@ -19,11 +19,12 @@
         sourcesSection,
         studyAidSection,
         sourcesHeader,
-        studyAidHeader,
-        sourcesAddBtn,
-        sourcesSelectAllBtn,
-        sourcesBody,
-        studyAidBody,
+            studyAidHeader,
+            sourcesAddBtn,
+            sourcesControls,
+            sourcesSelectAllBtn,
+            sourcesBody,
+            studyAidBody,
         sourcesDetailedList,
         studyAidDetailedList,
         sourcesIconList,
@@ -101,6 +102,7 @@
         sourcesHeader.classList.toggle("hidden", state.isPanelCollapsed || state.isToolboxDocumentMode);
         studyAidHeader.classList.toggle("hidden", state.isPanelCollapsed || state.isToolboxDocumentMode);
         sourcesAddBtn.classList.toggle("hidden", state.isPanelCollapsed || state.isToolboxDocumentMode);
+        sourcesControls.classList.toggle("hidden", state.isPanelCollapsed || state.isToolboxDocumentMode);
         sourcesSelectAllBtn.classList.toggle("hidden", state.isPanelCollapsed || state.isToolboxDocumentMode);
         sourcesDetailedList.classList.toggle("hidden", state.isPanelCollapsed || state.isToolboxDocumentMode);
         studyAidDetailedList.classList.toggle("hidden", state.isPanelCollapsed || state.isToolboxDocumentMode);

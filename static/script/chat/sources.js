@@ -11,6 +11,9 @@
         sendButton,
         sourcesDetailedList,
         sourcesIconList,
+        sourcesCollapsedSummary,
+        sourcesCollapsedIcon,
+        sourcesCollapsedCount,
         sourcesSearchInput,
         sourcesSortSelect,
         sourcesSelectAllBtn,
@@ -255,6 +258,16 @@
         document.querySelectorAll("[data-doc-file]").forEach(ns.bindDocumentTrigger);
         document.querySelectorAll("#sources-detailed-list [data-doc-id]").forEach(ns.bindSourceItemSelection);
         toolboxDocBack?.addEventListener("click", ns.closeToolboxDocument);
+        sourcesCollapsedSummary?.addEventListener("click", () => {
+            const firstVisibleNode = Array.from(
+                sourcesDetailedList?.querySelectorAll("[data-doc-id], [data-temp-upload-id]") || [],
+            ).find((node) => !node.classList.contains("hidden"));
+            if (!firstVisibleNode) return;
+            const filePath = firstVisibleNode.dataset.docFile;
+            const fileTitle = firstVisibleNode.dataset.docTitle || filePath;
+            if (!filePath) return;
+            ns.openToolboxDocument(filePath, fileTitle);
+        });
     };
 
     ns.normalizeSourceSortName = (value) => String(value || "").trim().toLocaleLowerCase();
@@ -316,12 +329,42 @@
         sourcesEmptyState.classList.toggle("hidden", hasVisibleDocument);
     };
 
+    ns.updateCollapsedSourcesSummary = () => {
+        if (!sourcesCollapsedSummary || !sourcesCollapsedIcon || !sourcesCollapsedCount || !sourcesDetailedList) return;
+
+        const sourceNodes = Array.from(
+            sourcesDetailedList.querySelectorAll("[data-doc-id], [data-temp-upload-id]"),
+        );
+
+        const totalDocuments = sourceNodes.length;
+        sourcesCollapsedSummary.classList.toggle("hidden", totalDocuments === 0);
+
+        if (!totalDocuments) {
+            sourcesCollapsedSummary.title = "Documents";
+            sourcesCollapsedCount.textContent = "0";
+            sourcesCollapsedIcon.className = "h-10 w-10 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center";
+            sourcesCollapsedIcon.innerHTML = '<i class="fa-regular fa-file-lines"></i>';
+            return;
+        }
+
+        const firstNode = sourceNodes[0];
+        const isProcessing = !!firstNode?.dataset.tempUploadId
+            || String(firstNode?.dataset.parserStatus || "").toLowerCase() === constants.PENDING_PARSER_STATUS;
+        const title = String(firstNode?.dataset.docTitle || "Documents").trim();
+
+        sourcesCollapsedSummary.title = totalDocuments === 1 ? title : `${title} and ${totalDocuments - 1} more`;
+        sourcesCollapsedCount.textContent = String(totalDocuments);
+        sourcesCollapsedIcon.className = isProcessing
+            ? "h-10 w-10 rounded-lg bg-brand-50 text-brand-700 border border-brand-200 flex items-center justify-center"
+            : "h-10 w-10 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center";
+        sourcesCollapsedIcon.innerHTML = isProcessing
+            ? '<i class="fa-solid fa-spinner animate-spin"></i>'
+            : '<i class="fa-regular fa-file-lines"></i>';
+    };
+
     ns.applySourceFiltersAndSorting = () => {
         const detailedNodes = sourcesDetailedList
             ? Array.from(sourcesDetailedList.querySelectorAll("[data-doc-id], [data-temp-upload-id]"))
-            : [];
-        const iconNodes = sourcesIconList
-            ? Array.from(sourcesIconList.querySelectorAll("[data-doc-id], [data-temp-upload-id]"))
             : [];
         const sortMode = state.sourceSortMode || constants.DEFAULT_SOURCE_SORT_MODE;
         const query = state.sourceSearchQuery || "";
@@ -333,15 +376,9 @@
                 sourcesDetailedList?.appendChild(node);
             });
 
-        iconNodes
-            .sort((leftNode, rightNode) => ns.compareSourceNodes(leftNode, rightNode, sortMode))
-            .forEach((node) => {
-                node.classList.toggle("hidden", !ns.doesSourceNodeMatchSearch(node, query));
-                sourcesIconList?.appendChild(node);
-            });
-
         ns.updateSourceEmptyState();
         ns.updateSelectAllButtonState();
+        ns.updateCollapsedSourcesSummary();
     };
 
     ns.initializeSourceSearchAndSort = () => {
@@ -371,9 +408,7 @@
         const isProcessing = parserStatus === constants.PENDING_PARSER_STATUS;
         const createdAt = String(documentPayload?.uploaded_at || documentPayload?.created_at || "").trim();
         const article = document.createElement("article");
-        article.className = isProcessing
-            ? "group rounded-xl bg-brand-50/40 transition-colors cursor-pointer"
-            : "group rounded-xl bg-transparent hover:bg-brand-50/30 transition-colors cursor-pointer";
+        article.className = "group rounded-xl bg-transparent hover:bg-brand-50/30 transition-colors cursor-pointer";
         article.dataset.docFile = documentPayload.upload_path;
         article.dataset.docTitle = documentPayload.original_filename;
         article.dataset.docId = documentPayload.document_id || "";
@@ -423,7 +458,7 @@
 
         const selectButton = document.createElement("button");
         selectButton.type = "button";
-        selectButton.className = "h-5 w-5 rounded border text-[10px] transition-colors";
+        selectButton.className = "h-5 w-5 rounded border text-[10px] transition-colors flex items-center justify-center";
         selectButton.dataset.sourceSelectBtn = "true";
         selectButton.dataset.selected = "true";
         selectButton.setAttribute("aria-pressed", "true");
@@ -437,7 +472,7 @@
         }
         if (isProcessing) {
             const statusBadge = document.createElement("span");
-            statusBadge.className = "h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-white text-xs text-brand-700";
+            statusBadge.className = "h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-brand-50 text-xs text-brand-700";
             statusBadge.textContent = "Processing";
             row.appendChild(statusBadge);
         }
@@ -454,31 +489,7 @@
         return article;
     };
 
-    ns.createSourceIconItem = (documentPayload) => {
-        if (!sourcesIconList || !documentPayload?.upload_path || !documentPayload?.original_filename) return null;
-
-        const parserStatus = String(documentPayload?.parser_status || "").toLowerCase() || constants.PENDING_PARSER_STATUS;
-        const isProcessing = parserStatus === constants.PENDING_PARSER_STATUS;
-        const createdAt = String(documentPayload?.uploaded_at || documentPayload?.created_at || "").trim();
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = isProcessing
-            ? "h-10 w-10 rounded-lg bg-brand-50 text-brand-700 border border-brand-200"
-            : "h-10 w-10 rounded-lg hover:bg-gray-100 text-slate-500";
-        button.dataset.docFile = documentPayload.upload_path;
-        button.dataset.docTitle = documentPayload.original_filename;
-        button.dataset.docId = documentPayload.document_id || "";
-        button.dataset.docCreatedAt = createdAt;
-        button.dataset.docCreatedAtTs = String(ns.getDocumentCreatedAtTimestamp(documentPayload));
-        button.dataset.parserStatus = parserStatus;
-        button.title = documentPayload.original_filename;
-        button.innerHTML = isProcessing
-            ? '<i class="fa-solid fa-spinner animate-spin"></i>'
-            : '<i class="fa-regular fa-file-lines"></i>';
-
-        ns.bindDocumentTrigger(button);
-        return button;
-    };
+    ns.createSourceIconItem = (_documentPayload) => null;
 
     ns.createProcessingSourceItems = (files) => {
         const ids = [];
@@ -528,17 +539,6 @@
                 sourcesDetailedList.appendChild(article);
             }
 
-            if (sourcesIconList) {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.className = "h-10 w-10 rounded-lg bg-brand-50 text-brand-700 border border-brand-200";
-                button.title = `${fileName} (processing)`;
-                button.dataset.tempUploadId = tempId;
-                button.dataset.docTitle = fileName;
-                button.dataset.docCreatedAtTs = String(Date.now() + index);
-                button.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i>';
-                sourcesIconList.appendChild(button);
-            }
         });
 
         ns.applySourceFiltersAndSorting();

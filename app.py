@@ -117,6 +117,36 @@ def get_preview_pdf_path(file_path: Path) -> Path:
     return PREVIEW_DIR / f"{file_path.stem}.pdf"
 
 
+def _resolve_authorized_upload_path(user_id: str | None, requested_path: str) -> Path | None:
+    if not user_id:
+        return None
+
+    safe_requested_path = str(requested_path or "").strip().replace("\\", "/")
+    if not safe_requested_path:
+        return None
+
+    requested_parts = Path(safe_requested_path).parts
+    if (
+        not requested_parts
+        or requested_parts[0] != user_id
+        or any(part in {"..", ""} for part in requested_parts)
+    ):
+        return None
+
+    user_root = (UPLOADS_DIR / user_id).resolve()
+    candidate = (UPLOADS_DIR / Path(*requested_parts)).resolve()
+
+    try:
+        candidate.relative_to(user_root)
+    except ValueError:
+        return None
+
+    if not candidate.exists() or not candidate.is_file():
+        return None
+
+    return candidate
+
+
 # ===========================================================================
 # 3. SERIALIZERS  (DB row → dict)
 # ===========================================================================
@@ -265,6 +295,7 @@ def get_conversation_documents(user_id, conversation_id) -> list:
                     d.file_extension,
                     d.mime_type,
                     d.created_at,
+                    d.user_id,
                     d.storage_path,
                     de.parser_status,
                     de.metadata
@@ -371,6 +402,72 @@ def get_document_parser_result(user_id, document_id, conversation_id=None) -> di
     finally:
         if conn is not None:
             conn.close()
+
+
+def get_document_parser_result_context(user_id, document_id, conversation_id=None) -> dict:
+    context = {
+        "conversation_title": "",
+        "document_name": "",
+    }
+    if not user_id:
+        return context
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if conversation_id:
+                cur.execute(
+                    """
+                    SELECT title
+                    FROM conversations
+                    WHERE user_id = %s
+                      AND conversation_id = %s
+                    LIMIT 1
+                    """,
+                    (user_id, conversation_id),
+                )
+                row = cur.fetchone()
+                if row:
+                    context["conversation_title"] = row[0] or ""
+
+                cur.execute(
+                    """
+                    SELECT d.original_filename
+                    FROM conversations c
+                    JOIN conversation_documents cd ON cd.conversation_id = c.conversation_id
+                    JOIN documents d              ON d.document_id       = cd.document_id
+                    WHERE c.user_id         = %s
+                      AND c.conversation_id = %s
+                      AND d.document_id     = %s
+                      AND d.is_deleted      = FALSE
+                    LIMIT 1
+                    """,
+                    (user_id, conversation_id, document_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT original_filename
+                    FROM documents
+                    WHERE user_id = %s
+                      AND document_id = %s
+                      AND is_deleted = FALSE
+                    LIMIT 1
+                    """,
+                    (user_id, document_id),
+                )
+
+            row = cur.fetchone()
+            if row:
+                context["document_name"] = row[0] or ""
+    except Exception:
+        return context
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return context
 
 
 def get_extracted_document_result(user_id, document_id, conversation_id=None):
@@ -708,7 +805,18 @@ def document_parser_results(document_id):
         conversation_id = conversation_id,
     )
     if not document_result:
-        abort(404)
+        parser_result_context = get_document_parser_result_context(
+            user_id=user_id,
+            document_id=document_id,
+            conversation_id=conversation_id,
+        )
+        return render_template(
+            "document_parser_results_not_found.html",
+            active_page="chat",
+            requested_document_name=parser_result_context.get("document_name") or "",
+            requested_conversation_title=parser_result_context.get("conversation_title") or "",
+            requested_conversation_id=conversation_id,
+        ), 404
 
     return render_template(
         "document_parser_results.html",
@@ -1432,7 +1540,7 @@ def _build_pending_payload_with_processing(document_id, stage: str, message: str
     return payload
 
 
-def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_file, original_name, extension) -> dict:
+def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_file, original_name, extension, conversation_id=None) -> dict:
     """
     Save one file to disk, insert the documents row, mark extraction as pending,
     and return the upload result dict plus parse job metadata.
@@ -1499,6 +1607,7 @@ def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_fi
             "destination":       destination,
             "mime_type":         mime_type,
             "original_filename": original_name,
+            "conversation_id":   conversation_id,
         },
         "_destination":      destination,   # kept for rollback cleanup; stripped before response
     }
@@ -1509,6 +1618,7 @@ def _run_document_parse_job(job: dict) -> None:
     destination = Path(job["destination"])
     mime_type = job.get("mime_type")
     original_filename = job.get("original_filename")
+    conversation_id = job.get("conversation_id")
 
     conn = None
     try:
@@ -1603,6 +1713,7 @@ def _run_document_parse_job(job: dict) -> None:
             extraction_payload = build_extraction_payload(
                 document_id=document_id,
                 parser_result=parser_result,
+                conversation_id=conversation_id,
             )
             save_document_extraction(
                 cur,
@@ -1636,6 +1747,7 @@ def _run_document_parse_job(job: dict) -> None:
                 failed_payload = build_extraction_payload(
                     document_id=document_id,
                     parser_result=failed_result,
+                    conversation_id=conversation_id,
                 )
                 save_document_extraction(
                     fallback_cur,
@@ -1696,7 +1808,7 @@ def upload_documents():
             uploaded_documents = []
             for incoming_file, original_name, extension in selected_files:
                 result = _insert_document_and_mark_pending(
-                    cur, user_id, user_upload_dir, incoming_file, original_name, extension
+                    cur, user_id, user_upload_dir, incoming_file, original_name, extension, conversation_id=conversation_id
                 )
                 parse_jobs.append(result.pop("_parse_job"))
                 saved_paths.append(result.pop("_destination"))
@@ -1772,7 +1884,7 @@ def upload_documents_to_conversation(conversation_id):
             uploaded_documents = []
             for incoming_file, original_name, extension in selected_files:
                 result = _insert_document_and_mark_pending(
-                    cur, user_id, user_upload_dir, incoming_file, original_name, extension
+                    cur, user_id, user_upload_dir, incoming_file, original_name, extension, conversation_id=conversation_id
                 )
                 parse_jobs.append(result.pop("_parse_job"))
                 saved_paths.append(result.pop("_destination"))
@@ -1914,8 +2026,11 @@ def api_reparse_document(document_id):
             parser_result      = parse_document(file_path=file_path, document_id=document_row[0],
                                                 mime_type=document_row[3] or None,
                                                 original_filename=document_row[1] or stored_filename)
-            extraction_payload = build_extraction_payload(document_id=document_row[0], parser_result=parser_result)
-
+            extraction_payload = build_extraction_payload(
+                document_id=document_row[0],
+                parser_result=parser_result,
+                conversation_id=conversation_id,
+            )
             if persist_extraction:
                 save_document_extraction(cur, document_id=document_row[0], extraction_payload=extraction_payload)
 
@@ -1947,21 +2062,28 @@ def api_reparse_document(document_id):
 
 @app.route('/uploads/<path:filename>')
 def uploaded_file(filename):
-    file_path = UPLOADS_DIR / filename
-    if not file_path.exists() or not file_path.is_file():
+    user_id = session.get("user_id")
+    file_path = _resolve_authorized_upload_path(user_id, filename)
+    if file_path is None:
         abort(404)
-    return send_from_directory(UPLOADS_DIR, filename, as_attachment=False)
+
+    user_root = (UPLOADS_DIR / str(user_id)).resolve()
+    relative_path = file_path.relative_to(user_root)
+    return send_from_directory(user_root, str(relative_path).replace("\\", "/"), as_attachment=False)
 
 
 @app.route('/uploads/preview/<path:filename>')
 def uploaded_file_preview(filename):
-    file_path = UPLOADS_DIR / filename
-    if not file_path.exists() or not file_path.is_file():
+    user_id = session.get("user_id")
+    file_path = _resolve_authorized_upload_path(user_id, filename)
+    if file_path is None:
         abort(404)
 
     suffix = file_path.suffix.lower()
     if suffix == ".pdf":
-        return send_from_directory(UPLOADS_DIR, filename, as_attachment=False)
+        user_root = (UPLOADS_DIR / str(user_id)).resolve()
+        relative_path = file_path.relative_to(user_root)
+        return send_from_directory(user_root, str(relative_path).replace("\\", "/"), as_attachment=False)
     if suffix != ".docx":
         abort(415, description="Preview is only supported for PDF and DOCX files.")
 

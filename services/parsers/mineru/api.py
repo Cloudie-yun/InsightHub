@@ -77,45 +77,6 @@ def upload_file(put_url: str, file_bytes: bytes, content_type: str | None = None
     raise MinerUError(f"Upload failed after {MAX_RETRIES} attempts: {last_exc}")
 
 
-def create_direct_task(
-    token: str,
-    file_url: str,
-    *,
-    model_version: str = "vlm",
-    language: str = "en",
-    enable_formula: bool = True,
-    enable_table: bool = True,
-    is_ocr: bool = False,
-    data_id: str | None = None,
-) -> str:
-    payload = {
-        "url": file_url,
-        "model_version": model_version,
-        "language": language,
-        "enable_formula": enable_formula,
-        "enable_table": enable_table,
-        "is_ocr": is_ocr,
-    }
-    if data_id:
-        payload["data_id"] = data_id
-
-    resp = request_with_retry(
-        "POST",
-        f"{MINERU_API_ROOT}/extract/task",
-        headers=api_headers(token),
-        json=payload,
-        _timeout_seconds=60,
-    )
-    body = resp.json()
-    if body.get("code") != 0:
-        raise MinerUError(f"Failed to create task: {body.get('msg', 'unknown error')}")
-
-    task_id = (body.get("data") or {}).get("task_id")
-    if not task_id:
-        raise MinerUError("MinerU response missing task_id")
-    return task_id
-
-
 def _poll_until_done(
     fetch_status: Callable[[], dict],
     get_state: Callable[[dict], str],
@@ -199,45 +160,6 @@ def poll_batch(
         result = payload.get("result") or {}
         err = result.get("err_msg") or result.get("msg") or "unknown error"
         return f"Extraction failed: {err}"
-
-    return _poll_until_done(
-        _fetch_status,
-        _get_state,
-        _get_done_url,
-        _get_failed_message,
-        on_progress=on_progress,
-    )
-
-
-def poll_direct_task(
-    token: str,
-    task_id: str,
-    on_progress: Callable[[dict, int], None] | None = None,
-) -> str:
-    def _fetch_status() -> dict:
-        response = request_with_retry(
-            "GET",
-            f"{MINERU_API_ROOT}/extract/task/{task_id}",
-            headers=api_headers(token),
-            _timeout_seconds=60,
-        )
-        body = response.json()
-        if body.get("code") != 0:
-            raise MinerUError(f"Poll error: {body.get('msg', 'unknown error')}")
-        return {
-            "data": body.get("data") or {},
-        }
-
-    def _get_state(payload: dict) -> str:
-        data = payload.get("data") or {}
-        return str(data.get("state") or "waiting")
-
-    def _get_done_url(payload: dict) -> str | None:
-        data = payload.get("data") or {}
-        return data.get("full_zip_url") or data.get("zip_url")
-
-    def _get_failed_message(_payload: dict) -> str:
-        return f"Extraction failed for task {task_id}"
 
     return _poll_until_done(
         _fetch_status,

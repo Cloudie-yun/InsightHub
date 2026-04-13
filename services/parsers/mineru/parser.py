@@ -5,11 +5,11 @@ from pathlib import Path
 
 import httpx
 
-from .api import create_direct_task, poll_batch, poll_direct_task, request_upload_url, upload_file
+from .api import poll_batch, request_upload_url, upload_file
 from .client import MinerUError, ProgressCallback, ProgressEmitter
 from .zip_parser import download_zip, parse_zip
 
-MINERU_SUPPORTED_EXTENSIONS = {".pdf", ".ppt", ".pptx"}
+MINERU_SUPPORTED_EXTENSIONS = frozenset({".pdf", ".ppt", ".pptx", ".doc", ".docx"})
 
 
 def parse_document_via_mineru_upload(
@@ -184,71 +184,6 @@ def parse_document_via_mineru_upload(
             "metadata": metadata,
             "errors": [{"code": "parse_error", "message": str(exc)}],
         }
-
-
-def parse_document_via_mineru_url(
-    file_url: str,
-    token: str,
-    *,
-    document_id: str | None = None,
-    source_path: str | None = None,
-    model_version: str = "vlm",
-    language: str = "en",
-    enable_formula: bool = True,
-    enable_table: bool = True,
-    is_ocr: bool = False,
-) -> dict:
-    metadata: dict = {
-        "source_path": source_path or file_url,
-        "parser": "mineru_api",
-        "page_count": 0,
-        "mode": "direct_task",
-        "model_version": model_version,
-    }
-    try:
-        task_id = create_direct_task(
-            token,
-            file_url,
-            model_version=model_version,
-            language=language,
-            enable_formula=enable_formula,
-            enable_table=enable_table,
-            is_ocr=is_ocr,
-            data_id=source_path or file_url,
-        )
-        metadata["task_id"] = task_id
-        zip_url = poll_direct_task(token, task_id)
-        metadata["zip_url"] = zip_url
-        zip_file = download_zip(zip_url)
-        zip_result = parse_zip(
-            zip_file,
-            source_path or file_url,
-            document_id=str(document_id) if document_id is not None else None,
-            asset_output_dir=None,
-        )
-        segments = zip_result.get("segments", [])
-        if segments:
-            page_indices = [segment.get("source_index") for segment in segments if segment.get("source_index")]
-            metadata["page_count"] = max(page_indices) if page_indices else 0
-        metadata = {
-            **(zip_result.get("metadata") or {}),
-            **metadata,
-        }
-        return {
-            "segments": segments,
-            "assets": zip_result.get("assets", []),
-            "references": zip_result.get("references", []),
-            "metadata": metadata,
-            "errors": zip_result.get("errors", []),
-        }
-    except MinerUError as exc:
-        return {"segments": [], "assets": [], "references": [], "metadata": metadata, "errors": [{"code": "mineru_api_error", "message": str(exc)}]}
-    except httpx.HTTPError as exc:
-        return {"segments": [], "assets": [], "references": [], "metadata": metadata, "errors": [{"code": "http_error", "message": str(exc)}]}
-    except Exception as exc:
-        return {"segments": [], "assets": [], "references": [], "metadata": metadata, "errors": [{"code": "parse_error", "message": str(exc)}]}
-
-
 def parse_document_with_mineru(
     file_path: str | Path,
     token: str | None = None,
@@ -277,74 +212,6 @@ def parse_document_with_mineru(
     return parse_document_via_mineru_upload(
         file_path,
         resolved_token,
-        progress_callback=progress_callback,
-        document_id=document_id,
-        original_filename=original_filename,
-    )
-
-
-def parse_pdf_via_mineru_upload(
-    file_path: str | Path,
-    token: str,
-    progress_callback: ProgressCallback | None = None,
-    document_id: str | None = None,
-    original_filename: str | None = None,
-    *,
-    model_version: str = "vlm",
-    language: str = "en",
-    enable_formula: bool = True,
-    enable_table: bool = True,
-    is_ocr: bool = False,
-) -> dict:
-    return parse_document_via_mineru_upload(
-        file_path,
-        token,
-        progress_callback=progress_callback,
-        document_id=document_id,
-        original_filename=original_filename,
-        model_version=model_version,
-        language=language,
-        enable_formula=enable_formula,
-        enable_table=enable_table,
-        is_ocr=is_ocr,
-    )
-
-
-def parse_pdf_via_mineru_url(
-    file_url: str,
-    token: str,
-    *,
-    document_id: str | None = None,
-    source_path: str | None = None,
-    model_version: str = "vlm",
-    language: str = "en",
-    enable_formula: bool = True,
-    enable_table: bool = True,
-    is_ocr: bool = False,
-) -> dict:
-    return parse_document_via_mineru_url(
-        file_url,
-        token,
-        document_id=document_id,
-        source_path=source_path,
-        model_version=model_version,
-        language=language,
-        enable_formula=enable_formula,
-        enable_table=enable_table,
-        is_ocr=is_ocr,
-    )
-
-
-def parse_pdf_with_mineru(
-    file_path: str | Path,
-    token: str | None = None,
-    progress_callback: ProgressCallback | None = None,
-    document_id: str | None = None,
-    original_filename: str | None = None,
-) -> dict:
-    return parse_document_with_mineru(
-        file_path,
-        token=token,
         progress_callback=progress_callback,
         document_id=document_id,
         original_filename=original_filename,

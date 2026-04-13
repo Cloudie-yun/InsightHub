@@ -2,12 +2,12 @@ from pathlib import Path
 import mimetypes
 import re
 
-from services.parsers.docx_parser import parse_docx
-from services.parsers.mineru import parse_document_with_mineru
+from services.parsers.mineru import MINERU_SUPPORTED_EXTENSIONS, parse_document_with_mineru
 
 EXTENSION_TO_TYPE = {
     ".pdf": "pdf",
     ".ppt": "ppt",
+    ".doc": "doc",
     ".docx": "docx",
     ".pptx": "pptx",
 }
@@ -15,15 +15,9 @@ EXTENSION_TO_TYPE = {
 MIME_TO_TYPE = {
     "application/pdf": "pdf",
     "application/vnd.ms-powerpoint": "ppt",
+    "application/msword": "doc",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
-}
-
-PARSER_BY_TYPE = {
-    "pdf": parse_document_with_mineru,
-    "ppt": parse_document_with_mineru,
-    "docx": parse_docx,
-    "pptx": parse_document_with_mineru,
 }
 
 
@@ -160,25 +154,27 @@ def parse_document(file_path, document_id=None, mime_type=None, original_filenam
             )
             return result
 
-        parser = PARSER_BY_TYPE.get(file_type)
-        if not parser:
+        extension = Path(original_filename or file_path).suffix.lower()
+        if extension not in MINERU_SUPPORTED_EXTENSIONS:
             result["errors"].append(
                 build_parser_error(
-                    code="missing_parser_adapter",
-                    message=f"No parser adapter is configured for '{file_type}'.",
+                    code="unsupported_mineru_file_type",
+                    message="This document type is not enabled for MinerU parsing.",
+                    details={
+                        "file_type": file_type,
+                        "extension": extension,
+                        "supported_extensions": sorted(MINERU_SUPPORTED_EXTENSIONS),
+                    },
                 )
             )
             return result
 
-        if file_type in {"pdf", "ppt", "pptx"}:
-            parser_result = parser(
-                file_path,
-                progress_callback=progress_callback,
-                document_id=document_id,
-                original_filename=original_filename,
-            )
-        else:
-            parser_result = parser(file_path)
+        parser_result = parse_document_with_mineru(
+            file_path,
+            progress_callback=progress_callback,
+            document_id=document_id,
+            original_filename=original_filename,
+        )
         result["segments"] = sorted(parser_result.get("segments", []), key=_segment_sort_key)
         result["assets"] = parser_result.get("assets", [])
         result["references"] = parser_result.get("references", [])

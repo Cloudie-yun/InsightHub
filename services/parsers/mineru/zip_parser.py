@@ -4,6 +4,7 @@ import hashlib
 from importlib import metadata
 import io
 import json
+import logging
 import re
 import zipfile
 from pathlib import Path
@@ -20,6 +21,8 @@ _SECTION_NUMBER_PATTERN = re.compile(r"^\s*((?:\d+\.)*\d+)\b")
 
 PARAGRAPH_BOUNDARY = "\n\n"
 WORD_CONTINUATION = " "
+
+logger = logging.getLogger(__name__)
 
 
 def safe_int(value, default: int = 0) -> int:
@@ -43,6 +46,11 @@ def parse_zip(
 ) -> dict:
     manifest = discover_zip_artifacts(zf)
     raw_artifacts = load_raw_artifacts(zf, manifest)
+    logger.warning(
+        "MinerU raw artifacts received for %s: %s",
+        source_path,
+        json.dumps(_build_raw_artifact_debug_preview(raw_artifacts), ensure_ascii=True, default=str),
+    )
     normalized_artifacts = normalize_coordinates(raw_artifacts)
     intermediate_blocks = build_intermediate_blocks(normalized_artifacts)
     segments, segment_context = build_segments_from_blocks(intermediate_blocks)
@@ -62,6 +70,7 @@ def parse_zip(
     metadata = build_metadata(
         source_path=source_path,
         manifest=manifest,
+        raw_artifacts=raw_artifacts,
         normalized_artifacts=normalized_artifacts,
         segment_context=segment_context,
         assets=assets,
@@ -133,6 +142,92 @@ def load_raw_artifacts(zf: zipfile.ZipFile, manifest: dict) -> dict:
             continue
 
     return raw
+
+
+def _build_raw_artifact_debug_preview(raw_artifacts: dict) -> dict:
+    content_list_v2 = raw_artifacts.get("content_list_v2")
+    flat_content_list = raw_artifacts.get("content_list")
+    model_json = raw_artifacts.get("model_json")
+    markdown = raw_artifacts.get("markdown") or ""
+    manifest = raw_artifacts.get("manifest") or {}
+
+    first_v2_block = None
+    if isinstance(content_list_v2, list):
+        for page_blocks in content_list_v2:
+            if isinstance(page_blocks, list) and page_blocks:
+                first_v2_block = page_blocks[0]
+                break
+
+    first_flat_item = flat_content_list[0] if isinstance(flat_content_list, list) and flat_content_list else None
+    first_model_block = None
+    if isinstance(model_json, list):
+        for page_blocks in model_json:
+            if isinstance(page_blocks, list) and page_blocks:
+                first_model_block = page_blocks[0]
+                break
+
+    return {
+        "manifest": {
+            "content_list_v2": manifest.get("content_list_v2"),
+            "content_list": manifest.get("content_list"),
+            "model_json": manifest.get("model_json"),
+            "markdown": manifest.get("markdown"),
+            "image_count": len(manifest.get("image_files") or []),
+        },
+        "counts": {
+            "content_list_v2_pages": len(content_list_v2) if isinstance(content_list_v2, list) else 0,
+            "content_list_items": len(flat_content_list) if isinstance(flat_content_list, list) else 0,
+            "model_json_pages": len(model_json) if isinstance(model_json, list) else 0,
+            "markdown_chars": len(markdown),
+        },
+        "first_v2_block": _compact_debug_value(first_v2_block),
+        "first_flat_item": _compact_debug_value(first_flat_item),
+        "first_model_block": _compact_debug_value(first_model_block),
+        "markdown_preview": markdown[:500],
+    }
+
+
+def _compact_debug_value(value, *, max_items: int = 6, max_string: int = 200):
+    if isinstance(value, dict):
+        compact: dict[str, object] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= max_items:
+                compact["..."] = f"{len(value) - max_items} more keys"
+                break
+            compact[str(key)] = _compact_debug_value(item, max_items=max_items, max_string=max_string)
+        return compact
+
+    if isinstance(value, list):
+        compact_list = [
+            _compact_debug_value(item, max_items=max_items, max_string=max_string)
+            for item in value[:max_items]
+        ]
+        if len(value) > max_items:
+            compact_list.append(f"... {len(value) - max_items} more items")
+        return compact_list
+
+    if isinstance(value, str):
+        return value[:max_string]
+
+    return value
+
+
+def _build_raw_artifact_payload(raw_artifacts: dict) -> dict:
+    manifest = raw_artifacts.get("manifest") or {}
+    return {
+        "manifest": {
+            "content_list_v2": manifest.get("content_list_v2"),
+            "content_list": manifest.get("content_list"),
+            "model_json": manifest.get("model_json"),
+            "markdown": manifest.get("markdown"),
+            "image_files": manifest.get("image_files") or [],
+            "all_names": manifest.get("all_names") or [],
+        },
+        "content_list_v2": raw_artifacts.get("content_list_v2"),
+        "content_list": raw_artifacts.get("content_list"),
+        "model_json": raw_artifacts.get("model_json"),
+        "markdown": raw_artifacts.get("markdown") or "",
+    }
 
 
 def normalize_coordinates(raw_artifacts: dict) -> dict:
@@ -392,6 +487,16 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
             }
             if block.get("table_html"):
                 metadata["table_html"] = block["table_html"]
+            table_caption_text = clean_extracted_text(block.get("table_caption_text") or "")
+            if table_caption_text:
+                metadata["table_caption"] = table_caption_text
+            table_footnote_texts = [
+                clean_extracted_text(value)
+                for value in (block.get("table_footnote_texts") or [])
+                if clean_extracted_text(value)
+            ]
+            if table_footnote_texts:
+                metadata["table_footnote"] = table_footnote_texts
             label = extract_table_label(table_text)
             if label:
                 metadata["reference_label"] = label
@@ -928,6 +1033,7 @@ def build_metadata(
     *,
     source_path: str,
     manifest: dict,
+    raw_artifacts: dict,
     normalized_artifacts: dict,
     segment_context: dict,
     assets: list[dict],
@@ -956,6 +1062,7 @@ def build_metadata(
             "markdown": manifest.get("markdown"),
             "image_count": len(manifest.get("image_files") or []),
         },
+        "mineru_raw_artifacts": _build_raw_artifact_payload(raw_artifacts),
         "normalization_warnings": warnings,
         "asset_count": len(assets),
         "reference_count": len(references),
@@ -1039,13 +1146,14 @@ def build_v2_intermediate_block(item: dict, page_index: int, order_index: int, f
         }
 
     if item_type == "table":
-        table_html = find_nested_html(content)
-        table_text = build_table_text_from_content(content, table_html)
+        table_payload = extract_table_payload(content)
         return {
             **base_block,
             "block_type": "table",
-            "table_html": table_html,
-            "table_text": table_text,
+            "table_html": table_payload["table_html"],
+            "table_caption_text": table_payload["table_caption_text"],
+            "table_footnote_texts": table_payload["table_footnote_texts"],
+            "table_text": table_payload["table_text"],
         }
 
     if item_type in {"page_header", "page_footer", "page_number"}:
@@ -1104,11 +1212,14 @@ def build_flat_intermediate_block(item: dict, order_index: int) -> dict | None:
             "caption_text": text,
         }
     if item_type == "table":
+        table_payload = extract_table_payload(item)
         return {
             **base_block,
             "block_type": "table",
-            "table_html": item.get("html") or "",
-            "table_text": text,
+            "table_html": table_payload["table_html"],
+            "table_caption_text": table_payload["table_caption_text"],
+            "table_footnote_texts": table_payload["table_footnote_texts"],
+            "table_text": table_payload["table_text"] or text,
         }
     if item_type in {"header", "footer", "page_number"}:
         type_mapping = {
@@ -1250,14 +1361,75 @@ def find_nested_html(content) -> str:
     return ""
 
 
-def build_table_text_from_content(content, table_html: str) -> str:
+def extract_table_payload(content) -> dict[str, object]:
+    table_html = extract_table_html(content)
+    table_caption_text = extract_table_caption_text(content)
+    table_footnote_texts = extract_table_footnote_texts(content)
+    table_text = build_table_text_from_content(
+        content,
+        table_html=table_html,
+        table_caption_text=table_caption_text,
+        table_footnote_texts=table_footnote_texts,
+    )
+    return {
+        "table_html": table_html,
+        "table_caption_text": table_caption_text,
+        "table_footnote_texts": table_footnote_texts,
+        "table_text": table_text,
+    }
+
+
+def extract_table_html(content) -> str:
+    if isinstance(content, dict):
+        table_body = content.get("table_body")
+        if isinstance(table_body, str):
+            stripped = table_body.strip()
+            if "<table" in stripped.lower():
+                return stripped
+        html_value = content.get("html")
+        if isinstance(html_value, str) and html_value.strip():
+            return html_value.strip()
+    return find_nested_html(content)
+
+
+def extract_table_caption_text(content) -> str:
+    if not isinstance(content, dict):
+        return ""
+    return flatten_mineru_content(content.get("table_caption"))
+
+
+def extract_table_footnote_texts(content) -> list[str]:
+    if not isinstance(content, dict):
+        return []
+    footnote_value = content.get("table_footnote")
+    if footnote_value is None:
+        return []
+    if isinstance(footnote_value, (list, tuple)):
+        footnotes = [flatten_mineru_content(item) for item in footnote_value]
+        return [footnote for footnote in footnotes if footnote]
+    footnote_text = flatten_mineru_content(footnote_value)
+    return [footnote_text] if footnote_text else []
+
+
+def build_table_text_from_content(
+    content,
+    *,
+    table_html: str,
+    table_caption_text: str = "",
+    table_footnote_texts: list[str] | None = None,
+) -> str:
     if table_html:
         markdown = html_table_to_markdown(table_html)
         if markdown:
-            return markdown
+            parts = []
+            if table_caption_text:
+                parts.append(table_caption_text)
+            parts.append(markdown)
+            parts.extend([footnote for footnote in (table_footnote_texts or []) if footnote])
+            return "\n".join(parts)
 
     if isinstance(content, dict):
-        for key in ("table_caption", "table_content", "table_body", "table_text"):
+        for key in ("table_caption", "table_content", "table_text"):
             if key in content:
                 flattened = flatten_mineru_content(content[key])
                 if flattened:

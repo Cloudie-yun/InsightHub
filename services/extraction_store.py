@@ -2,6 +2,13 @@ from datetime import datetime, timezone
 
 from psycopg2.extras import Json
 
+from services.document_block_store import (
+    get_document_block_assets,
+    get_document_blocks,
+    save_document_blocks,
+)
+from services.extraction_normalizer import normalize_extraction_result
+
 
 PARSER_VERSION = "1.0.0"
 PARSER_STATUS_PENDING = "pending"
@@ -71,18 +78,35 @@ def build_pending_extraction_payload(document_id, parser_version=PARSER_VERSION)
         "segments": [],
         "assets": [],
         "references": [],
+        "document_blocks": [],
+        "block_assets": [],
     }
 
 
-def build_extraction_payload(document_id, parser_result, parser_version=PARSER_VERSION):
+def build_extraction_payload(document_id, parser_result, parser_version=PARSER_VERSION, conversation_id=None):
     parser_errors = parser_result.get("errors", [])
     has_segments = bool(parser_result.get("segments"))
+    has_assets = bool(parser_result.get("assets"))
     parser_status = (
-        PARSER_STATUS_SUCCESS if has_segments and not parser_errors
-        else PARSER_STATUS_FAILED if not has_segments
+        PARSER_STATUS_SUCCESS if (has_segments or has_assets) and not parser_errors
+        else PARSER_STATUS_FAILED if not (has_segments or has_assets)
         else PARSER_STATUS_PARTIAL
     )
     extraction_timestamp = datetime.now(timezone.utc)
+    document_blocks, block_assets, canonical_metadata = normalize_extraction_result(
+        document_id=str(document_id),
+        parser_result=parser_result,
+        conversation_id=conversation_id,
+        parser_version=parser_version,
+    )
+    metadata = parser_result.get("metadata") or {}
+    metadata = {
+        **metadata,
+        "canonical": {
+            **(metadata.get("canonical") or {}),
+            **canonical_metadata,
+        },
+    }
 
     return {
         "document_id": str(document_id),
@@ -90,11 +114,13 @@ def build_extraction_payload(document_id, parser_result, parser_version=PARSER_V
         "parser_version": parser_version,
         "extraction_timestamp": extraction_timestamp.isoformat(),
         "file_type": parser_result.get("file_type"),
-        "metadata": parser_result.get("metadata") or {},
+        "metadata": metadata,
         "errors": parser_errors,
         "segments": [_normalize_segment(segment) for segment in parser_result.get("segments", [])],
         "assets": [_normalize_asset(asset) for asset in parser_result.get("assets", [])],
         "references": [_normalize_reference(reference) for reference in parser_result.get("references", [])],
+        "document_blocks": document_blocks,
+        "block_assets": block_assets,
     }
 
 
@@ -274,6 +300,13 @@ def save_document_extraction(cur, document_id, extraction_payload):
             ),
         )
 
+    save_document_blocks(
+        cur,
+        document_id=document_id,
+        document_blocks=extraction_payload.get("document_blocks") or [],
+        block_assets=extraction_payload.get("block_assets") or [],
+    )
+
 
 def _serialize_extraction_row(row):
     return {
@@ -441,6 +474,8 @@ def get_document_extraction(cur, document_id, conversation_id=None):
     extraction_payload["segments"] = [_serialize_extraction_segment_row(row) for row in segment_rows]
     extraction_payload["assets"] = [_serialize_extraction_asset_row(row) for row in asset_rows]
     extraction_payload["references"] = [_serialize_extraction_reference_row(row) for row in reference_rows]
+    extraction_payload["document_blocks"] = get_document_blocks(cur, document_id=document_id)
+    extraction_payload["block_assets"] = get_document_block_assets(cur, document_id=document_id)
     return extraction_payload
 
 
