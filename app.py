@@ -89,6 +89,35 @@ def _compose_upload_conversation_title(file_names: list[str]) -> str:
     return "New conversation"
 
 
+def _demo_chat_messages() -> list[dict]:
+    return [
+        {
+            "role": "user",
+            "text": "Can you summarize the main contributions of this paper for my presentation?",
+        },
+        {
+            "role": "assistant",
+            "text": "The paper contributes three main ideas: a structured document parsing pipeline, a normalization layer that converts extracted content into reusable blocks, and a grounded study workflow that turns parsed materials into chat, tables, and diagram-ready knowledge.",
+        },
+        {
+            "role": "user",
+            "text": "What should I mention if the examiner asks why asynchronous parsing is used?",
+        },
+        {
+            "role": "assistant",
+            "text": "You can explain that parsing large academic documents takes noticeable time, so the system stores uploads immediately, marks them as pending, and processes them in the background. That keeps the interface responsive while still exposing parser progress and results after completion.",
+        },
+        {
+            "role": "user",
+            "text": "Can you give me a short explanation of the MinerU ZIP output flow?",
+        },
+        {
+            "role": "assistant",
+            "text": "After upload, MinerU returns a ZIP containing structured artifacts such as content lists, model JSON, markdown, and extracted images. The app parses that ZIP, normalizes layout blocks, resolves references, extracts assets, and stores a consistent document representation for later retrieval.",
+        },
+    ]
+
+
 def convert_docx_to_pdf(source_path: Path, output_path: Path) -> bool:
     """Try docx2pdf first (uses Word on Windows), then fall back to LibreOffice."""
     try:
@@ -789,6 +818,7 @@ def chat():
         current_conversation_id     = current_conversation_id,
         highlight_new_conversation  = highlight_new_conversation,
         conversation_documents      = conversation_documents,
+        demo_messages               = _demo_chat_messages() if not current_conversation_id else [],
     )
 
 

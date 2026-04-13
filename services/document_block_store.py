@@ -267,7 +267,9 @@ def get_diagram_block_details(cur, document_id) -> list[dict]:
             dbd.vision_status,
             dbd.vision_confidence,
             dbd.diagram_kind,
-            dbd.last_analyzed_at
+            dbd.last_analyzed_at,
+            dbd.vision_gate_score,
+            dbd.vision_gate_reasons
         FROM document_blocks db
         JOIN diagram_block_details dbd
           ON dbd.block_id = db.block_id
@@ -296,6 +298,8 @@ def get_diagram_block_details(cur, document_id) -> list[dict]:
                 "vision_confidence": float(row[8]) if row[8] is not None else None,
                 "diagram_kind": row[9],
                 "last_analyzed_at": row[10].isoformat() if row[10] else None,
+                "vision_gate_score": float(row[11]) if row[11] is not None else None,
+                "vision_gate_reasons": row[12] or [],
             }
         )
     return result

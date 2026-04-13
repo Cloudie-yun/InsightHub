@@ -4,6 +4,7 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,59 @@ from psycopg2.extras import Json
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_MODEL = os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 PROMPT_VERSION = "diagram_v1"
+VISION_GATE_PROMPT_VERSION = "diagram_gate_v1"
+DIAGRAM_VISION_MIN_SCORE = float(os.environ.get("DIAGRAM_VISION_MIN_SCORE", "0.45"))
+
+_POSITIVE_DIAGRAM_KEYWORDS = {
+    "architecture",
+    "workflow",
+    "pipeline",
+    "framework",
+    "system",
+    "process",
+    "flowchart",
+    "chart",
+    "graph",
+    "plot",
+    "scatter",
+    "histogram",
+    "distribution",
+    "trend",
+    "axis",
+    "component",
+    "module",
+    "network",
+    "circuit",
+    "diagram",
+}
+_REFERENCE_CONTEXT_KEYWORDS = {
+    "figure",
+    "fig.",
+    "shown",
+    "illustrates",
+    "depicts",
+    "overview",
+    "architecture",
+    "workflow",
+    "pipeline",
+    "results",
+    "comparison",
+    "performance",
+    "trend",
+}
+_NEGATIVE_IMAGE_KEYWORDS = {
+    "logo",
+    "icon",
+    "avatar",
+    "portrait",
+    "author",
+    "headshot",
+    "photo",
+    "photograph",
+    "cover",
+    "decoration",
+    "ornament",
+}
 
 DIAGRAM_RESPONSE_SCHEMA = {
     "type": "object",
@@ -103,6 +157,13 @@ class DiagramVisionInput:
     diagram_kind: str = "figure"
 
 
+@dataclass
+class DiagramVisionDecision:
+    score: float
+    should_analyze: bool
+    reasons: list[str]
+
+
 def build_diagram_prompt(*, caption: str | None, nearby_text: str | None) -> str:
     caption = (caption or "").strip()
     nearby_text = (nearby_text or "").strip()
@@ -128,6 +189,62 @@ Caption:
 Nearby document context:
 {nearby_text if nearby_text else "null"}
 """.strip()
+
+
+def score_diagram_for_vision(item: DiagramVisionInput) -> DiagramVisionDecision:
+    caption = (item.caption_text or "").strip().lower()
+    nearby_text = (item.nearby_text or "").strip().lower()
+    combined_text = f"{caption}\n{nearby_text}".strip()
+    score = 0.0
+    reasons: list[str] = []
+
+    kind = str(item.diagram_kind or "").strip().lower()
+    if kind in {"chart", "figure"}:
+        score += 0.22
+        reasons.append(f"diagram kind '{kind}' is usually useful for vision QA")
+    elif kind == "image":
+        score -= 0.18
+        reasons.append("diagram kind is generic image")
+    elif kind and kind != "unknown":
+        score += 0.12
+        reasons.append(f"diagram kind '{kind}' indicates structured content")
+
+    if caption:
+        score += 0.10
+        reasons.append("caption is available")
+        if len(caption.split()) >= 5:
+            score += 0.08
+            reasons.append("caption has descriptive detail")
+
+    positive_hits = sorted(keyword for keyword in _POSITIVE_DIAGRAM_KEYWORDS if keyword in combined_text)
+    if positive_hits:
+        score += min(0.28, 0.07 * len(positive_hits))
+        reasons.append(f"diagram keywords found: {', '.join(positive_hits[:4])}")
+
+    reference_hits = sorted(keyword for keyword in _REFERENCE_CONTEXT_KEYWORDS if keyword in nearby_text)
+    if reference_hits:
+        score += min(0.18, 0.06 * len(reference_hits))
+        reasons.append(f"nearby text references figure semantics: {', '.join(reference_hits[:3])}")
+
+    negative_hits = sorted(keyword for keyword in _NEGATIVE_IMAGE_KEYWORDS if keyword in combined_text)
+    if negative_hits:
+        score -= min(0.40, 0.12 * len(negative_hits))
+        reasons.append(f"decorative/photo-like keywords found: {', '.join(negative_hits[:4])}")
+
+    if caption and re.fullmatch(r"(figure|fig\.?)\s*\d+[a-z]?:?", caption, flags=re.IGNORECASE):
+        score -= 0.10
+        reasons.append("caption is only a bare figure label")
+
+    if not caption and not nearby_text:
+        score -= 0.12
+        reasons.append("no caption or nearby context available")
+
+    bounded_score = round(max(0.0, min(1.0, score)), 3)
+    return DiagramVisionDecision(
+        score=bounded_score,
+        should_analyze=bounded_score >= DIAGRAM_VISION_MIN_SCORE,
+        reasons=reasons or ["no strong evidence that vision analysis would add value"],
+    )
 
 
 def _guess_mime_type(path: str) -> str:
@@ -392,6 +509,71 @@ def save_diagram_analysis_failure(
     )
 
 
+def save_diagram_analysis_skipped(
+    cur,
+    *,
+    block_id: str,
+    image_asset_id: str | None,
+    diagram_kind: str,
+    decision: DiagramVisionDecision,
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO diagram_block_details (
+            block_id,
+            image_asset_id,
+            diagram_kind,
+            vision_status,
+            vision_confidence,
+            vision_gate_score,
+            vision_gate_reasons,
+            prompt_version,
+            updated_at
+        )
+        VALUES (%s, %s, %s, 'skipped', %s, %s, %s::jsonb, %s, NOW())
+        ON CONFLICT (block_id)
+        DO UPDATE SET
+            image_asset_id = EXCLUDED.image_asset_id,
+            diagram_kind = EXCLUDED.diagram_kind,
+            vision_status = 'skipped',
+            vision_confidence = EXCLUDED.vision_confidence,
+            vision_gate_score = EXCLUDED.vision_gate_score,
+            vision_gate_reasons = EXCLUDED.vision_gate_reasons,
+            prompt_version = EXCLUDED.prompt_version,
+            updated_at = NOW()
+        """,
+        (
+            block_id,
+            image_asset_id,
+            diagram_kind or "unknown",
+            decision.score,
+            decision.score,
+            Json(decision.reasons),
+            VISION_GATE_PROMPT_VERSION,
+        ),
+    )
+
+    cur.execute(
+        """
+        UPDATE document_blocks
+        SET
+            normalized_content = COALESCE(normalized_content, '{}'::jsonb) || %s::jsonb,
+            updated_at = NOW()
+        WHERE block_id = %s
+        """,
+        (
+            Json(
+                {
+                    "vision_status": "skipped",
+                    "vision_gate_score": decision.score,
+                    "vision_gate_reasons": decision.reasons,
+                }
+            ),
+            block_id,
+        ),
+    )
+
+
 def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: int = 2000) -> list[DiagramVisionInput]:
     cur.execute(
         """
@@ -457,6 +639,16 @@ def run_diagram_analysis_for_document(cur, *, document_id: str, api_key: str | N
     analyzed_block_ids: list[str] = []
 
     for item in fetch_pending_diagram_inputs(cur, document_id=document_id):
+        decision = score_diagram_for_vision(item)
+        if not decision.should_analyze:
+            save_diagram_analysis_skipped(
+                cur,
+                block_id=item.block_id,
+                image_asset_id=item.image_asset_id,
+                diagram_kind=item.diagram_kind,
+                decision=decision,
+            )
+            continue
         try:
             result = service.analyze(item)
             save_diagram_analysis(

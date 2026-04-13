@@ -2,12 +2,12 @@
 
 {% block content %}
 <div class="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
-    <header class="h-11 px-6 bg-slate-50 flex items-center justify-between flex-shrink-0">
-        <div class="flex items-center gap-2 min-w-0">
-            <h1 class="text-base font-semibold text-slate-800 truncate"></h1>
-            {% if highlight_new_conversation %}
-            <span class="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                Recently created
+	    <header class="h-11 px-6 bg-slate-50 flex items-center justify-between flex-shrink-0">
+	        <div class="flex items-center gap-2 min-w-0">
+	            <h1 class="text-base font-semibold text-slate-800 truncate">{{ "Demo Conversation" if demo_messages else "" }}</h1>
+	            {% if highlight_new_conversation %}
+	            <span class="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+	                Recently created
             </span>
             {% endif %}
         </div>
@@ -194,6 +194,30 @@
         <section id="chat-main" class="relative h-full min-h-0 min-w-0 flex flex-col bg-slate-50 transition-[padding] duration-200 ease-out">
             <div id="chat-conversation-panel" class="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
                 <div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto p-5 pb-36 space-y-5 max-w-5xl w-full mx-auto">
+                    {% if demo_messages %}
+                        {% for message in demo_messages %}
+                        <article class="flex {% if message.role == 'user' %}justify-end{% else %}justify-start{% endif %}">
+                            <div class="max-w-3xl rounded-3xl px-5 py-4 shadow-sm {% if message.role == 'user' %}bg-brand-600 text-white{% else %}border border-gray-200 bg-white text-slate-800{% endif %}">
+                                <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] {% if message.role == 'user' %}text-brand-100{% else %}text-slate-400{% endif %}">
+                                    <span>{{ "You" if message.role == "user" else "Assistant" }}</span>
+                                </div>
+                                <p class="text-sm leading-7 {% if message.role == 'user' %}text-white{% else %}text-slate-700{% endif %}">{{ message.text }}</p>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    {% else %}
+                        <div class="flex h-full min-h-[320px] items-center justify-center">
+                            <div class="max-w-md text-center">
+                                <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-brand-200 bg-brand-50 text-brand-600">
+                                    <i class="fa-solid fa-comments text-lg"></i>
+                                </div>
+                                <h2 class="mt-4 text-xl font-bold text-slate-900">Start a conversation</h2>
+                                <p class="mt-2 text-sm leading-6 text-slate-500">
+                                    Upload a document or open an existing conversation to begin asking grounded questions about your sources.
+                                </p>
+                            </div>
+                        </div>
+                    {% endif %}
                 </div>
                 <div id="chat-input-area" class="sticky bottom-0 z-10 px-6 pb-3 pt-5 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
                     <div class="max-w-4xl mx-auto">
