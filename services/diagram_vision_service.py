@@ -1,0 +1,481 @@
+from __future__ import annotations
+
+import base64
+import json
+import mimetypes
+import os
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from urllib import error, request
+
+from psycopg2.extras import Json
+
+
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_MODEL = os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+PROMPT_VERSION = "diagram_v1"
+
+DIAGRAM_RESPONSE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "diagram_type",
+        "title_or_caption",
+        "ocr_text",
+        "summary",
+        "key_entities",
+        "relationships",
+        "question_answerable_facts",
+        "confidence",
+    ],
+    "properties": {
+        "diagram_type": {
+            "type": "string",
+            "enum": [
+                "flowchart",
+                "chart",
+                "table_like_figure",
+                "architecture_diagram",
+                "scientific_figure",
+                "screenshot",
+                "image",
+                "unknown",
+            ],
+        },
+        "title_or_caption": {"type": ["string", "null"]},
+        "ocr_text": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+        "key_entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["name", "type"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {
+                        "type": "string",
+                        "enum": ["node", "axis", "label", "box", "legend", "component", "arrow", "unknown"],
+                    },
+                },
+            },
+        },
+        "relationships": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source", "relation", "target"],
+                "properties": {
+                    "source": {"type": "string"},
+                    "relation": {
+                        "type": "string",
+                        "enum": [
+                            "points_to",
+                            "connected_to",
+                            "contains",
+                            "compares_with",
+                            "shows",
+                            "influences",
+                            "depends_on",
+                            "unknown",
+                        ],
+                    },
+                    "target": {"type": "string"},
+                },
+            },
+        },
+        "question_answerable_facts": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+}
+
+
+@dataclass
+class DiagramVisionInput:
+    block_id: str
+    image_path: str
+    caption_text: str | None
+    nearby_text: str | None
+    image_asset_id: str | None = None
+    diagram_kind: str = "figure"
+
+
+def build_diagram_prompt(*, caption: str | None, nearby_text: str | None) -> str:
+    caption = (caption or "").strip()
+    nearby_text = (nearby_text or "").strip()
+    return f"""
+You are analyzing a diagram extracted from an academic or technical document.
+
+Goal:
+Produce structured information that helps a document-grounded chatbot answer questions about this figure accurately.
+
+Instructions:
+1. Identify the figure type.
+2. Read any visible labels or text inside the figure.
+3. Explain what the figure shows in a short factual summary.
+4. Extract key entities such as nodes, labels, components, legends, arrows, or axes.
+5. Extract explicit relationships shown by arrows, lines, containment, comparison, or dependency.
+6. Extract concise facts that a chatbot can directly reuse in question answering.
+7. Do not invent information that is not visible or reasonably supported by the caption/context.
+8. Return JSON only.
+
+Caption:
+{caption if caption else "null"}
+
+Nearby document context:
+{nearby_text if nearby_text else "null"}
+""".strip()
+
+
+def _guess_mime_type(path: str) -> str:
+    mime, _ = mimetypes.guess_type(path)
+    return mime or "image/png"
+
+
+def _encode_file_base64(path: str) -> str:
+    with open(path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+
+
+class GeminiDiagramVisionService:
+    def __init__(self, *, api_key: str, model: str = GEMINI_MODEL, timeout_seconds: int = 60) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+
+    def analyze(self, item: DiagramVisionInput) -> dict[str, Any]:
+        image_path = Path(item.image_path)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Diagram image not found: {image_path}")
+
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": build_diagram_prompt(caption=item.caption_text, nearby_text=item.nearby_text)},
+                        {
+                            "inlineData": {
+                                "mimeType": _guess_mime_type(str(image_path)),
+                                "data": _encode_file_base64(str(image_path)),
+                            }
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseJsonSchema": DIAGRAM_RESPONSE_SCHEMA,
+                "temperature": 0.1,
+                "topP": 0.95,
+                "maxOutputTokens": 2048,
+            },
+        }
+
+        url = f"{GEMINI_API_BASE}/models/{self.model}:generateContent?key={self.api_key}"
+        req = request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as http_error:
+            details = http_error.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Gemini request failed: {http_error.code} {details}") from http_error
+
+        text = (
+            raw.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+            .strip()
+        )
+        if not text:
+            raise ValueError("Gemini returned no JSON text")
+
+        return {
+            "provider_name": "gemini",
+            "model_name": self.model,
+            "prompt_version": PROMPT_VERSION,
+            "request_payload": payload,
+            "raw_response": raw,
+            "parsed_output": json.loads(text),
+        }
+
+
+def save_diagram_analysis(cur, *, block_id: str, image_asset_id: str | None, diagram_kind: str, analysis_result: dict[str, Any]) -> None:
+    parsed = analysis_result["parsed_output"]
+    analysis_run_id = str(uuid.uuid4())
+
+    cur.execute(
+        """
+        INSERT INTO diagram_block_analysis_runs (
+            analysis_run_id,
+            block_id,
+            provider_name,
+            model_name,
+            prompt_version,
+            request_payload,
+            raw_response,
+            parsed_output,
+            status,
+            completed_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, 'completed', NOW())
+        """,
+        (
+            analysis_run_id,
+            block_id,
+            analysis_result["provider_name"],
+            analysis_result["model_name"],
+            analysis_result["prompt_version"],
+            Json(analysis_result["request_payload"]),
+            Json(analysis_result["raw_response"]),
+            Json(parsed),
+        ),
+    )
+
+    cur.execute(
+        """
+        INSERT INTO diagram_block_details (
+            block_id,
+            image_asset_id,
+            diagram_kind,
+            image_region,
+            ocr_text,
+            visual_description,
+            semantic_links,
+            question_answerable_facts,
+            vision_status,
+            vision_confidence,
+            provider_name,
+            model_name,
+            prompt_version,
+            last_analyzed_at,
+            updated_at
+        )
+        VALUES (
+            %s, %s, %s, '{}'::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb,
+            'completed', %s, %s, %s, %s, NOW(), NOW()
+        )
+        ON CONFLICT (block_id)
+        DO UPDATE SET
+            image_asset_id = EXCLUDED.image_asset_id,
+            diagram_kind = EXCLUDED.diagram_kind,
+            ocr_text = EXCLUDED.ocr_text,
+            visual_description = EXCLUDED.visual_description,
+            semantic_links = EXCLUDED.semantic_links,
+            question_answerable_facts = EXCLUDED.question_answerable_facts,
+            vision_status = EXCLUDED.vision_status,
+            vision_confidence = EXCLUDED.vision_confidence,
+            provider_name = EXCLUDED.provider_name,
+            model_name = EXCLUDED.model_name,
+            prompt_version = EXCLUDED.prompt_version,
+            last_analyzed_at = EXCLUDED.last_analyzed_at,
+            updated_at = NOW()
+        """,
+        (
+            block_id,
+            image_asset_id,
+            parsed.get("diagram_type") or diagram_kind or "unknown",
+            Json(parsed.get("ocr_text", [])),
+            parsed.get("summary"),
+            Json(parsed.get("relationships", [])),
+            Json(parsed.get("question_answerable_facts", [])),
+            parsed.get("confidence"),
+            analysis_result["provider_name"],
+            analysis_result["model_name"],
+            analysis_result["prompt_version"],
+        ),
+    )
+
+    cur.execute(
+        """
+        UPDATE document_blocks
+        SET
+            normalized_content = COALESCE(normalized_content, '{}'::jsonb) || %s::jsonb,
+            display_text = COALESCE(caption_text, display_text),
+            updated_at = NOW()
+        WHERE block_id = %s
+        """,
+        (
+            Json(
+                {
+                    "vision": parsed,
+                    "visual_description": parsed.get("summary"),
+                    "ocr_text": parsed.get("ocr_text", []),
+                    "semantic_links": parsed.get("relationships", []),
+                    "vision_status": "completed",
+                }
+            ),
+            block_id,
+        ),
+    )
+
+
+def save_diagram_analysis_failure(
+    cur,
+    *,
+    block_id: str,
+    provider_name: str,
+    model_name: str,
+    prompt_version: str,
+    request_payload: dict[str, Any],
+    error_message: str,
+) -> None:
+    analysis_run_id = str(uuid.uuid4())
+
+    cur.execute(
+        """
+        INSERT INTO diagram_block_analysis_runs (
+            analysis_run_id,
+            block_id,
+            provider_name,
+            model_name,
+            prompt_version,
+            request_payload,
+            status,
+            error_message,
+            completed_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb, 'failed', %s, NOW())
+        """,
+        (
+            analysis_run_id,
+            block_id,
+            provider_name,
+            model_name,
+            prompt_version,
+            Json(request_payload),
+            error_message,
+        ),
+    )
+
+    cur.execute(
+        """
+        INSERT INTO diagram_block_details (
+            block_id,
+            vision_status,
+            provider_name,
+            model_name,
+            prompt_version,
+            updated_at
+        )
+        VALUES (%s, 'failed', %s, %s, %s, NOW())
+        ON CONFLICT (block_id)
+        DO UPDATE SET
+            vision_status = 'failed',
+            provider_name = EXCLUDED.provider_name,
+            model_name = EXCLUDED.model_name,
+            prompt_version = EXCLUDED.prompt_version,
+            updated_at = NOW()
+        """,
+        (block_id, provider_name, model_name, prompt_version),
+    )
+
+    cur.execute(
+        """
+        UPDATE document_blocks
+        SET
+            normalized_content = COALESCE(normalized_content, '{}'::jsonb) || %s::jsonb,
+            updated_at = NOW()
+        WHERE block_id = %s
+        """,
+        (Json({"vision_status": "failed", "vision_error": error_message}), block_id),
+    )
+
+
+def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: int = 2000) -> list[DiagramVisionInput]:
+    cur.execute(
+        """
+        WITH ordered_blocks AS (
+            SELECT
+                db.block_id,
+                db.block_type,
+                db.display_text,
+                db.caption_text,
+                db.subtype,
+                db.reading_order,
+                db.source_unit_index,
+                dba.block_asset_id,
+                dba.storage_path,
+                COALESCE(dbd.vision_status, 'pending_vision_analysis') AS vision_status,
+                LAG(db.display_text) OVER (ORDER BY db.source_unit_index ASC, db.reading_order ASC NULLS LAST) AS prev_text,
+                LEAD(db.display_text) OVER (ORDER BY db.source_unit_index ASC, db.reading_order ASC NULLS LAST) AS next_text
+            FROM document_blocks db
+            LEFT JOIN document_block_assets dba
+                ON dba.block_id = db.block_id
+               AND dba.asset_role = 'diagram_crop'
+            LEFT JOIN diagram_block_details dbd
+                ON dbd.block_id = db.block_id
+            WHERE db.document_id = %s
+              AND db.block_type = 'diagram'
+        )
+        SELECT
+            block_id,
+            block_asset_id,
+            storage_path,
+            caption_text,
+            subtype,
+            LEFT(CONCAT_WS('\n', prev_text, next_text), %s)
+        FROM ordered_blocks
+        WHERE COALESCE(storage_path, '') <> ''
+          AND vision_status IN ('pending_vision_analysis', 'failed')
+        ORDER BY source_unit_index ASC, reading_order ASC NULLS LAST
+        """,
+        (document_id, context_char_limit),
+    )
+
+    results = []
+    for block_id, block_asset_id, storage_path, caption_text, subtype, nearby_text in cur.fetchall():
+        results.append(
+            DiagramVisionInput(
+                block_id=str(block_id),
+                image_asset_id=str(block_asset_id) if block_asset_id else None,
+                image_path=storage_path,
+                caption_text=caption_text,
+                nearby_text=nearby_text,
+                diagram_kind=subtype or "figure",
+            )
+        )
+    return results
+
+
+def run_diagram_analysis_for_document(cur, *, document_id: str, api_key: str | None = None) -> list[str]:
+    api_key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is required for diagram analysis")
+
+    service = GeminiDiagramVisionService(api_key=api_key)
+    analyzed_block_ids: list[str] = []
+
+    for item in fetch_pending_diagram_inputs(cur, document_id=document_id):
+        try:
+            result = service.analyze(item)
+            save_diagram_analysis(
+                cur,
+                block_id=item.block_id,
+                image_asset_id=item.image_asset_id,
+                diagram_kind=item.diagram_kind,
+                analysis_result=result,
+            )
+            analyzed_block_ids.append(item.block_id)
+        except Exception as exc:
+            save_diagram_analysis_failure(
+                cur,
+                block_id=item.block_id,
+                provider_name="gemini",
+                model_name=GEMINI_MODEL,
+                prompt_version=PROMPT_VERSION,
+                request_payload={},
+                error_message=str(exc),
+            )
+
+    return analyzed_block_ids
