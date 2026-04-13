@@ -5,6 +5,7 @@ from psycopg2.extras import Json
 from services.document_block_store import (
     get_document_block_assets,
     get_document_blocks,
+    get_diagram_block_details,
     save_document_blocks,
 )
 from services.extraction_normalizer import normalize_extraction_result
@@ -476,6 +477,7 @@ def get_document_extraction(cur, document_id, conversation_id=None):
     extraction_payload["references"] = [_serialize_extraction_reference_row(row) for row in reference_rows]
     extraction_payload["document_blocks"] = get_document_blocks(cur, document_id=document_id)
     extraction_payload["block_assets"] = get_document_block_assets(cur, document_id=document_id)
+    extraction_payload["diagram_block_details"] = get_diagram_block_details(cur, document_id=document_id)
     return extraction_payload
 
 

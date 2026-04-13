@@ -249,6 +249,57 @@ def _serialize_document_block_asset_row(row) -> dict:
     }
 
 
+
+def get_diagram_block_details(cur, document_id) -> list[dict]:
+    if not _relation_exists(cur, "diagram_block_details") or not _relation_exists(cur, "document_blocks"):
+        return []
+
+    cur.execute(
+        """
+        SELECT
+            db.block_id,
+            db.caption_text,
+            dbd.visual_description,
+            dbd.ocr_text,
+            dbd.semantic_links,
+            dbd.question_answerable_facts,
+            dba.storage_path,
+            dbd.vision_status,
+            dbd.vision_confidence,
+            dbd.diagram_kind,
+            dbd.last_analyzed_at
+        FROM document_blocks db
+        JOIN diagram_block_details dbd
+          ON dbd.block_id = db.block_id
+        LEFT JOIN document_block_assets dba
+          ON dba.block_asset_id = dbd.image_asset_id
+        WHERE db.document_id = %s
+          AND db.block_type = 'diagram'
+        ORDER BY db.source_unit_index ASC, db.reading_order ASC NULLS LAST
+        """,
+        (document_id,),
+    )
+
+    rows = cur.fetchall()
+    result = []
+    for row in rows:
+        result.append(
+            {
+                "block_id": str(row[0]),
+                "caption_text": row[1],
+                "visual_description": row[2],
+                "ocr_text": row[3] or [],
+                "semantic_links": row[4] or [],
+                "question_answerable_facts": row[5] or [],
+                "storage_path": row[6] or "",
+                "vision_status": row[7],
+                "vision_confidence": float(row[8]) if row[8] is not None else None,
+                "diagram_kind": row[9],
+                "last_analyzed_at": row[10].isoformat() if row[10] else None,
+            }
+        )
+    return result
+
 def _parse_timestamp(value):
     if not value:
         return None
