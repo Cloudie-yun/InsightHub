@@ -206,21 +206,105 @@
                         </article>
                         {% endfor %}
                     {% else %}
-                        <div class="flex h-full min-h-[320px] items-center justify-center">
-                            <div class="max-w-md text-center">
-                                <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-brand-200 bg-brand-50 text-brand-600">
-                                    <i class="fa-solid fa-comments text-lg"></i>
+                        <div class="flex justify-end">
+                            <div class="relative group max-w-xl pb-[32px]">
+                                <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
+                                    Can you explain the difference between supervised and unsupervised learning?
                                 </div>
-                                <h2 class="mt-4 text-xl font-bold text-slate-900">Start a conversation</h2>
-                                <p class="mt-2 text-sm leading-6 text-slate-500">
-                                    Upload a document or open an existing conversation to begin asking grounded questions about your sources.
-                                </p>
+                                <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
+                                        <i class="fa-solid fa-clone"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors" title="Edit">
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full flex justify-center">
+                            <div class="w-full max-w-4xl">
+                                <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
+                                    <p class="mb-3">Based on your document <strong>&quot;Machine Learning Fundamentals.pdf&quot;</strong>, supervised learning uses labeled data where the algorithm learns from input-output pairs. The model is trained to predict the output from the input data, and its performance is evaluated based on how accurately it can make these predictions on new, unseen data.</p>
+                                    <p>In contrast, unsupervised learning works with unlabeled data, where the algorithm identifies patterns and structures on its own.</p>
+                                </div>
+                                <div class="mt-1 flex items-center gap-1">
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
+                                        <i class="fa-solid fa-clone"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Helpful">
+                                        <i class="fa-regular fa-thumbs-up"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Not helpful">
+                                        <i class="fa-regular fa-thumbs-down"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Regenerate">
+                                        <i class="fa-solid fa-rotate-right"></i>
+                                    </button>
+                                    <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-8 w-8 rounded-md text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors" title="Create study aid">
+                                        <i class="fa-solid fa-lightbulb"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end">
+                            <div class="relative group max-w-xl pb-[32px]">
+                                <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
+                                    What are some common algorithms used in supervised learning?
+                                </div>
+                                <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
+                                        <i class="fa-solid fa-clone"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors" title="Edit">
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full flex justify-center">
+                            <div class="w-full max-w-4xl">
+                                <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
+                                    <p class="mb-3">Some common algorithms used in supervised learning include:</p>
+                                    <ul class="list-disc list-inside mb-2">
+                                        <li><strong>Linear Regression</strong>: Used for predicting continuous values.</li>
+                                        <li><strong>Logistic Regression</strong>: Used for binary classification tasks.</li>
+                                        <li><strong>Support Vector Machines (SVM)</strong>: Effective for high-dimensional spaces.</li>
+                                        <li><strong>Decision Trees</strong>: Simple and interpretable models for classification and regression.</li>
+                                        <li><strong>Random Forests</strong>: An ensemble of decision trees that improves accuracy and reduces overfitting.</li>
+                                        <li><strong>Neural Networks</strong>: Powerful models that can capture complex relationships in data, especially with large datasets.</li>
+                                    </ul>
+                                    <p>The choice of algorithm depends on the specific problem, the size and nature of the dataset, and the desired balance between interpretability and performance.</p>
+                                </div>
+                                <div class="mt-1 flex items-center gap-1">
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
+                                        <i class="fa-solid fa-clone"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Helpful">
+                                        <i class="fa-regular fa-thumbs-up"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Not helpful">
+                                        <i class="fa-regular fa-thumbs-down"></i>
+                                    </button>
+                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Regenerate">
+                                        <i class="fa-solid fa-rotate-right"></i>
+                                    </button>
+                                    <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-8 w-8 rounded-md text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors" title="Create study aid">
+                                        <i class="fa-solid fa-lightbulb"></i>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     {% endif %}
                 </div>
                 <div id="chat-input-area" class="sticky bottom-0 z-10 px-6 pb-3 pt-5 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
                     <div class="max-w-4xl mx-auto">
+                        <div class="flex flex-wrap gap-2 mb-3">
+                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">What is Machine Learning?</button>
+                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">Explain Regression</button>
+                        </div>
                         <div class="chat-input-container bg-white/95 border border-gray-200 rounded-full p-2 flex items-center shadow-lg backdrop-blur-sm focus-within:ring-2 focus-within:ring-brand-500 transition-shadow">
                             <input type="text" placeholder="Ask any question..." class="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 px-4 py-2 text-gray-700 placeholder-gray-400">
                             <button class="bg-brand-600 text-white h-10 w-10 rounded-full flex items-center justify-center hover:bg-brand-700 transition">
