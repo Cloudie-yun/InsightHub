@@ -5,8 +5,10 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
+from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import Json
 
 from db import get_db_connection
@@ -16,6 +18,8 @@ from services.extracted_content import EMBEDDING_STATUS_EMBEDDED, EMBEDDING_STAT
 
 DEFAULT_BATCH_SIZE = 64
 DEFAULT_LIMIT = 256
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
 WORKER_VERSION = "embedding_worker_v1"
 
 logger = logging.getLogger(__name__)
@@ -31,11 +35,21 @@ class PendingBlock:
 
 
 class EmbeddingWorker:
-    def __init__(self, *, batch_size: int = DEFAULT_BATCH_SIZE, service: EmbeddingService | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+        service: EmbeddingService | None = None,
+    ) -> None:
         self.batch_size = max(1, min(batch_size, 512))
+        self.max_attempts = max(1, min(max_attempts, 10))
+        self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.service = service or EmbeddingService()
         self.model_signature = self._build_model_signature()
         self.model_version_hash = hashlib.sha256(self.model_signature.encode("utf-8")).hexdigest()
+        self._embedding_runs_enabled = True
 
     def run_once(self, *, limit: int = DEFAULT_LIMIT) -> dict[str, int]:
         stats = {
@@ -65,14 +79,9 @@ class EmbeddingWorker:
                     if not to_embed:
                         return stats
 
-                    texts = [row.retrieval_text for row in to_embed]
-                    try:
-                        vectors = self.service.embed_texts(texts)
-                    except EmbeddingServiceError as exc:
-                        logger.exception("Embedding provider failed for %s blocks.", len(to_embed))
-                        for row in to_embed:
-                            self._mark_failed(cur, row=row, error_payload=exc.to_dict())
-                            stats["failed"] += 1
+                    vectors = self._embed_with_retries(cur, rows=to_embed)
+                    if vectors is None:
+                        stats["failed"] += len(to_embed)
                         return stats
 
                     for row, vector in zip(to_embed, vectors):
@@ -83,6 +92,70 @@ class EmbeddingWorker:
             return stats
         finally:
             conn.close()
+
+    def _embed_with_retries(self, cur, *, rows: list[PendingBlock]) -> list[list[float]] | None:
+        texts = [row.retrieval_text for row in rows]
+
+        for attempt in range(1, self.max_attempts + 1):
+            started_at = datetime.now(timezone.utc)
+            batch_started = time.perf_counter()
+            try:
+                vectors = self.service.embed_texts(texts)
+                latency_ms = (time.perf_counter() - batch_started) * 1000.0
+                logger.info(
+                    "embedding batch success model=%s batch_size=%s latency_ms=%.2f attempt=%s/%s",
+                    self.service.model,
+                    len(rows),
+                    latency_ms,
+                    attempt,
+                    self.max_attempts,
+                )
+                completed_at = datetime.now(timezone.utc)
+                for row in rows:
+                    self._record_run(
+                        cur,
+                        row=row,
+                        status="embedded",
+                        error_message=None,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+                return vectors
+            except EmbeddingServiceError as exc:
+                latency_ms = (time.perf_counter() - batch_started) * 1000.0
+                is_retryable = bool(exc.retryable)
+                has_attempts_left = attempt < self.max_attempts
+                status = "retrying" if (is_retryable and has_attempts_left) else "failed"
+                logger.exception(
+                    "Embedding batch failed model=%s batch_size=%s latency_ms=%.2f attempt=%s/%s retryable=%s",
+                    self.service.model,
+                    len(rows),
+                    latency_ms,
+                    attempt,
+                    self.max_attempts,
+                    is_retryable,
+                )
+                completed_at = datetime.now(timezone.utc)
+                for row in rows:
+                    self._record_run(
+                        cur,
+                        row=row,
+                        status=status,
+                        error_message=exc.message,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+
+                if not is_retryable or not has_attempts_left:
+                    for row in rows:
+                        self._mark_failed(cur, row=row, error_payload=exc.to_dict())
+                    return None
+
+                sleep_seconds = self.retry_backoff_seconds * attempt
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+
+        return None
 
     def _fetch_pending_blocks(self, cur, *, limit: int) -> list[PendingBlock]:
         cur.execute(
@@ -223,6 +296,45 @@ class EmbeddingWorker:
             ),
         )
 
+    def _record_run(
+        self,
+        cur,
+        *,
+        row: PendingBlock,
+        status: str,
+        error_message: str | None,
+        started_at: datetime,
+        completed_at: datetime,
+    ) -> None:
+        if not self._embedding_runs_enabled:
+            return
+
+        try:
+            cur.execute(
+                """
+                INSERT INTO embedding_runs (
+                    block_id,
+                    status,
+                    error_message,
+                    started_at,
+                    completed_at,
+                    model_name
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    row.block_id,
+                    status,
+                    error_message,
+                    started_at,
+                    completed_at,
+                    self.service.model,
+                ),
+            )
+        except psycopg_errors.UndefinedTable:
+            self._embedding_runs_enabled = False
+            logger.warning("embedding_runs table not found; run tracking is disabled until migration is applied.")
+
     def _build_model_signature(self) -> str:
         expected_dimension = self.service.expected_dimension or "auto"
         return f"{self.service.provider}:{self.service.model}:{expected_dimension}:{WORKER_VERSION}"
@@ -236,8 +348,20 @@ class EmbeddingWorker:
         return "[" + ",".join(str(float(value)) for value in vector) + "]"
 
 
-def run_worker(*, batch_size: int, limit: int, loop: bool, sleep_seconds: float) -> int:
-    worker = EmbeddingWorker(batch_size=batch_size)
+def run_worker(
+    *,
+    batch_size: int,
+    limit: int,
+    loop: bool,
+    sleep_seconds: float,
+    max_attempts: int,
+    retry_backoff_seconds: float,
+) -> int:
+    worker = EmbeddingWorker(
+        batch_size=batch_size,
+        max_attempts=max_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+    )
 
     while True:
         stats = worker.run_once(limit=limit)
@@ -259,6 +383,18 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Embed pending document blocks and persist vectors.")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Rows embedded per provider call.")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="Max pending rows to claim per loop.")
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=DEFAULT_MAX_ATTEMPTS,
+        help="Max embedding attempts for retryable provider failures.",
+    )
+    parser.add_argument(
+        "--retry-backoff-seconds",
+        type=float,
+        default=DEFAULT_RETRY_BACKOFF_SECONDS,
+        help="Linear backoff base for retryable failures (attempt * backoff).",
+    )
     parser.add_argument("--loop", action="store_true", help="Keep polling for new ready blocks.")
     parser.add_argument("--sleep-seconds", type=float, default=2.0, help="Sleep interval when --loop is enabled.")
     parser.add_argument("--log-level", default="INFO", help="Logging level (e.g. DEBUG, INFO).")
@@ -276,6 +412,8 @@ def main() -> int:
         limit=args.limit,
         loop=args.loop,
         sleep_seconds=args.sleep_seconds,
+        max_attempts=args.max_attempts,
+        retry_backoff_seconds=args.retry_backoff_seconds,
     )
 
 
