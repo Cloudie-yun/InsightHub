@@ -158,6 +158,91 @@ Mark Milestone 1 complete only when all are true:
 
 ---
 
+## Manual verification log template
+
+Use this section during release validation so completion is tied to concrete evidence.
+
+### A) New upload reaches `embedded`
+
+1. Upload a small test document through the app UI.
+2. Run the worker in loop mode until queue settles:
+
+```bash
+python services/embedding_worker.py --loop --sleep-seconds 2 --limit 256 --batch-size 64 --max-attempts 3 --retry-backoff-seconds 1.0
+```
+
+3. In a separate terminal, confirm status progression:
+
+```sql
+SELECT id, document_id, retrievable, embedding_status, updated_at
+FROM document_blocks
+WHERE document_id = '<YOUR_DOCUMENT_ID>'
+ORDER BY id;
+```
+
+Pass condition:
+
+- retrievable rows for the uploaded document eventually report `embedding_status='embedded'`.
+
+### B) Embeddings persisted and queryable
+
+Run:
+
+```sql
+SELECT COUNT(*) AS embeddings_count FROM document_block_embeddings;
+SELECT block_id, model_name, embedding_dim, updated_at
+FROM document_block_embeddings
+ORDER BY updated_at DESC
+LIMIT 10;
+```
+
+Pass condition:
+
+- count is non-zero (and increases after test upload),
+- recent rows include expected model metadata.
+
+### C) Failure visibility + retry
+
+Force or wait for a known failure scenario, then run:
+
+```sql
+SELECT
+  block_id,
+  status,
+  error_message,
+  started_at,
+  completed_at,
+  model_name
+FROM embedding_runs
+WHERE status='failed'
+ORDER BY completed_at DESC
+LIMIT 20;
+```
+
+Retry and confirm recovery:
+
+```sql
+UPDATE document_blocks
+SET embedding_status='ready', updated_at=CURRENT_TIMESTAMP
+WHERE embedding_status='failed';
+```
+
+Then re-run worker + diagnostics.
+
+Pass condition:
+
+- failures are listed with readable reasons,
+- previously failed blocks can transition from `failed` → `ready` → `embedded`.
+
+### D) Explicit Milestone boundary check
+
+Confirm no Milestone 2 dependency was introduced:
+
+- no requirement for a chat retrieval endpoint in this validation,
+- acceptance is strictly ingestion, persistence, visibility, and retry.
+
+---
+
 ## Notes
 
 - `embedding_runs` is optional by schema rollout sequence; worker continues without it, but observability is reduced.
