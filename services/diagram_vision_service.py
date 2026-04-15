@@ -147,6 +147,10 @@ DIAGRAM_RESPONSE_SCHEMA = {
 }
 
 
+def _is_truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass
 class DiagramVisionInput:
     block_id: str
@@ -575,6 +579,10 @@ def save_diagram_analysis_skipped(
 
 
 def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: int = 2000) -> list[DiagramVisionInput]:
+    statuses = ["pending_vision_analysis", "failed"]
+    if _is_truthy_env(os.environ.get("DIAGRAM_VISION_INCLUDE_SKIPPED", "0")):
+        statuses.append("skipped")
+
     cur.execute(
         """
         WITH ordered_blocks AS (
@@ -609,10 +617,10 @@ def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: i
             LEFT(CONCAT_WS('\n', prev_text, next_text), %s)
         FROM ordered_blocks
         WHERE COALESCE(storage_path, '') <> ''
-          AND vision_status IN ('pending_vision_analysis', 'failed')
+          AND vision_status = ANY(%s)
         ORDER BY source_unit_index ASC, reading_order ASC NULLS LAST
         """,
-        (document_id, context_char_limit),
+        (document_id, context_char_limit, statuses),
     )
 
     results = []

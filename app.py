@@ -21,6 +21,7 @@ import mimetypes
 import time
 
 from services.document_parser import parse_document
+from services.diagram_vision_service import run_diagram_analysis_for_document
 from services.extraction_store import (
     build_extraction_payload,
     build_pending_extraction_payload,
@@ -59,6 +60,33 @@ PASSWORD_POLICY_ERROR = (
     "Password must be at least 8 characters and include uppercase, "
     "lowercase, number, and special character."
 )
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _relation_exists(cur, relation_name: str) -> bool:
+    cur.execute("SELECT to_regclass(%s)", (relation_name,))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _diagram_vision_schema_ready(cur) -> bool:
+    required_relations = (
+        "document_blocks",
+        "document_block_assets",
+        "diagram_block_details",
+        "diagram_block_analysis_runs",
+    )
+    missing = [name for name in required_relations if not _relation_exists(cur, name)]
+    if missing:
+        logger.warning(
+            "Skipping diagram vision analysis because required tables are missing: %s",
+            ", ".join(missing),
+        )
+        return False
+    return True
 
 
 # ===========================================================================
@@ -1750,6 +1778,25 @@ def _run_document_parse_job(job: dict) -> None:
                 document_id=document_id,
                 extraction_payload=extraction_payload,
             )
+
+            auto_vision_enabled = _is_truthy_env(os.getenv("DIAGRAM_VISION_AUTO_ANALYZE", "1"))
+            if auto_vision_enabled and _diagram_vision_schema_ready(cur):
+                try:
+                    analyzed_block_ids = run_diagram_analysis_for_document(
+                        cur,
+                        document_id=str(document_id),
+                    )
+                    if analyzed_block_ids:
+                        logger.info(
+                            "Diagram vision analysis saved for document_id=%s blocks=%s",
+                            document_id,
+                            len(analyzed_block_ids),
+                        )
+                except Exception:
+                    logger.exception(
+                        "Diagram vision analysis skipped/failed for document_id=%s",
+                        document_id,
+                    )
         conn.commit()
     except Exception as exc:
         logger.exception("Background parse failed for document_id=%s", document_id)
@@ -1987,103 +2034,6 @@ def api_document_parser_results(document_id):
         return jsonify({'error': 'Document not found.'}), 404
 
     return jsonify(document_result), 200
-
-
-@app.route('/api/documents/<document_id>/reparse', methods=['POST'])
-def api_reparse_document(document_id):
-    user_id = session.get("user_id")
-    if not user_id:
-        return jsonify({'error': 'You must be logged in to reparse documents.'}), 401
-
-    data            = request.get_json(silent=True) or {}
-    raw_conv_id     = request.args.get("conversation_id") or data.get("conversation_id")
-    conversation_id = str(raw_conv_id).strip() if raw_conv_id is not None else None
-
-    persist_raw        = data.get("persist_extraction", False)
-    persist_extraction = (
-        persist_raw.strip().lower() in {"1", "true", "yes", "on"}
-        if isinstance(persist_raw, str)
-        else bool(persist_raw)
-    )
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            if conversation_id:
-                cur.execute(
-                    """
-                    SELECT d.document_id, d.original_filename, d.file_extension,
-                           d.mime_type, d.stored_filename, d.storage_path
-                    FROM conversations c
-                    JOIN conversation_documents cd ON cd.conversation_id = c.conversation_id
-                    JOIN documents d              ON d.document_id       = cd.document_id
-                    WHERE c.user_id         = %s
-                      AND c.conversation_id = %s
-                      AND d.document_id     = %s
-                      AND d.is_deleted      = FALSE
-                    LIMIT 1
-                    """,
-                    (user_id, conversation_id, document_id),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT document_id, original_filename, file_extension,
-                           mime_type, stored_filename, storage_path
-                    FROM documents
-                    WHERE user_id    = %s
-                      AND document_id = %s
-                      AND is_deleted  = FALSE
-                    LIMIT 1
-                    """,
-                    (user_id, document_id),
-                )
-
-            document_row = cur.fetchone()
-            if not document_row:
-                return jsonify({'error': 'Document not found.'}), 404
-
-            stored_filename = document_row[4] or ""
-            storage_path    = document_row[5] or ""
-            if not stored_filename:
-                return jsonify({'error': 'Stored file name is missing for this document.'}), 400
-
-            file_path = (Path(storage_path) / stored_filename) if storage_path else (UPLOADS_DIR / user_id / stored_filename)
-            if not file_path.exists() or not file_path.is_file():
-                return jsonify({'error': 'Document file is missing on disk.'}), 404
-
-            parser_result      = parse_document(file_path=file_path, document_id=document_row[0],
-                                                mime_type=document_row[3] or None,
-                                                original_filename=document_row[1] or stored_filename)
-            extraction_payload = build_extraction_payload(
-                document_id=document_row[0],
-                parser_result=parser_result,
-                conversation_id=conversation_id,
-            )
-            if persist_extraction:
-                save_document_extraction(cur, document_id=document_row[0], extraction_payload=extraction_payload)
-
-        if persist_extraction:
-            conn.commit()
-        else:
-            conn.rollback()
-
-        return jsonify({
-            "document_id":       str(document_row[0]),
-            "original_filename": document_row[1] or "",
-            "file_extension":    document_row[2] or "",
-            "mime_type":         document_row[3] or "",
-            "parser_result":     extraction_payload,
-            "persisted":         persist_extraction,
-        }), 200
-    except Exception:
-        if conn is not None:
-            conn.rollback()
-        return jsonify({'error': 'Unable to reparse document right now.'}), 500
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 # ===========================================================================
