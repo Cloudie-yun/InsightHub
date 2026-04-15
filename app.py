@@ -21,6 +21,7 @@ import mimetypes
 import time
 
 from services.document_parser import parse_document
+from services.diagram_vision_service import run_diagram_analysis_for_document
 from services.extraction_store import (
     build_extraction_payload,
     build_pending_extraction_payload,
@@ -59,6 +60,33 @@ PASSWORD_POLICY_ERROR = (
     "Password must be at least 8 characters and include uppercase, "
     "lowercase, number, and special character."
 )
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _relation_exists(cur, relation_name: str) -> bool:
+    cur.execute("SELECT to_regclass(%s)", (relation_name,))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _diagram_vision_schema_ready(cur) -> bool:
+    required_relations = (
+        "document_blocks",
+        "document_block_assets",
+        "diagram_block_details",
+        "diagram_block_analysis_runs",
+    )
+    missing = [name for name in required_relations if not _relation_exists(cur, name)]
+    if missing:
+        logger.warning(
+            "Skipping diagram vision analysis because required tables are missing: %s",
+            ", ".join(missing),
+        )
+        return False
+    return True
 
 
 # ===========================================================================
@@ -1750,6 +1778,25 @@ def _run_document_parse_job(job: dict) -> None:
                 document_id=document_id,
                 extraction_payload=extraction_payload,
             )
+
+            auto_vision_enabled = _is_truthy_env(os.getenv("DIAGRAM_VISION_AUTO_ANALYZE", "1"))
+            if auto_vision_enabled and _diagram_vision_schema_ready(cur):
+                try:
+                    analyzed_block_ids = run_diagram_analysis_for_document(
+                        cur,
+                        document_id=str(document_id),
+                    )
+                    if analyzed_block_ids:
+                        logger.info(
+                            "Diagram vision analysis saved for document_id=%s blocks=%s",
+                            document_id,
+                            len(analyzed_block_ids),
+                        )
+                except Exception:
+                    logger.exception(
+                        "Diagram vision analysis skipped/failed for document_id=%s",
+                        document_id,
+                    )
         conn.commit()
     except Exception as exc:
         logger.exception("Background parse failed for document_id=%s", document_id)
