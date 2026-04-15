@@ -1,961 +1,439 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="p-6 md:p-8 max-w-6xl mx-auto space-y-6">
-    <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-            <h1 class="text-2xl font-bold text-slate-900">Document Parser Results</h1>
-            <p class="text-sm text-slate-500">Inspect extraction output for debugging parser quality.</p>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 self-start">
-            <button
-                id="reparse-btn"
-                type="button"
-                class="inline-flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700 hover:bg-brand-100 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-                <i class="fa-solid fa-rotate-right"></i>
-                Reparse (no save)
-            </button>
-            <a
-                href="{{ url_for('chat') }}{% if request.args.get('conversation_id') %}?conversation_id={{ request.args.get('conversation_id') }}{% endif %}"
-                class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-gray-50"
-            >
-                <i class="fa-solid fa-arrow-left"></i>
-                Back to chat
-            </a>
-        </div>
-    </header>
-    <p id="reparse-status" class="text-sm text-slate-500 min-h-[20px]"></p>
+<div class="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 md:px-8">
+    <section class="overflow-hidden rounded-[28px] border border-brand-100 bg-gradient-to-br from-white via-brand-50/60 to-amber-50 px-5 py-6 md:px-8 md:py-8">
+        <div class="rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-sm">
+            <div class="space-y-6">
+                <div class="space-y-3">
+                    <div class="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-brand-700">Parser Review</div>
+                    <div class="space-y-2">
+                        <h1 class="text-3xl font-semibold tracking-tight text-slate-900">Review What The Chatbot Will Read</h1>
+                        <p class="max-w-4xl text-sm leading-6 text-slate-600">Edit paragraphs, tables, and diagram descriptions before they become the saved RAG context.</p>
+                    </div>
+                </div>
 
-    <section class="grid gap-4 md:grid-cols-3">
-        <article class="rounded-xl border border-gray-200 bg-white p-4">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Filename</p>
-            <p class="mt-1 text-sm font-medium text-slate-800 break-all">{{ parser_document.original_filename }}</p>
-        </article>
-        <article class="rounded-xl border border-gray-200 bg-white p-4">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Type</p>
-            <p id="file-type-value" class="mt-1 text-sm font-medium text-slate-800">
-                {{ parser_document.parser_result.file_type or parser_document.file_extension or parser_document.mime_type or 'Unknown' }}
-            </p>
-        </article>
-        <article class="rounded-xl border border-gray-200 bg-white p-4">
-            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Parse status</p>
-            <p id="parse-status-value" class="mt-1 text-sm font-semibold {% if parser_document.parser_result.parser_status == 'success' %}text-emerald-700{% elif parser_document.parser_result.parser_status == 'failed' %}text-red-700{% else %}text-amber-700{% endif %}">
-                {{ parser_document.parser_result.parser_status or 'unknown' }}
-            </p>
-        </article>
+                <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Document</p><p class="mt-2 text-sm font-medium text-slate-900">{{ parser_document.original_filename }}</p></article>
+                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</p><p id="parse-status-value" class="mt-2 text-sm font-semibold text-emerald-700">{{ parser_document.parser_result.parser_status or "unknown" }}</p></article>
+                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Review Blocks</p><p id="total-block-count" class="mt-2 text-sm font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.total_blocks }} items</p></article>
+                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Last Review</p><p id="last-review-value" class="mt-2 text-sm font-medium text-slate-900">{{ parser_document.parser_result.metadata.review.updated_at or "Not saved yet" }}</p></article>
+                </div>
+
+                <div class="space-y-4 border-t border-slate-100 pt-5">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button id="save-review-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-floppy-disk"></i>Save Reviewed Context</button>
+                        <button id="reset-review-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"><i class="fa-solid fa-rotate-left"></i>Reset Changes</button>
+                        <a href="{{ url_for('chat') }}{% if request.args.get('conversation_id') %}?conversation_id={{ request.args.get('conversation_id') }}{% endif %}" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"><i class="fa-solid fa-arrow-left"></i>Back To Chat</a>
+                    </div>
+
+                    <div class="grid gap-3 sm:grid-cols-3">
+                        <div class="rounded-2xl bg-slate-50 px-4 py-3"><p class="text-xs uppercase tracking-wide text-slate-500">Text</p><p id="text-block-count" class="mt-1 text-lg font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.text_blocks }}</p></div>
+                        <div class="rounded-2xl bg-slate-50 px-4 py-3"><p class="text-xs uppercase tracking-wide text-slate-500">Tables</p><p id="table-block-count" class="mt-1 text-lg font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.table_blocks }}</p></div>
+                        <div class="rounded-2xl bg-slate-50 px-4 py-3"><p class="text-xs uppercase tracking-wide text-slate-500">Diagrams</p><p id="diagram-block-count" class="mt-1 text-lg font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.diagram_blocks }}</p></div>
+                    </div>
+
+                    <p id="save-status" class="min-h-[20px] text-sm text-slate-500"></p>
+                </div>
+            </div>
+        </div>
     </section>
 
-    <details id="extracted-tables-section" class="group hidden rounded-xl border border-gray-200 bg-white" open>
-        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
-            <div>
-                <h2 class="text-lg font-semibold text-slate-900">Tables In The Paper</h2>
-                <p class="text-sm text-slate-500">Structured tables detected during parsing, rendered separately for inspection.</p>
-            </div>
-            <div class="flex items-center gap-2">
-                <span id="table-count" class="text-xs text-slate-500">0 tables</span>
-                <span class="text-slate-400 transition-transform group-open:rotate-180">
-                    <i class="fa-solid fa-chevron-down"></i>
-                </span>
-            </div>
-        </summary>
-        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
-            <div id="extracted-tables" class="space-y-4"></div>
-        </div>
-    </details>
-
-    <details id="rendered-markdown-section" class="group rounded-xl border border-gray-200 bg-white" open>
-        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
-            <div>
-                <h2 class="text-lg font-semibold text-slate-900">Rendered Markdown</h2>
-                <p class="text-sm text-slate-500">Primary reading view generated from the extracted markdown output.</p>
-            </div>
-            <div class="flex items-center gap-2">
-                <button
-                    id="copy-rendered-text"
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-gray-50"
-                >
-                    <i class="fa-regular fa-copy"></i>
-                    Copy Text
-                </button>
-                <span class="text-slate-400 transition-transform group-open:rotate-180">
-                    <i class="fa-solid fa-chevron-down"></i>
-                </span>
-            </div>
-        </summary>
-        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
-            <article id="rendered-markdown" class="max-w-none text-slate-800"></article>
-        </div>
-    </details>
-
-    <details id="extracted-images-section" class="group hidden rounded-xl border border-gray-200 bg-white">
-        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
-            <div>
-                <h2 class="text-lg font-semibold text-slate-900">Extracted Images</h2>
-                <p class="text-sm text-slate-500">Images captured during parsing, shown separately from the markdown body.</p>
-            </div>
-            <div class="flex items-center gap-2">
-                <span id="image-count" class="text-xs text-slate-500">0 images</span>
-                <span class="text-slate-400 transition-transform group-open:rotate-180">
-                    <i class="fa-solid fa-chevron-down"></i>
-                </span>
-            </div>
-        </summary>
-        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
-            <div id="extracted-images" class="grid gap-4 md:grid-cols-2"></div>
-        </div>
-    </details>
-
-    <details id="segment-breakdown-section" class="group rounded-xl border border-gray-200 bg-white">
-        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
-            <div>
-                <h2 class="text-lg font-semibold text-slate-900">Segment Breakdown</h2>
-                <p class="text-sm text-slate-500">Debug-oriented source groups rendered after the markdown view.</p>
-            </div>
-            <div class="flex items-center gap-2">
-                <span id="segment-count" class="text-xs text-slate-500">{{ parser_document.parser_result.segments|length }} segments</span>
-                <span class="text-slate-400 transition-transform group-open:rotate-180">
-                    <i class="fa-solid fa-chevron-down"></i>
-                </span>
-            </div>
-        </summary>
-        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
-            <div id="parser-segments" class="space-y-4"></div>
-        </div>
-    </details>
-
-    <details id="markdown-source-section" class="group rounded-xl border border-gray-200 bg-white">
-        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
-            <div>
-                <h2 class="text-lg font-semibold text-slate-900">Markdown Source</h2>
-                <p class="text-sm text-slate-500">Raw markdown emitted by the parser.</p>
-            </div>
-            <div class="flex items-center gap-2">
-                <button
-                    id="copy-markdown-output"
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-gray-50"
-                >
-                    <i class="fa-regular fa-copy"></i>
-                    Copy Markdown
-                </button>
-                <span class="text-slate-400 transition-transform group-open:rotate-180">
-                    <i class="fa-solid fa-chevron-down"></i>
-                </span>
-            </div>
-        </summary>
-        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
-            <pre id="markdown-output" class="max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs whitespace-pre-wrap"></pre>
-        </div>
-    </details>
-
-    <details id="json-section" class="group rounded-xl border border-gray-200 bg-white">
-        <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 md:px-5">
-            <div>
-                <h2 class="text-lg font-semibold text-slate-900">Extraction JSON</h2>
-                <p class="text-sm text-slate-500">Normalized view, stored backend payload, and untouched MinerU artifacts for parser debugging.</p>
-            </div>
-            <div class="flex items-center gap-2">
-                <div class="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
-                    <button id="show-normalized" type="button" class="px-3 py-1.5 text-sm rounded-md bg-white shadow-sm text-slate-800">Normalized</button>
-                    <button id="show-raw" type="button" class="px-3 py-1.5 text-sm rounded-md text-slate-500">Raw</button>
-                    <button id="show-mineru-raw" type="button" class="px-3 py-1.5 text-sm rounded-md text-slate-500">MinerU Raw</button>
+    <section class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div class="space-y-5">
+            <div class="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-semibold text-slate-900">Top To Bottom Review</h2>
+                        <p class="text-sm text-slate-500">Each block is shown in source order.</p>
+                    </div>
+                    <div class="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-medium text-slate-600">
+                        <button type="button" data-filter="all" class="review-filter rounded-full bg-white px-3 py-1.5 text-slate-900 shadow-sm">All</button>
+                        <button type="button" data-filter="text" class="review-filter rounded-full px-3 py-1.5">Text</button>
+                        <button type="button" data-filter="table" class="review-filter rounded-full px-3 py-1.5">Tables</button>
+                        <button type="button" data-filter="diagram" class="review-filter rounded-full px-3 py-1.5">Diagrams</button>
+                    </div>
                 </div>
-                <span class="text-slate-400 transition-transform group-open:rotate-180">
-                    <i class="fa-solid fa-chevron-down"></i>
-                </span>
             </div>
-        </summary>
-        <div class="border-t border-gray-100 px-4 py-4 md:px-5">
-            <pre id="normalized-json" class="max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs"></pre>
-            <pre id="raw-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs hidden">{{ parser_json }}</pre>
-            <pre id="mineru-raw-json" class="mt-4 max-h-[420px] overflow-auto rounded-lg bg-slate-900 text-slate-100 p-4 text-xs hidden"></pre>
+            <div id="review-blocks" class="space-y-5"></div>
         </div>
-    </details>
+
+        <aside class="space-y-5 xl:sticky xl:top-24 xl:self-start">
+            <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-900">Live Context</h2>
+                        <p class="text-sm text-slate-500">This is what retrieval will use after save.</p>
+                    </div>
+                    <button id="copy-context-btn" type="button" class="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><i class="fa-regular fa-copy"></i>Copy</button>
+                </div>
+                <pre id="review-markdown-preview" class="mt-4 max-h-[460px] overflow-auto rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-100 whitespace-pre-wrap"></pre>
+            </section>
+            <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 class="text-base font-semibold text-slate-900">Editing Notes</h2>
+                <ul class="mt-3 space-y-3 text-sm leading-6 text-slate-600">
+                    <li>Text edits replace the paragraph context used for retrieval.</li>
+                    <li>Table edits support direct cell editing, merge-right, and delete-column.</li>
+                    <li>Diagram descriptions should explain meaning, not only appearance.</li>
+                </ul>
+            </section>
+        </aside>
+    </section>
 </div>
 
-<button
-    id="scroll-to-top-btn"
-    type="button"
-    class="hidden fixed bottom-6 right-6 z-40 h-11 w-11 rounded-full bg-brand-600 text-white shadow-lg hover:bg-brand-700 transition-colors"
-    title="Scroll to top"
->
-    <i class="fa-solid fa-arrow-up"></i>
-</button>
+<button id="scroll-to-top-btn" type="button" class="hidden fixed bottom-6 right-6 z-40 h-12 w-12 rounded-full bg-brand-600 text-white shadow-lg transition hover:bg-brand-700" title="Scroll to top"><i class="fa-solid fa-arrow-up"></i></button>
 
 <script>
 (() => {
-    let parserDocument = {{ parser_document|tojson }};
-    let pendingStatusPollHandle = null;
-    const conversationId = {{ request.args.get('conversation_id')|tojson }};
-    const statusText = document.getElementById("reparse-status");
-    const reparseBtn = document.getElementById("reparse-btn");
-    const container = document.getElementById("parser-segments");
-    const renderedMarkdown = document.getElementById("rendered-markdown");
-    const extractedImages = document.getElementById("extracted-images");
-    const extractedImagesSection = document.getElementById("extracted-images-section");
-    const imageCountValue = document.getElementById("image-count");
-    const extractedTables = document.getElementById("extracted-tables");
-    const extractedTablesSection = document.getElementById("extracted-tables-section");
-    const tableCountValue = document.getElementById("table-count");
-    const normalizedPre = document.getElementById("normalized-json");
-    const rawPre = document.getElementById("raw-json");
-    const mineruRawPre = document.getElementById("mineru-raw-json");
-    const markdownPre = document.getElementById("markdown-output");
-    const normalizedBtn = document.getElementById("show-normalized");
-    const rawBtn = document.getElementById("show-raw");
-    const mineruRawBtn = document.getElementById("show-mineru-raw");
-    const statusValue = document.getElementById("parse-status-value");
-    const fileTypeValue = document.getElementById("file-type-value");
-    const segmentCountValue = document.getElementById("segment-count");
-    const copyRenderedBtn = document.getElementById("copy-rendered-text");
-    const copyMarkdownBtn = document.getElementById("copy-markdown-output");
+    let initialParserDocument = {{ parser_document|tojson }};
+    let parserDocument = JSON.parse(JSON.stringify(initialParserDocument));
+    let activeFilter = "all";
+    let hasUnsavedChanges = false;
+    const reviewBlocksContainer = document.getElementById("review-blocks");
+    const saveReviewBtn = document.getElementById("save-review-btn");
+    const resetReviewBtn = document.getElementById("reset-review-btn");
+    const saveStatus = document.getElementById("save-status");
+    const previewPre = document.getElementById("review-markdown-preview");
+    const copyContextBtn = document.getElementById("copy-context-btn");
     const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
-
-    const escapeHtml = (value) => String(value || "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#39;");
-
-    const slugify = (value) => String(value || "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-
-    const getCurrentSegments = () => (
-        Array.isArray(parserDocument?.parser_result?.segments)
-            ? parserDocument.parser_result.segments
-            : []
-    );
-
-    const getCurrentAssets = () => (
-        Array.isArray(parserDocument?.parser_result?.assets)
-            ? parserDocument.parser_result.assets
-            : []
-    );
-
-    const getCurrentDocumentBlocks = () => (
-        Array.isArray(parserDocument?.parser_result?.document_blocks)
-            ? parserDocument.parser_result.document_blocks
-            : []
-    );
-
-    const getCurrentDiagramDetails = () => (
-        Array.isArray(parserDocument?.parser_result?.diagram_block_details)
-            ? parserDocument.parser_result.diagram_block_details
-            : []
-    );
-
-    const getBestMarkdownText = () => {
-        const markdownText = String(parserDocument?.parser_result?.metadata?.markdown_output || "").trim();
-        if (markdownText) return markdownText;
-        return buildCopyableExtractedText();
+    const conversationId = {{ request.args.get('conversation_id')|tojson }};
+    const esc = (v) => String(v || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
+    const norm = (v) => String(v || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+    const blocks = () => Array.isArray(parserDocument?.parser_result?.review_blocks) ? parserDocument.parser_result.review_blocks : [];
+    const setStatus = (msg, bad=false) => { saveStatus.textContent = msg || ""; saveStatus.classList.toggle("text-red-600", !!bad); saveStatus.classList.toggle("text-slate-500", !bad); };
+    const setDirty = (v) => { hasUnsavedChanges = !!v; if (hasUnsavedChanges) setStatus("You have unsaved review changes."); };
+    const ensureMatrix = (matrix) => {
+        if (!Array.isArray(matrix)) return [];
+        const rows = matrix.map((row) => Array.isArray(row) ? row.map((cell) => String(cell ?? "")) : [String(row ?? "")]);
+        const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+        if (!width) return [];
+        return rows.map((row) => { const next = row.slice(); while (next.length < width) next.push(""); return next; });
     };
-
-    const getUploadAssetUrl = (uploadPath) => {
-        const safePath = String(uploadPath || "").trim();
-        if (!safePath) return "";
-        return `/uploads/${encodeURIComponent(safePath)}`;
+    const compareBlocks = (a, b) => {
+        const rank = { text: 0, table: 1, diagram: 2 };
+        const aa = [Number(a?.source_unit_index ?? 0), Number(a?.reading_order ?? 999999), rank[String(a?.block_type || "").toLowerCase()] ?? 9];
+        const bb = [Number(b?.source_unit_index ?? 0), Number(b?.reading_order ?? 999999), rank[String(b?.block_type || "").toLowerCase()] ?? 9];
+        for (let i = 0; i < aa.length; i += 1) if (aa[i] !== bb[i]) return aa[i] - bb[i];
+        return String(a?.block_id || "").localeCompare(String(b?.block_id || ""));
     };
-
-    const resolveMarkdownUrl = (url) => {
-        const safeUrl = String(url || "").trim();
-        if (!safeUrl) return "";
-        if (/^(https?:)?\/\//i.test(safeUrl) || safeUrl.startsWith("data:") || safeUrl.startsWith("/")) {
-            return safeUrl;
-        }
-
-        const matchingAsset = getCurrentAssets().find((asset) => {
-            const uploadPath = String(asset?.upload_path || "").trim();
-            const originalZipPath = String(asset?.original_zip_path || "").trim();
-            return safeUrl === uploadPath
-                || safeUrl === originalZipPath
-                || safeUrl === uploadPath.split("/").pop()
-                || safeUrl === originalZipPath.split("/").pop();
-        });
-
-        return matchingAsset?.upload_path ? getUploadAssetUrl(matchingAsset.upload_path) : safeUrl;
-    };
-
-    const renderMarkdownInline = (line) => {
-        let safe = escapeHtml(line);
-        safe = safe.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, altText, url) => {
-            const resolvedUrl = resolveMarkdownUrl(url);
-            return resolvedUrl
-                ? `<img src="${escapeHtml(resolvedUrl)}" alt="${escapeHtml(altText)}" class="my-5 block max-h-80 w-auto max-w-full rounded-xl border border-gray-200 bg-white object-contain shadow-sm mx-auto" loading="lazy">`
-                : escapeHtml(altText);
-        });
-        safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, url) => {
-            const resolvedUrl = resolveMarkdownUrl(url);
-            return `<a class="text-brand-700 underline decoration-brand-300 underline-offset-2" href="${escapeHtml(resolvedUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
-        });
-        safe = safe.replace(/`([^`]+)`/g, "<code class=\"rounded bg-slate-100 px-1 py-0.5 text-[0.85em] text-slate-800\">$1</code>");
-        safe = safe.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-        safe = safe.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-        return safe;
-    };
-
-    const isTableSeparatorLine = (line) => {
-        const trimmed = String(line || "").trim();
-        return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed);
-    };
-
-    const splitMarkdownRow = (line) => {
-        const trimmed = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
-        return trimmed.split("|").map((cell) => cell.trim());
-    };
-
-    const renderMarkdownTable = (tableLines) => {
-        if (tableLines.length < 2) return "";
-        const headerCells = splitMarkdownRow(tableLines[0]);
-        const bodyLines = isTableSeparatorLine(tableLines[1]) ? tableLines.slice(2) : tableLines.slice(1);
-        const bodyRows = bodyLines.map(splitMarkdownRow);
-        const headerHtml = headerCells.map((cell) => `<th class="border border-gray-200 bg-slate-100 px-3 py-2 text-left font-semibold text-slate-800">${renderMarkdownInline(cell)}</th>`).join("");
-        const bodyHtml = bodyRows.map((cells) => {
-            const rowHtml = cells.map((cell) => `<td class="border border-gray-200 px-3 py-2 align-top text-slate-700">${renderMarkdownInline(cell)}</td>`).join("");
-            return `<tr>${rowHtml}</tr>`;
-        }).join("");
-        return `<div class="my-5 overflow-x-auto rounded-xl border border-gray-200"><table class="min-w-full border-collapse text-sm"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
-    };
-
-    const markdownToHtml = (text) => {
-        const lines = String(text || "").split(/\r?\n/);
-        const html = [];
-        const paragraphBuffer = [];
-        let listItems = [];
-        let tableLines = [];
-        let inCodeFence = false;
-        let codeLines = [];
-
-        const flushParagraph = () => {
-            if (!paragraphBuffer.length) return;
-            html.push(`<p class="my-4 text-[15px] leading-7 text-slate-700">${renderMarkdownInline(paragraphBuffer.join(" "))}</p>`);
-            paragraphBuffer.length = 0;
-        };
-
-        const flushList = () => {
-            if (!listItems.length) return;
-            const itemsHtml = listItems.map((item) => `<li class="leading-7 text-slate-700">${renderMarkdownInline(item)}</li>`).join("");
-            html.push(`<ul class="my-4 list-disc space-y-2 pl-6">${itemsHtml}</ul>`);
-            listItems = [];
-        };
-
-        const flushTable = () => {
-            if (!tableLines.length) return;
-            html.push(renderMarkdownTable(tableLines));
-            tableLines = [];
-        };
-
-        const flushCode = () => {
-            if (!inCodeFence) return;
-            html.push(`<pre class="my-5 overflow-x-auto rounded-xl bg-slate-950 p-4 text-sm text-slate-100"><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
-            inCodeFence = false;
-            codeLines = [];
-        };
-
-        for (const rawLine of lines) {
-            const line = rawLine.replace(/\t/g, "    ");
-            const trimmed = line.trim();
-
-            if (trimmed.startsWith("```")) {
-                flushParagraph();
-                flushList();
-                flushTable();
-                if (inCodeFence) {
-                    flushCode();
-                } else {
-                    inCodeFence = true;
-                    codeLines = [];
+    const buildContextMarkdown = () => {
+        const parts = [];
+        [...blocks()].sort(compareBlocks).forEach((block) => {
+            const n = block?.normalized_content || {};
+            if (block.block_type === "text") {
+                const text = norm(n.text_content || n.normalized_text || block.display_text || "");
+                if (text) parts.push(text);
+            } else if (block.block_type === "table") {
+                const matrix = ensureMatrix(n.matrix || []);
+                const caption = norm(n.caption || block.caption_text || "");
+                if (caption) parts.push(`### ${caption}`);
+                if (matrix.length) {
+                    parts.push(`| ${matrix[0].join(" | ")} |`);
+                    parts.push(`| ${new Array(matrix[0].length).fill("---").join(" | ")} |`);
+                    matrix.slice(1).forEach((row) => parts.push(`| ${row.join(" | ")} |`));
                 }
-                continue;
-            }
-
-            if (inCodeFence) {
-                codeLines.push(rawLine);
-                continue;
-            }
-
-            if (!trimmed) {
-                flushParagraph();
-                flushList();
-                flushTable();
-                continue;
-            }
-
-            if (trimmed.includes("|") && !trimmed.startsWith("#")) {
-                flushParagraph();
-                flushList();
-                tableLines.push(trimmed);
-                continue;
-            }
-            flushTable();
-
-            if (/^#{1,6}\s+/.test(trimmed)) {
-                flushParagraph();
-                flushList();
-                const level = Math.min(6, (trimmed.match(/^#+/) || ["#"])[0].length);
-                const headingText = trimmed.slice(level).trim();
-                const tag = `h${Math.min(6, level + 1)}`;
-                const sizeClass = ["text-3xl", "text-2xl", "text-xl", "text-lg", "text-base", "text-sm"][level - 1] || "text-lg";
-                html.push(`<${tag} id="${escapeHtml(slugify(headingText))}" class="mt-8 mb-3 font-semibold text-slate-900 ${sizeClass}">${renderMarkdownInline(headingText)}</${tag}>`);
-                continue;
-            }
-
-            if (/^\s*[-*]\s+/.test(line)) {
-                flushParagraph();
-                listItems.push(line.replace(/^\s*[-*]\s+/, "").trim());
-                continue;
-            }
-
-            paragraphBuffer.push(trimmed);
-        }
-
-        flushParagraph();
-        flushList();
-        flushTable();
-        flushCode();
-
-        return html.join("") || '<p class="text-sm text-slate-500">No markdown content available.</p>';
-    };
-
-    const setStatusMessage = (message, isError = false) => {
-        if (!statusText) return;
-        statusText.textContent = message || "";
-        statusText.className = `text-sm min-h-[20px] ${isError ? "text-red-600" : "text-slate-500"}`;
-    };
-
-    const getPendingProgressMessage = () => {
-        const processing = parserDocument?.parser_result?.metadata?.processing || {};
-        const message = typeof processing?.message === "string" ? processing.message.trim() : "";
-        if (message) return message;
-        const state = typeof processing?.provider_state === "string" ? processing.provider_state.trim() : "";
-        return state ? `Processing document (${state})...` : "Processing document...";
-    };
-
-    const stopPendingStatusPolling = () => {
-        if (!pendingStatusPollHandle) return;
-        window.clearInterval(pendingStatusPollHandle);
-        pendingStatusPollHandle = null;
-    };
-
-    const refreshParserStatus = async () => {
-        const documentId = String(parserDocument?.document_id || "").trim();
-        if (!documentId) {
-            stopPendingStatusPolling();
-            return;
-        }
-
-        const currentStatus = String(parserDocument?.parser_result?.parser_status || "").toLowerCase();
-        if (currentStatus !== "pending") {
-            stopPendingStatusPolling();
-            return;
-        }
-
-        try {
-            const params = new URLSearchParams();
-            if (conversationId) {
-                params.set("conversation_id", String(conversationId));
-            }
-            const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}/parser-results${params.toString() ? `?${params.toString()}` : ""}`);
-            if (!response.ok) return;
-            const payload = await response.json();
-            if (!payload || typeof payload !== "object") return;
-            parserDocument = payload;
-            renderParserResult();
-
-            const nextStatus = String(parserDocument?.parser_result?.parser_status || "").toLowerCase();
-            if (nextStatus === "pending") {
-                setStatusMessage(getPendingProgressMessage());
-            } else if (nextStatus === "success") {
-                setStatusMessage("Parsing finished successfully.");
-                stopPendingStatusPolling();
-            } else if (nextStatus === "failed") {
-                setStatusMessage("Parsing failed. Check errors in the JSON section.", true);
-                stopPendingStatusPolling();
-            } else {
-                setStatusMessage(`Parser status: ${nextStatus || "unknown"}.`);
-                stopPendingStatusPolling();
-            }
-        } catch (_error) {
-            // Keep polling on transient network errors.
-        }
-    };
-
-    const ensurePendingStatusPolling = () => {
-        const currentStatus = String(parserDocument?.parser_result?.parser_status || "").toLowerCase();
-        if (currentStatus !== "pending") {
-            stopPendingStatusPolling();
-            return;
-        }
-        if (pendingStatusPollHandle) return;
-        pendingStatusPollHandle = window.setInterval(refreshParserStatus, 5000);
-    };
-
-    const buildSegmentLookup = () => {
-        const map = new Map();
-        getCurrentSegments().forEach((segment) => {
-            const segmentId = String(segment?.segment_id || "").trim();
-            if (segmentId) {
-                map.set(segmentId, segment);
+            } else if (block.block_type === "diagram") {
+                const caption = norm(block.caption_text || "");
+                const description = norm(n.visual_description || "");
+                if (caption) parts.push(`### ${caption}`);
+                if (description) parts.push(`Description: ${description}`);
             }
         });
-        return map;
+        return parts.join("\n\n").trim();
     };
-
-    const buildDiagramDetailLookup = () => {
-        const map = new Map();
-        getCurrentDiagramDetails().forEach((detail) => {
-            const candidates = [
-                String(detail?.storage_path || "").trim(),
-            ].filter(Boolean);
-            candidates.forEach((key) => {
-                if (!map.has(key)) {
-                    map.set(key, detail);
-                }
-            });
-        });
-        return map;
+    const refreshPreview = () => { previewPre.textContent = buildContextMarkdown() || "No reviewed context yet."; };
+    const updateCounts = () => {
+        const count = { total: 0, text: 0, table: 0, diagram: 0 };
+        blocks().forEach((block) => { const key = String(block?.block_type || "").toLowerCase(); count.total += 1; count[key] = (count[key] || 0) + 1; });
+        document.getElementById("total-block-count").textContent = `${count.total} items`;
+        document.getElementById("text-block-count").textContent = count.text;
+        document.getElementById("table-block-count").textContent = count.table;
+        document.getElementById("diagram-block-count").textContent = count.diagram;
     };
-
-    const renderExtractedImages = () => {
-        if (!extractedImages || !extractedImagesSection) return;
-
-        const imageAssets = getCurrentAssets().filter((asset) => String(asset?.asset_type || "").toLowerCase() === "image");
-        extractedImagesSection.classList.toggle("hidden", imageAssets.length === 0);
-        if (imageCountValue) {
-            imageCountValue.textContent = `${imageAssets.length} image${imageAssets.length === 1 ? "" : "s"}`;
-        }
-        if (!imageAssets.length) {
-            extractedImages.innerHTML = "";
-            return;
-        }
-
-        const segmentsById = buildSegmentLookup();
-        const diagramDetailsByPath = buildDiagramDetailLookup();
-        extractedImagesSection.open = true;
-        extractedImages.innerHTML = imageAssets.map((asset, index) => {
-            const imageUrl = getUploadAssetUrl(asset?.upload_path || "");
-            const captionSegment = segmentsById.get(String(asset?.caption_segment_id || "").trim());
-            const captionText = String(captionSegment?.text || asset?.metadata?.caption || "").trim();
-            const sourceIndex = asset?.source_index ?? "-";
-            const originalPath = String(asset?.original_zip_path || "").trim();
-            const detail = diagramDetailsByPath.get(String(asset?.upload_path || "").trim())
-                || diagramDetailsByPath.get(String(asset?.storage_path || "").trim());
-            const visionStatus = String(detail?.vision_status || "").trim().toLowerCase();
-            const diagramKind = String(detail?.diagram_kind || "").trim();
-            const visualDescription = String(detail?.visual_description || "").trim();
-            const ocrText = Array.isArray(detail?.ocr_text) ? detail.ocr_text.filter(Boolean) : [];
-            const facts = Array.isArray(detail?.question_answerable_facts) ? detail.question_answerable_facts.filter(Boolean) : [];
-            const links = Array.isArray(detail?.semantic_links) ? detail.semantic_links : [];
-            const gateReasons = Array.isArray(detail?.vision_gate_reasons) ? detail.vision_gate_reasons.filter(Boolean) : [];
-            const confidence = typeof detail?.vision_confidence === "number" ? detail.vision_confidence : null;
-            const gateScore = typeof detail?.vision_gate_score === "number" ? detail.vision_gate_score : null;
-            const statusTone = visionStatus === "completed"
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                : visionStatus === "skipped"
-                    ? "bg-amber-50 text-amber-700 border-amber-200"
-                    : visionStatus === "failed"
-                        ? "bg-rose-50 text-rose-700 border-rose-200"
-                        : "bg-slate-100 text-slate-600 border-slate-200";
-            const relationshipsText = links.length
-                ? links.map((link) => {
-                    const source = String(link?.source || "").trim() || "Unknown";
-                    const relation = String(link?.relation || "").trim() || "related_to";
-                    const target = String(link?.target || "").trim() || "Unknown";
-                    return `${source} ${relation} ${target}`;
-                })
-                : [];
-
-            return `
-                <article class="overflow-hidden rounded-2xl border border-gray-200 bg-slate-50">
-                    <div class="aspect-[4/3] bg-white">
-                        ${imageUrl
-                            ? `<img src="${escapeHtml(imageUrl)}" alt="Extracted image ${index + 1}" class="h-full w-full object-contain" loading="lazy">`
-                            : '<div class="flex h-full items-center justify-center text-sm text-slate-400">Image preview unavailable</div>'}
+    const findBlock = (blockId) => blocks().find((block) => block.block_id === blockId);
+    const renderText = (block, index) => {
+        const n = block.normalized_content || {};
+        const role = String(n.text_role || "paragraph");
+        const path = Array.isArray(n.section_path) ? n.section_path.filter(Boolean).join(" > ") : "";
+        const value = n.text_content || n.normalized_text || block.display_text || "";
+        return `
+            <article data-block-type="text" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="inline-flex items-center rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-brand-700">${index + 1}. Text</span>
+                            <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">Source ${esc(block.source_unit_index)}</span>
+                            <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">${esc(role)}</span>
+                        </div>
+                        <div><h3 class="text-lg font-semibold text-slate-900">Paragraph Context</h3><p class="text-sm text-slate-500">${path ? esc(path) : "Edit this text exactly as you want the chatbot to retrieve it."}</p></div>
                     </div>
-                    <div class="space-y-2 border-t border-gray-200 p-4">
-                        <div class="flex items-center justify-between gap-3 text-xs uppercase tracking-wide text-slate-500">
-                            <span>Image ${index + 1}</span>
-                            <span>Source ${escapeHtml(sourceIndex)}</span>
+                </div>
+                <div class="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                    <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Editable Text</span><textarea data-role="text-editor" data-block-id="${esc(block.block_id)}" class="min-h-[220px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(value)}</textarea></label>
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Reader Preview</p><div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">${esc(value || "No text entered.")}</div></div>
+                </div>
+            </article>
+        `;
+    };
+    const renderTable = (block, index) => {
+        const n = block.normalized_content || {};
+        const matrix = ensureMatrix(n.matrix || []);
+        const caption = n.caption || block.caption_text || "";
+        const headers = matrix[0] || [];
+        const body = matrix.map((row, rowIndex) => `
+            <tr>
+                ${row.map((cell, colIndex) => `
+                    <td class="border border-slate-200 bg-white p-2 align-top">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-[11px] font-medium uppercase tracking-wide text-slate-400">${rowIndex === 0 ? `Col ${colIndex + 1}` : `R${rowIndex + 1}C${colIndex + 1}`}</span>
+                            ${rowIndex === 0 ? `<div class="flex items-center gap-1"><button type="button" data-action="merge-right" data-block-id="${esc(block.block_id)}" data-col-index="${colIndex}" class="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50">Merge Right</button><button type="button" data-action="delete-column" data-block-id="${esc(block.block_id)}" data-col-index="${colIndex}" class="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50">Delete</button></div>` : ""}
                         </div>
-                        <p class="text-sm leading-6 text-slate-700">${captionText ? escapeHtml(captionText) : "No caption linked to this image."}</p>
-                        <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                            ${originalPath ? `<span class="rounded-full bg-white px-2 py-1">${escapeHtml(originalPath)}</span>` : ""}
-                            ${imageUrl ? `<a href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener noreferrer" class="text-brand-700 underline">Open image</a>` : ""}
+                        <input type="text" data-role="table-cell" data-block-id="${esc(block.block_id)}" data-row-index="${rowIndex}" data-col-index="${colIndex}" value="${esc(cell)}" class="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100">
+                    </td>
+                `).join("")}
+            </tr>
+        `).join("");
+        return `
+            <article data-block-type="table" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-700">${index + 1}. Table</span>
+                            <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">Source ${esc(block.source_unit_index)}</span>
                         </div>
-                        ${detail ? `
-                            <div class="rounded-xl border border-gray-200 bg-white p-3 space-y-3">
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${statusTone}">
-                                        ${escapeHtml(visionStatus || "pending")}
-                                    </span>
-                                    ${diagramKind ? `<span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">${escapeHtml(diagramKind)}</span>` : ""}
-                                    ${confidence !== null ? `<span class="text-xs text-slate-500">Confidence ${escapeHtml(confidence.toFixed(2))}</span>` : ""}
-                                    ${gateScore !== null ? `<span class="text-xs text-slate-500">Gate ${escapeHtml(gateScore.toFixed(2))}</span>` : ""}
-                                </div>
-                                ${visualDescription ? `<div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Vision Summary</p><p class="mt-1 text-sm leading-6 text-slate-700">${escapeHtml(visualDescription)}</p></div>` : ""}
-                                ${ocrText.length ? `<div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">OCR Text</p><p class="mt-1 text-sm leading-6 text-slate-700">${escapeHtml(ocrText.join(" | "))}</p></div>` : ""}
-                                ${facts.length ? `<div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Answerable Facts</p><ul class="mt-1 space-y-1 text-sm leading-6 text-slate-700">${facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul></div>` : ""}
-                                ${relationshipsText.length ? `<div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Relationships</p><ul class="mt-1 space-y-1 text-sm leading-6 text-slate-700">${relationshipsText.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>` : ""}
-                                ${gateReasons.length ? `<div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Gate Reasons</p><ul class="mt-1 space-y-1 text-sm leading-6 text-slate-700">${gateReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul></div>` : ""}
+                        <div><h3 class="text-lg font-semibold text-slate-900">Structured Table Review</h3><p class="text-sm text-slate-500">Edit cells directly, then use the column controls to merge or delete structure.</p></div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" data-action="add-row" data-block-id="${esc(block.block_id)}" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Add Row</button>
+                        <button type="button" data-action="add-column" data-block-id="${esc(block.block_id)}" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Add Column</button>
+                    </div>
+                </div>
+                <div class="mt-5 space-y-4">
+                    <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Table Caption</span><input type="text" data-role="table-caption" data-block-id="${esc(block.block_id)}" value="${esc(caption)}" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100"></label>
+                    <div class="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        ${matrix.length ? `<table class="min-w-full border-separate border-spacing-0 text-left"><tbody>${body}</tbody></table>` : `<div class="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">No structured cells were found. Use Add Column and Add Row to build the table.</div>`}
+                    </div>
+                    ${headers.length ? `<div class="rounded-2xl border border-slate-200 bg-white p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Header Snapshot</p><p class="mt-2 text-sm text-slate-700">${esc(headers.join(" | "))}</p></div>` : ""}
+                </div>
+            </article>
+        `;
+    };
+    const renderDiagram = (block, index) => {
+        const n = block.normalized_content || {};
+        const caption = block.caption_text || "";
+        const description = n.visual_description || "";
+        const imageUrl = n.image_url || "";
+        const ocrText = Array.isArray(n.ocr_text) ? n.ocr_text.filter(Boolean).join(" | ") : "";
+        const kind = n.diagram_kind || block.subtype || "diagram";
+        const visionStatus = n.vision_status || "unknown";
+        const visionConfidence = typeof n.vision_confidence === "number" ? n.vision_confidence.toFixed(2) : "n/a";
+        const gateScore = typeof n.vision_gate_score === "number" ? n.vision_gate_score.toFixed(2) : "n/a";
+        const scoringModel = [n.provider_name, n.model_name].filter(Boolean).join(" / ") || "n/a";
+        const promptVersion = n.prompt_version || "n/a";
+        const analyzedAt = n.last_analyzed_at || "n/a";
+        const gateReasons = Array.isArray(n.vision_gate_reasons) ? n.vision_gate_reasons.filter(Boolean) : [];
+        return `
+            <article data-block-type="diagram" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700">${index + 1}. Diagram</span>
+                            <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">Source ${esc(block.source_unit_index)}</span>
+                            <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">${esc(kind)}</span>
+                        </div>
+                        <div><h3 class="text-lg font-semibold text-slate-900">Diagram Interpretation</h3><p class="text-sm text-slate-500">Describe what the diagram means so the chatbot can reason over it.</p></div>
+                    </div>
+                </div>
+                <div class="mt-5 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+                    <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        ${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(caption || kind)}" class="h-auto max-h-[320px] w-full rounded-2xl border border-slate-200 bg-white object-contain">` : `<div class="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm text-slate-500">No preview image available.</div>`}
+                        <div class="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+                            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Troubleshooting</p>
+                            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Vision Status</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(visionStatus)}</p></div>
+                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Confidence</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(visionConfidence)}</p></div>
+                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Gate Score</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(gateScore)}</p></div>
+                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Scoring Model</p><p class="mt-1 text-sm font-medium text-slate-800 break-words">${esc(scoringModel)}</p></div>
                             </div>
-                        ` : ""}
+                            <div class="mt-2 rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Prompt Version</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(promptVersion)}</p></div>
+                            <div class="mt-2 rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Last Analyzed</p><p class="mt-1 text-sm font-medium text-slate-800 break-words">${esc(analyzedAt)}</p></div>
+                            ${gateReasons.length ? `<div class="mt-2 rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Gate Reasons</p><p class="mt-1 text-sm leading-6 text-slate-700">${esc(gateReasons.join(" | "))}</p></div>` : ""}
+                        </div>
+                        ${ocrText ? `<div class="mt-3 rounded-2xl border border-slate-200 bg-white p-3"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">OCR Text</p><p class="mt-2 text-sm leading-6 text-slate-700">${esc(ocrText)}</p></div>` : ""}
                     </div>
-                </article>
-            `;
-        }).join("");
+                    <div class="space-y-4">
+                        <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Figure Caption</span><input type="text" data-role="diagram-caption" data-block-id="${esc(block.block_id)}" value="${esc(caption)}" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100"></label>
+                        <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Model Description</span><textarea data-role="diagram-description" data-block-id="${esc(block.block_id)}" class="min-h-[220px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(description)}</textarea></label>
+                    </div>
+                </div>
+            </article>
+        `;
     };
-
-    const renderExtractedTables = () => {
-        if (!extractedTables || !extractedTablesSection) return;
-
-        const canonicalTables = getCurrentDocumentBlocks()
-            .filter((block) => String(block?.block_type || "").toLowerCase() === "table");
-        const fallbackTables = getCurrentSegments()
-            .filter((segment) => String(segment?.source_type || "").toLowerCase() === "table")
-            .map((segment) => ({
-                block_id: segment?.segment_id || "",
-                source_unit_index: segment?.source_index ?? "-",
-                caption_text: "",
-                display_text: segment?.text || "",
-                normalized_content: {},
-                raw_content: { primary_segment: segment },
-            }));
-        const tables = canonicalTables.length ? canonicalTables : fallbackTables;
-
-        extractedTablesSection.classList.toggle("hidden", tables.length === 0);
-        if (tableCountValue) {
-            tableCountValue.textContent = `${tables.length} table${tables.length === 1 ? "" : "s"}`;
-        }
-        if (!tables.length) {
-            extractedTables.innerHTML = "";
+    const renderBlocks = () => {
+        const ordered = [...blocks()].sort(compareBlocks);
+        const filtered = activeFilter === "all" ? ordered : ordered.filter((block) => String(block?.block_type || "").toLowerCase() === activeFilter);
+        if (!filtered.length) {
+            reviewBlocksContainer.innerHTML = `<section class="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No review blocks match the current filter.</section>`;
             return;
         }
-
-        extractedTablesSection.open = true;
-        extractedTables.innerHTML = tables.map((table, index) => {
-            const normalized = table?.normalized_content || {};
-            const headerRows = Array.isArray(normalized?.header_rows) ? normalized.header_rows : [];
-            const bodyRows = Array.isArray(normalized?.body_rows) ? normalized.body_rows : [];
-            const matrix = Array.isArray(normalized?.matrix) ? normalized.matrix : [];
-            const tableRows = matrix.length ? matrix : [...headerRows, ...bodyRows];
-            const caption = String(table?.caption_text || normalized?.caption || normalized?.title || "").trim();
-            const sourceIndex = table?.source_unit_index ?? table?.source_index ?? table?.raw_content?.primary_segment?.source_index ?? "-";
-            const linearizedText = String(normalized?.linearized_text || table?.display_text || "").trim();
-
-            const tableHtml = tableRows.length
-                ? (() => {
-                    const header = tableRows[0] || [];
-                    const body = tableRows.slice(1);
-                    const headerHtml = header.map((cell) => `<th class="border border-gray-200 bg-slate-100 px-3 py-2 text-left font-semibold text-slate-800">${renderMarkdownInline(cell)}</th>`).join("");
-                    const bodyHtml = body.map((row) => {
-                        const rowHtml = row.map((cell) => `<td class="border border-gray-200 px-3 py-2 align-top text-slate-700">${renderMarkdownInline(cell)}</td>`).join("");
-                        return `<tr>${rowHtml}</tr>`;
-                    }).join("");
-                    return `<div class="overflow-x-auto rounded-xl border border-gray-200 bg-white"><table class="min-w-full border-collapse text-sm"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
-                })()
-                : `<div class="rounded-xl border border-dashed border-gray-200 bg-white p-4 text-sm text-slate-500">Structured table matrix unavailable.</div>`;
-
-            return `
-                <article class="rounded-2xl border border-gray-200 bg-slate-50 p-4">
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                            <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-800">Table ${index + 1}</h3>
-                            <p class="mt-1 text-sm text-slate-600">${caption ? escapeHtml(caption) : "No caption detected."}</p>
-                        </div>
-                        <span class="rounded-full bg-white px-3 py-1 text-xs text-slate-500">Source ${escapeHtml(sourceIndex)}</span>
-                    </div>
-                    <div class="mt-4">${tableHtml}</div>
-                    ${linearizedText
-                        ? `<div class="mt-4 rounded-xl border border-gray-200 bg-white p-3"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Linearized Text</p><p class="mt-2 text-sm leading-6 text-slate-700">${escapeHtml(linearizedText)}</p></div>`
-                        : ""}
-                </article>
-            `;
+        reviewBlocksContainer.innerHTML = filtered.map((block, index) => {
+            if (block.block_type === "text") return renderText(block, index);
+            if (block.block_type === "table") return renderTable(block, index);
+            if (block.block_type === "diagram") return renderDiagram(block, index);
+            return "";
         }).join("");
     };
-
-    const renderParserResult = () => {
-        const segments = getCurrentSegments();
-        const groupedSegments = segments.reduce((acc, segment) => {
-            const sourceType = segment?.source_type || "page";
-            const sourceIndex = Number.isFinite(segment?.source_index)
-                ? segment.source_index
-                : (segment?.source_index ?? "unknown");
-            const key = `${sourceType}:${sourceIndex}`;
-            if (!acc[key]) {
-                acc[key] = {
-                    source_type: sourceType,
-                    source_index: sourceIndex,
-                    segments: [],
+    const savePayload = () => ({
+        blocks: [...blocks()].sort(compareBlocks).map((block) => {
+            const n = block?.normalized_content || {};
+            const item = { block_id: block.block_id, block_type: block.block_type, caption_text: block.caption_text || "", display_text: block.display_text || "", normalized_content: {} };
+            if (block.block_type === "text") {
+                item.normalized_content = { text_content: n.text_content || n.normalized_text || block.display_text || "" };
+            } else if (block.block_type === "table") {
+                item.normalized_content = { title: n.title || "", caption: n.caption || block.caption_text || "", matrix: ensureMatrix(n.matrix || []), footnotes: Array.isArray(n.footnotes) ? n.footnotes : [] };
+            } else if (block.block_type === "diagram") {
+                item.normalized_content = {
+                    visual_description: n.visual_description || "",
+                    ocr_text: Array.isArray(n.ocr_text) ? n.ocr_text : [],
+                    semantic_links: Array.isArray(n.semantic_links) ? n.semantic_links : [],
+                    question_answerable_facts: Array.isArray(n.question_answerable_facts) ? n.question_answerable_facts : [],
+                    storage_path: n.storage_path || "",
                 };
             }
-            acc[key].segments.push(segment);
-            return acc;
-        }, {});
-        const groups = Object.values(groupedSegments).sort((a, b) => {
-            const aIndex = Number(a.source_index);
-            const bIndex = Number(b.source_index);
-            if (Number.isFinite(aIndex) && Number.isFinite(bIndex)) {
-                return aIndex - bIndex;
-            }
-            return String(a.source_index).localeCompare(String(b.source_index));
-        });
-
-        if (container) {
-            if (!groups.length) {
-                container.innerHTML = '<p class="text-sm text-slate-500">No extraction segments available.</p>';
-            } else {
-                container.innerHTML = groups.map((group) => {
-                    const heading = `${group.source_type || "source"} ${group.source_index}`;
-                    const rows = group.segments.map((segment) => {
-                        const sourceIndex = segment?.source_index ?? "-";
-                        const textHtml = markdownToHtml(segment?.text || "");
-                        return `
-                            <article class="rounded-lg border border-gray-100 bg-slate-50 p-3">
-                                <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                                    <span>source index: ${escapeHtml(sourceIndex)}</span>
-                                    <span>segment index: ${escapeHtml(segment?.segment_index ?? "-")}</span>
-                                    <span>paragraph index: ${escapeHtml(segment?.paragraph_index ?? "-")}</span>
-                                </div>
-                                <div class="mt-3">${textHtml || '<p class="text-sm text-slate-500">(empty)</p>'}</div>
-                            </article>
-                        `;
-                    }).join("");
-                    return `
-                        <section class="rounded-xl border border-gray-200 p-3 md:p-4">
-                            <h3 class="text-sm font-semibold text-slate-800 uppercase tracking-wide">${escapeHtml(heading)}</h3>
-                            <div class="mt-3 space-y-2">${rows}</div>
-                        </section>
-                    `;
-                }).join("");
-            }
-        }
-
-        const markdownText = getBestMarkdownText();
-        if (renderedMarkdown) {
-            renderedMarkdown.innerHTML = markdownToHtml(markdownText);
-        }
-        renderExtractedImages();
-        renderExtractedTables();
-
-        const normalizedPayload = {
-            document_id: parserDocument?.document_id,
-            original_filename: parserDocument?.original_filename,
-            file_extension: parserDocument?.file_extension,
-            mime_type: parserDocument?.mime_type,
-            parser_result: {
-                parser_status: parserDocument?.parser_result?.parser_status,
-                parser_version: parserDocument?.parser_result?.parser_version,
-                file_type: parserDocument?.parser_result?.file_type,
-                extraction_timestamp: parserDocument?.parser_result?.extraction_timestamp,
-                metadata: parserDocument?.parser_result?.metadata || {},
-                markdown_output: parserDocument?.parser_result?.metadata?.markdown_output || "",
-                assets: getCurrentAssets(),
-                errors: parserDocument?.parser_result?.errors || [],
-                grouped_segments: groups,
-            },
-        };
-
-        if (normalizedPre) {
-            normalizedPre.textContent = JSON.stringify(normalizedPayload, null, 2);
-        }
-        if (rawPre) {
-            rawPre.textContent = JSON.stringify(parserDocument, null, 2);
-        }
-        if (mineruRawPre) {
-            mineruRawPre.textContent = JSON.stringify(
-                parserDocument?.parser_result?.metadata?.mineru_raw_artifacts || {
-                    message: "No MinerU raw artifacts available for this parse result.",
-                },
-                null,
-                2,
-            );
-        }
-        if (markdownPre) {
-            markdownPre.textContent = markdownText || "(empty)";
-        }
-        if (segmentCountValue) {
-            segmentCountValue.textContent = `${segments.length} segment${segments.length === 1 ? "" : "s"}`;
-        }
-        if (fileTypeValue) {
-            fileTypeValue.textContent = parserDocument?.parser_result?.file_type
-                || parserDocument?.file_extension
-                || parserDocument?.mime_type
-                || "Unknown";
-        }
-        if (statusValue) {
-            const parserStatus = parserDocument?.parser_result?.parser_status || "unknown";
-            statusValue.textContent = parserStatus;
-            statusValue.classList.remove("text-emerald-700", "text-red-700", "text-amber-700");
-            if (parserStatus === "success") {
-                statusValue.classList.add("text-emerald-700");
-            } else if (parserStatus === "failed") {
-                statusValue.classList.add("text-red-700");
-            } else {
-                statusValue.classList.add("text-amber-700");
-            }
-        }
-    };
-
-    const buildCopyableExtractedText = () => {
-        const ordered = [...getCurrentSegments()].sort((a, b) => {
-            const ai = Number(a?.source_index ?? 0);
-            const bi = Number(b?.source_index ?? 0);
-            if (ai !== bi) return ai - bi;
-            const ap = Number(a?.paragraph_index ?? 0);
-            const bp = Number(b?.paragraph_index ?? 0);
-            if (ap !== bp) return ap - bp;
-            const ab = Number(a?.block_index ?? 0);
-            const bb = Number(b?.block_index ?? 0);
-            return ab - bb;
-        });
-
-        const parts = [];
-        for (const segment of ordered) {
-            const sourceType = String(segment?.source_type || "").toLowerCase();
-            if (sourceType === "image") continue;
-            const text = String(segment?.text || "").trim();
-            if (!text) continue;
-
-            const role = String(segment?.metadata?.role || "").toLowerCase();
-            if (sourceType === "paragraph" && role === "heading") {
-                parts.push(`## ${text}`);
-            } else {
-                parts.push(text);
-            }
-        }
-        return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
-    };
-
-    const copyToClipboard = async (text) => {
-        if (!text) {
-            setStatusMessage("No extracted text available to copy.", true);
-            return;
-        }
+            return item;
+        }),
+    });
+    const copyText = async (text) => {
+        if (!text) return setStatus("No reviewed context available to copy.", true);
         try {
             await navigator.clipboard.writeText(text);
-            setStatusMessage("Extracted text copied to clipboard.");
-            return;
+            setStatus("Reviewed context copied to clipboard.");
         } catch (_error) {
-            const textarea = document.createElement("textarea");
-            textarea.value = text;
-            textarea.setAttribute("readonly", "");
-            textarea.style.position = "fixed";
-            textarea.style.left = "-9999px";
-            document.body.appendChild(textarea);
-            textarea.select();
-            try {
-                document.execCommand("copy");
-                setStatusMessage("Extracted text copied to clipboard.");
-            } catch (_fallbackError) {
-                setStatusMessage("Unable to copy automatically. Please copy from the segments view.", true);
-            } finally {
-                document.body.removeChild(textarea);
-            }
+            setStatus("Unable to copy automatically.", true);
         }
     };
-
-    const setMode = (mode) => {
-        const showNormalized = mode === "normalized";
-        const showRaw = mode === "raw";
-        const showMineruRaw = mode === "mineru_raw";
-
-        normalizedPre?.classList.toggle("hidden", !showNormalized);
-        rawPre?.classList.toggle("hidden", !showRaw);
-        mineruRawPre?.classList.toggle("hidden", !showMineruRaw);
-
-        normalizedBtn?.classList.toggle("bg-white", showNormalized);
-        normalizedBtn?.classList.toggle("shadow-sm", showNormalized);
-        normalizedBtn?.classList.toggle("text-slate-800", showNormalized);
-        normalizedBtn?.classList.toggle("text-slate-500", !showNormalized);
-
-        rawBtn?.classList.toggle("bg-white", showRaw);
-        rawBtn?.classList.toggle("shadow-sm", showRaw);
-        rawBtn?.classList.toggle("text-slate-800", showRaw);
-        rawBtn?.classList.toggle("text-slate-500", !showRaw);
-
-        mineruRawBtn?.classList.toggle("bg-white", showMineruRaw);
-        mineruRawBtn?.classList.toggle("shadow-sm", showMineruRaw);
-        mineruRawBtn?.classList.toggle("text-slate-800", showMineruRaw);
-        mineruRawBtn?.classList.toggle("text-slate-500", !showMineruRaw);
-    };
-
-    normalizedBtn?.addEventListener("click", () => setMode("normalized"));
-    rawBtn?.addEventListener("click", () => setMode("raw"));
-    mineruRawBtn?.addEventListener("click", () => setMode("mineru_raw"));
-    copyRenderedBtn?.addEventListener("click", async () => {
-        await copyToClipboard(buildCopyableExtractedText());
-    });
-    copyMarkdownBtn?.addEventListener("click", async () => {
-        await copyToClipboard(getBestMarkdownText());
-    });
-    reparseBtn?.addEventListener("click", async () => {
-        stopPendingStatusPolling();
-        reparseBtn.disabled = true;
-        setStatusMessage("Reparsing from stored file (DB save disabled)...");
-        try {
-            const params = new URLSearchParams();
-            if (conversationId) {
-                params.set("conversation_id", String(conversationId));
-            }
-            const queryString = params.toString();
-            const response = await fetch(
-                `/api/documents/${encodeURIComponent(parserDocument?.document_id || "")}/reparse${queryString ? `?${queryString}` : ""}`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        persist_extraction: false,
-                        conversation_id: conversationId || null,
-                    }),
-                },
-            );
-            let payload = {};
-            try {
-                payload = await response.json();
-            } catch (_err) {
-                payload = {};
-            }
-            if (!response.ok) {
-                setStatusMessage(payload?.error || "Reparse failed.", true);
-                return;
-            }
-            parserDocument = payload;
-            renderParserResult();
-            setStatusMessage("Reparse complete. Results are shown below and not saved to DB.");
-            ensurePendingStatusPolling();
-        } catch (_error) {
-            setStatusMessage("Network error while reparsing.", true);
-        } finally {
-            reparseBtn.disabled = false;
+    reviewBlocksContainer?.addEventListener("input", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const blockId = target.dataset.blockId || "";
+        const block = findBlock(blockId);
+        if (!block) return;
+        const role = target.dataset.role || "";
+        const n = block.normalized_content || {};
+        if (role === "text-editor") {
+            block.display_text = target.value;
+            n.text_content = target.value;
+            n.normalized_text = target.value;
+        } else if (role === "table-caption") {
+            block.caption_text = target.value;
+            n.caption = target.value;
+        } else if (role === "table-cell") {
+            const matrix = ensureMatrix(n.matrix || []);
+            const rowIndex = Number(target.dataset.rowIndex);
+            const colIndex = Number(target.dataset.colIndex);
+            if (matrix[rowIndex]) matrix[rowIndex][colIndex] = target.value;
+            n.matrix = matrix;
+        } else if (role === "diagram-caption") {
+            block.caption_text = target.value;
+        } else if (role === "diagram-description") {
+            n.visual_description = target.value;
         }
+        block.normalized_content = n;
+        setDirty(true);
+        refreshPreview();
     });
-    window.addEventListener("scroll", () => {
-        if (!scrollToTopBtn) return;
-        const shouldShow = window.scrollY > 240;
-        scrollToTopBtn.classList.toggle("hidden", !shouldShow);
-    }, { passive: true });
-    scrollToTopBtn?.addEventListener("click", () => {
-        window.scrollTo({ top: 0, behavior: "smooth" });
+    reviewBlocksContainer?.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-action]");
+        if (!button) return;
+        const block = findBlock(button.dataset.blockId || "");
+        if (!block) return;
+        const n = block.normalized_content || {};
+        const matrix = ensureMatrix(n.matrix || []);
+        const colIndex = Number(button.dataset.colIndex);
+        if (button.dataset.action === "add-row") {
+            matrix.push(new Array((matrix[0] || [""]).length).fill(""));
+        } else if (button.dataset.action === "add-column") {
+            if (!matrix.length) {
+                matrix.push([""]);
+                matrix.push([""]);
+            } else {
+                matrix.forEach((row) => row.push(""));
+            }
+        } else if (button.dataset.action === "delete-column") {
+            if (matrix.length && matrix[0].length > 1) {
+                n.matrix = matrix.map((row) => row.filter((_cell, index) => index !== colIndex));
+            }
+        } else if (button.dataset.action === "merge-right") {
+            if (matrix.length && colIndex < matrix[0].length - 1) {
+                n.matrix = matrix.map((row) => {
+                    const next = row.slice();
+                    next[colIndex] = [next[colIndex], next[colIndex + 1]].filter(Boolean).join(" / ").trim();
+                    next.splice(colIndex + 1, 1);
+                    return next;
+                });
+            }
+        }
+        if (!n.matrix) n.matrix = matrix;
+        block.normalized_content = n;
+        setDirty(true);
+        renderBlocks();
+        refreshPreview();
     });
-    document.querySelectorAll("summary button").forEach((button) => {
-        button.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
+    document.querySelectorAll(".review-filter").forEach((button) => {
+        button.addEventListener("click", () => {
+            activeFilter = button.dataset.filter || "all";
+            document.querySelectorAll(".review-filter").forEach((item) => {
+                const on = item === button;
+                item.classList.toggle("bg-white", on);
+                item.classList.toggle("shadow-sm", on);
+                item.classList.toggle("text-slate-900", on);
+                item.classList.toggle("text-slate-600", !on);
+            });
+            renderBlocks();
         });
     });
-    renderParserResult();
-    setMode("normalized");
-    if (String(parserDocument?.parser_result?.parser_status || "").toLowerCase() === "pending") {
-        setStatusMessage(getPendingProgressMessage());
-        ensurePendingStatusPolling();
-        refreshParserStatus();
-    }
+    copyContextBtn?.addEventListener("click", async () => copyText(buildContextMarkdown()));
+    resetReviewBtn?.addEventListener("click", () => {
+        parserDocument = JSON.parse(JSON.stringify(initialParserDocument));
+        setDirty(false);
+        setStatus("Review changes reset to the last loaded version.");
+        updateCounts();
+        renderBlocks();
+        refreshPreview();
+    });
+    saveReviewBtn?.addEventListener("click", async () => {
+        saveReviewBtn.disabled = true;
+        setStatus("Saving reviewed context...");
+        try {
+            const params = new URLSearchParams();
+            if (conversationId) params.set("conversation_id", String(conversationId));
+            const response = await fetch(`/api/documents/${encodeURIComponent(parserDocument?.document_id || "")}/parser-review${params.toString() ? `?${params.toString()}` : ""}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(savePayload()),
+            });
+            let payload = {};
+            try { payload = await response.json(); } catch (_error) { payload = {}; }
+            if (!response.ok) return setStatus(payload?.error || "Unable to save reviewed context.", true);
+            initialParserDocument = payload;
+            parserDocument = payload;
+            document.getElementById("last-review-value").textContent = parserDocument?.parser_result?.metadata?.review?.updated_at || "Saved";
+            setDirty(false);
+            setStatus("Reviewed context saved. Future retrieval should use this edited version.");
+            updateCounts();
+            renderBlocks();
+            refreshPreview();
+        } catch (_error) {
+            setStatus("Network error while saving reviewed context.", true);
+        } finally {
+            saveReviewBtn.disabled = false;
+        }
+    });
+    window.addEventListener("scroll", () => { scrollToTopBtn.classList.toggle("hidden", window.scrollY <= 240); }, { passive: true });
+    scrollToTopBtn?.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+    renderBlocks();
+    updateCounts();
+    refreshPreview();
 })();
 </script>
 {% endblock %}

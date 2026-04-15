@@ -2,10 +2,12 @@ from flask import Flask, render_template, jsonify, request, send_from_directory,
 from db import get_db_connection
 from email_service import send_email
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 import subprocess
 import psycopg2
 from psycopg2 import errors
+from psycopg2.extras import Json
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -527,6 +529,443 @@ def get_document_parser_result_context(user_id, document_id, conversation_id=Non
     return context
 
 
+def _coerce_int(value, default=None):
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_review_text(value) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in text.split("\n")]
+    return "\n".join(lines).strip()
+
+
+def _normalize_inline_text(value) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _review_block_sort_key(block: dict):
+    block_type_rank = {"text": 0, "table": 1, "diagram": 2}
+    return (
+        _coerce_int(block.get("source_unit_index"), 0),
+        _coerce_int(block.get("reading_order"), 10**6),
+        block_type_rank.get(str(block.get("block_type") or "").lower(), 9),
+        str(block.get("block_id") or ""),
+    )
+
+
+def _normalize_matrix(matrix) -> list[list[str]]:
+    rows = []
+    if not isinstance(matrix, list):
+        return rows
+    max_cols = 0
+    for row in matrix:
+        if isinstance(row, list):
+            normalized_row = [str(cell or "").strip() for cell in row]
+        else:
+            normalized_row = [str(row or "").strip()]
+        max_cols = max(max_cols, len(normalized_row))
+        rows.append(normalized_row)
+
+    if max_cols == 0:
+        return []
+
+    normalized_rows = []
+    for row in rows:
+        padded = row + [""] * (max_cols - len(row))
+        normalized_rows.append(padded)
+    return normalized_rows
+
+
+def _split_header_and_body_rows(matrix: list[list[str]]) -> tuple[list[list[str]], list[list[str]]]:
+    if not matrix:
+        return [], []
+    if len(matrix) == 1:
+        return [matrix[0]], []
+    return [matrix[0]], matrix[1:]
+
+
+def _build_table_cells(matrix: list[list[str]]) -> list[dict]:
+    cells = []
+    for row_index, row in enumerate(matrix):
+        for col_index, text in enumerate(row):
+            cells.append({
+                "row_index": row_index,
+                "col_index": col_index,
+                "row_span": 1,
+                "col_span": 1,
+                "text": text,
+                "is_header": row_index == 0,
+                "bbox": None,
+            })
+    return cells
+
+
+def _build_table_row_objects(header_rows: list[list[str]], body_rows: list[list[str]]) -> list[dict]:
+    headers = header_rows[0][:] if header_rows else []
+    for index in range(len(headers)):
+        if not headers[index]:
+            headers[index] = headers[index - 1] if index > 0 and headers[index - 1] else f"column_{index + 1}"
+
+    if not headers:
+        return [{"row_index": index, "values": row} for index, row in enumerate(body_rows, start=1)]
+
+    row_objects = []
+    for row_index, row in enumerate(body_rows, start=1):
+        values = {}
+        for col_index, value in enumerate(row):
+            key = headers[col_index] if col_index < len(headers) else f"column_{col_index + 1}"
+            values[key] = value
+        row_objects.append({
+            "row_index": row_index,
+            "values": values,
+        })
+    return row_objects
+
+
+def _linearize_review_table(
+    *,
+    title: str | None,
+    caption: str | None,
+    header_rows: list[list[str]],
+    body_rows: list[list[str]],
+    footnotes: list[str],
+    context_lines: list[str],
+) -> str:
+    parts = []
+    if title:
+        parts.append(f"Table: {title}.")
+    if caption and _normalize_inline_text(caption).lower() != _normalize_inline_text(title).lower():
+        parts.append(f"Table: {caption}.")
+    if header_rows:
+        parts.append(f"Headers: {' | '.join(header_rows[0])}.")
+    if body_rows:
+        headers = header_rows[0] if header_rows else []
+        for row_index, row in enumerate(body_rows, start=1):
+            if headers:
+                pairs = []
+                for col_index, value in enumerate(row):
+                    header = headers[col_index] if col_index < len(headers) else f"Column {col_index + 1}"
+                    pairs.append(f"{header}={value}")
+                parts.append(f"Row {row_index}: {'; '.join(pairs)}.")
+            else:
+                parts.append(f"Row {row_index}: {' | '.join(row)}.")
+    for footnote in footnotes:
+        footnote_text = _normalize_inline_text(footnote)
+        if footnote_text:
+            parts.append(f"Footnote: {footnote_text}.")
+    if context_lines:
+        context_summary = " ".join(line for line in context_lines if line)
+        if context_summary:
+            parts.append(f"Context: {context_summary}")
+    return " ".join(parts).strip()
+
+
+def _build_context_lines(block: dict, blocks_by_id: dict[str, dict]) -> list[str]:
+    linked_context = block.get("linked_context") or {}
+    candidate_ids = linked_context.get("explainer_block_ids") or linked_context.get("nearby_block_ids") or []
+    lines = []
+    for block_id in candidate_ids:
+        candidate = blocks_by_id.get(str(block_id))
+        if not candidate:
+            continue
+        candidate_text = ""
+        candidate_type = str(candidate.get("block_type") or "").lower()
+        normalized = candidate.get("normalized_content") or {}
+        if candidate_type == "text":
+            candidate_text = normalized.get("normalized_text") or normalized.get("text_content") or candidate.get("display_text") or ""
+        elif candidate_type == "table":
+            candidate_text = normalized.get("linearized_text") or normalized.get("retrieval_text") or candidate.get("display_text") or ""
+        elif candidate_type == "diagram":
+            candidate_text = normalized.get("visual_description") or candidate.get("caption_text") or candidate.get("display_text") or ""
+        candidate_text = _normalize_inline_text(candidate_text)
+        if candidate_text:
+            lines.append(candidate_text)
+    return lines[:4]
+
+
+def _build_text_retrieval_text(block: dict) -> str:
+    normalized = block.get("normalized_content") or {}
+    section_path = normalized.get("section_path") or []
+    parts = []
+    if section_path:
+        parts.append(f"Heading Path: {' > '.join(str(item) for item in section_path if item)}.")
+    text_role = _normalize_inline_text(normalized.get("text_role"))
+    if text_role:
+        parts.append(f"Text Role: {text_role}.")
+    text_value = normalized.get("normalized_text") or normalized.get("text_content") or block.get("display_text") or ""
+    text_value = _normalize_review_text(text_value)
+    if text_value:
+        parts.append(text_value)
+    return " ".join(part for part in parts if part).strip()
+
+
+def _build_diagram_retrieval_text(block: dict, blocks_by_id: dict[str, dict], diagram_detail: dict | None) -> str:
+    normalized = block.get("normalized_content") or {}
+    lines = []
+    caption_text = _normalize_inline_text(block.get("caption_text") or normalized.get("caption_text") or block.get("display_text"))
+    visual_description = _normalize_review_text(
+        (diagram_detail or {}).get("visual_description")
+        or normalized.get("visual_description")
+        or ""
+    )
+    ocr_values = (diagram_detail or {}).get("ocr_text") or normalized.get("ocr_text") or []
+    if isinstance(ocr_values, str):
+        ocr_values = [ocr_values]
+    if caption_text:
+        lines.append(f"Caption: {caption_text}.")
+    if visual_description:
+        lines.append(f"Description: {_normalize_inline_text(visual_description)}.")
+    ocr_summary = " ".join(_normalize_inline_text(item) for item in ocr_values if _normalize_inline_text(item))
+    if ocr_summary:
+        lines.append(f"OCR: {ocr_summary}.")
+    context_lines = _build_context_lines(block, blocks_by_id)
+    if context_lines:
+        lines.append(f"Nearby Context: {' '.join(context_lines)}")
+    return " ".join(line for line in lines if line).strip()
+
+
+def _refresh_review_block_content(blocks_by_id: dict[str, dict], diagram_details_by_block: dict[str, dict]) -> None:
+    for block in blocks_by_id.values():
+        block_type = str(block.get("block_type") or "").lower()
+        normalized = dict(block.get("normalized_content") or {})
+        if block_type == "text":
+            text_value = _normalize_review_text(normalized.get("text_content") or normalized.get("normalized_text") or block.get("display_text") or "")
+            normalized["text_content"] = text_value
+            normalized["normalized_text"] = text_value
+            block["display_text"] = text_value
+            retrieval_text = _build_text_retrieval_text({**block, "normalized_content": normalized})
+        elif block_type == "table":
+            matrix = _normalize_matrix(normalized.get("matrix") or [])
+            header_rows, body_rows = _split_header_and_body_rows(matrix)
+            footnotes = [str(item or "").strip() for item in (normalized.get("footnotes") or []) if str(item or "").strip()]
+            title = _normalize_inline_text(normalized.get("title"))
+            caption = _normalize_review_text(block.get("caption_text") or normalized.get("caption") or title)
+            normalized["title"] = title or None
+            normalized["caption"] = caption or None
+            normalized["matrix"] = matrix
+            normalized["header_rows"] = header_rows
+            normalized["body_rows"] = body_rows
+            normalized["cells"] = _build_table_cells(matrix)
+            normalized["row_objects"] = _build_table_row_objects(header_rows, body_rows)
+            retrieval_text = _linearize_review_table(
+                title=title or None,
+                caption=caption or None,
+                header_rows=header_rows,
+                body_rows=body_rows,
+                footnotes=footnotes,
+                context_lines=_build_context_lines(block, blocks_by_id),
+            )
+            normalized["linearized_text"] = retrieval_text
+            block["display_text"] = caption or retrieval_text
+            block["caption_text"] = caption or None
+        elif block_type == "diagram":
+            detail = diagram_details_by_block.get(str(block.get("block_id")))
+            visual_description = _normalize_review_text(
+                (detail or {}).get("visual_description")
+                or normalized.get("visual_description")
+                or ""
+            )
+            normalized["visual_description"] = visual_description or None
+            if detail is not None:
+                detail["visual_description"] = visual_description or None
+            retrieval_text = _build_diagram_retrieval_text({**block, "normalized_content": normalized}, blocks_by_id, detail)
+            caption_text = _normalize_review_text(block.get("caption_text") or normalized.get("caption_text") or block.get("display_text") or "")
+            block["caption_text"] = caption_text or None
+            if caption_text:
+                block["display_text"] = caption_text
+        else:
+            retrieval_text = _normalize_review_text(normalized.get("retrieval_text") or block.get("display_text") or "")
+
+        normalized["retrieval_text"] = retrieval_text
+        block["normalized_content"] = normalized
+        block["embedding_status"] = "ready" if retrieval_text else "not_ready"
+        block["processing_status"] = "retrieval_prepared" if retrieval_text else block.get("processing_status")
+
+
+def _matrix_to_markdown(matrix: list[list[str]]) -> str:
+    normalized_rows = _normalize_matrix(matrix)
+    if not normalized_rows:
+        return ""
+    width = len(normalized_rows[0])
+    header = normalized_rows[0]
+    divider = ["---"] * width
+    lines = [
+        f"| {' | '.join(header)} |",
+        f"| {' | '.join(divider)} |",
+    ]
+    for row in normalized_rows[1:]:
+        lines.append(f"| {' | '.join(row)} |")
+    return "\n".join(lines)
+
+
+def _build_review_markdown(blocks: list[dict], diagram_details_by_block: dict[str, dict]) -> str:
+    parts = []
+    for block in sorted(blocks, key=_review_block_sort_key):
+        block_type = str(block.get("block_type") or "").lower()
+        normalized = block.get("normalized_content") or {}
+        if block_type == "text":
+            text_value = _normalize_review_text(normalized.get("text_content") or normalized.get("normalized_text") or block.get("display_text") or "")
+            if text_value:
+                parts.append(text_value)
+        elif block_type == "table":
+            caption = _normalize_review_text(block.get("caption_text") or normalized.get("caption") or "")
+            table_md = _matrix_to_markdown(normalized.get("matrix") or [])
+            if caption:
+                parts.append(f"### {caption}")
+            if table_md:
+                parts.append(table_md)
+        elif block_type == "diagram":
+            detail = diagram_details_by_block.get(str(block.get("block_id"))) or {}
+            caption = _normalize_review_text(block.get("caption_text") or "")
+            description = _normalize_review_text(detail.get("visual_description") or normalized.get("visual_description") or "")
+            section_lines = []
+            if caption:
+                section_lines.append(f"### {caption}")
+            if description:
+                section_lines.append(f"Description: {description}")
+            if section_lines:
+                parts.append("\n".join(section_lines))
+    return "\n\n".join(part for part in parts if part).strip()
+
+
+def _collect_segment_ids_from_block(block: dict) -> list[str]:
+    raw_content = block.get("raw_content") or {}
+    segment_ids = []
+    for key in ("segment", "primary_segment"):
+        segment = raw_content.get(key) or {}
+        segment_id = str(segment.get("segment_id") or "").strip()
+        if segment_id:
+            segment_ids.append(segment_id)
+    for segment in raw_content.get("segments") or []:
+        segment_id = str((segment or {}).get("segment_id") or "").strip()
+        if segment_id:
+            segment_ids.append(segment_id)
+    return list(dict.fromkeys(segment_ids))
+
+
+def _build_parser_review_payload(document_result: dict) -> dict:
+    document_result = deepcopy(document_result or {})
+    parser_result = document_result.get("parser_result") or {}
+    blocks = sorted(parser_result.get("document_blocks") or [], key=_review_block_sort_key)
+    block_assets = parser_result.get("block_assets") or []
+    diagram_details = parser_result.get("diagram_block_details") or []
+
+    assets_by_block = {}
+    for asset in block_assets:
+        block_id = str(asset.get("block_id") or "")
+        if not block_id:
+            continue
+        assets_by_block.setdefault(block_id, []).append(asset)
+
+    diagram_by_block = {
+        str(detail.get("block_id")): detail
+        for detail in diagram_details
+        if detail.get("block_id")
+    }
+
+    review_blocks = []
+    counts = {"text": 0, "table": 0, "diagram": 0}
+    for block in blocks:
+        block_id = str(block.get("block_id") or "")
+        block_type = str(block.get("block_type") or "").lower()
+        normalized = block.get("normalized_content") or {}
+        counts[block_type] = counts.get(block_type, 0) + 1
+
+        item = {
+            "block_id": block_id,
+            "block_type": block_type,
+            "subtype": block.get("subtype"),
+            "source_unit_type": block.get("source_unit_type"),
+            "source_unit_index": block.get("source_unit_index"),
+            "reading_order": block.get("reading_order"),
+            "display_text": block.get("display_text"),
+            "caption_text": block.get("caption_text"),
+            "embedding_status": block.get("embedding_status"),
+            "processing_status": block.get("processing_status"),
+            "linked_context": block.get("linked_context") or {},
+            "normalized_content": {},
+        }
+
+        if block_type == "text":
+            item["normalized_content"] = {
+                "text_role": normalized.get("text_role") or "paragraph",
+                "text_content": normalized.get("text_content") or normalized.get("normalized_text") or block.get("display_text") or "",
+                "normalized_text": normalized.get("normalized_text") or normalized.get("text_content") or block.get("display_text") or "",
+                "section_path": normalized.get("section_path") or [],
+                "retrieval_text": normalized.get("retrieval_text") or "",
+            }
+        elif block_type == "table":
+            item["normalized_content"] = {
+                "title": normalized.get("title"),
+                "caption": normalized.get("caption") or block.get("caption_text") or "",
+                "matrix": _normalize_matrix(normalized.get("matrix") or []),
+                "header_rows": normalized.get("header_rows") or [],
+                "body_rows": normalized.get("body_rows") or [],
+                "footnotes": normalized.get("footnotes") or [],
+                "linearized_text": normalized.get("linearized_text") or "",
+                "retrieval_text": normalized.get("retrieval_text") or "",
+            }
+        elif block_type == "diagram":
+            detail = diagram_by_block.get(block_id) or {}
+            block_asset = (assets_by_block.get(block_id) or [{}])[0]
+            storage_path = str(
+                block_asset.get("storage_path")
+                or detail.get("storage_path")
+                or ""
+            ).strip()
+            image_url = f"/uploads/{quote(storage_path, safe='/')}" if storage_path else ""
+            item["normalized_content"] = {
+                "diagram_kind": normalized.get("diagram_kind") or detail.get("diagram_kind") or block.get("subtype"),
+                "visual_description": detail.get("visual_description") or normalized.get("visual_description") or "",
+                "ocr_text": detail.get("ocr_text") or normalized.get("ocr_text") or [],
+                "question_answerable_facts": detail.get("question_answerable_facts") or [],
+                "semantic_links": detail.get("semantic_links") or normalized.get("semantic_links") or [],
+                "vision_status": detail.get("vision_status") or normalized.get("vision_status") or "",
+                "vision_confidence": detail.get("vision_confidence"),
+                "vision_gate_score": detail.get("vision_gate_score"),
+                "vision_gate_reasons": detail.get("vision_gate_reasons") or [],
+                "provider_name": detail.get("provider_name") or "",
+                "model_name": detail.get("model_name") or "",
+                "prompt_version": detail.get("prompt_version") or "",
+                "last_analyzed_at": detail.get("last_analyzed_at"),
+                "image_url": image_url,
+                "storage_path": storage_path,
+                "retrieval_text": normalized.get("retrieval_text") or "",
+            }
+
+        review_blocks.append(item)
+
+    metadata = parser_result.get("metadata") or {}
+    return {
+        "document_id": document_result.get("document_id"),
+        "original_filename": document_result.get("original_filename") or "",
+        "file_extension": document_result.get("file_extension") or "",
+        "mime_type": document_result.get("mime_type") or "",
+        "parser_result": {
+            "parser_status": parser_result.get("parser_status"),
+            "parser_version": parser_result.get("parser_version"),
+            "extraction_timestamp": parser_result.get("extraction_timestamp"),
+            "file_type": parser_result.get("file_type"),
+            "metadata": {
+                "markdown_output": metadata.get("markdown_output") or "",
+                "review": metadata.get("review") or {},
+            },
+            "review_summary": {
+                "total_blocks": len(review_blocks),
+                "text_blocks": counts.get("text", 0),
+                "table_blocks": counts.get("table", 0),
+                "diagram_blocks": counts.get("diagram", 0),
+            },
+            "review_blocks": review_blocks,
+        },
+    }
+
+
 def get_extracted_document_result(user_id, document_id, conversation_id=None):
     if not user_id or not document_id:
         return None
@@ -876,11 +1315,11 @@ def document_parser_results(document_id):
             requested_conversation_id=conversation_id,
         ), 404
 
+    review_document = _build_parser_review_payload(document_result)
     return render_template(
         "document_parser_results.html",
-        active_page  = "chat",
-        parser_document = document_result,
-        parser_json     = json.dumps(document_result, indent=2),
+        active_page="chat",
+        parser_document=review_document,
     )
 
 
@@ -2033,7 +2472,284 @@ def api_document_parser_results(document_id):
     if not document_result:
         return jsonify({'error': 'Document not found.'}), 404
 
-    return jsonify(document_result), 200
+    return jsonify(_build_parser_review_payload(document_result)), 200
+
+
+@app.route('/api/documents/<document_id>/parser-review', methods=['POST'])
+def api_save_document_parser_review(document_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to edit parser results.'}), 401
+
+    conversation_id = (request.args.get("conversation_id") or "").strip() or None
+    payload = request.get_json(silent=True) or {}
+    edited_blocks = payload.get("blocks")
+    if not isinstance(edited_blocks, list) or not edited_blocks:
+        return jsonify({'error': 'Edited blocks are required.'}), 400
+
+    document_result = get_document_parser_result(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if not document_result:
+        return jsonify({'error': 'Document not found.'}), 404
+
+    parser_result = document_result.get("parser_result") or {}
+    existing_blocks = {
+        str(block.get("block_id")): deepcopy(block)
+        for block in (parser_result.get("document_blocks") or [])
+        if block.get("block_id")
+    }
+    if not existing_blocks:
+        return jsonify({'error': 'No editable parser blocks are available for this document.'}), 400
+
+    diagram_details_by_block = {
+        str(detail.get("block_id")): deepcopy(detail)
+        for detail in (parser_result.get("diagram_block_details") or [])
+        if detail.get("block_id")
+    }
+
+    modified_count = 0
+    review_timestamp = datetime.now(timezone.utc).isoformat()
+    for edited_block in edited_blocks:
+        block_id = str((edited_block or {}).get("block_id") or "").strip()
+        existing_block = existing_blocks.get(block_id)
+        if not existing_block:
+            continue
+
+        block_type = str(existing_block.get("block_type") or "").lower()
+        normalized = dict(existing_block.get("normalized_content") or {})
+        source_metadata = dict(existing_block.get("source_metadata") or {})
+        source_metadata["manual_review"] = {
+            "updated_at": review_timestamp,
+            "updated_from": "document_parser_results",
+        }
+        existing_block["source_metadata"] = source_metadata
+
+        if block_type == "text":
+            text_value = _normalize_review_text(
+                (edited_block.get("normalized_content") or {}).get("text_content")
+                or edited_block.get("display_text")
+                or ""
+            )
+            normalized["text_content"] = text_value
+            normalized["normalized_text"] = text_value
+            existing_block["display_text"] = text_value
+        elif block_type == "table":
+            edited_normalized = edited_block.get("normalized_content") or {}
+            matrix = _normalize_matrix(edited_normalized.get("matrix") or [])
+            normalized["title"] = _normalize_inline_text(edited_normalized.get("title"))
+            normalized["caption"] = _normalize_review_text(
+                edited_normalized.get("caption")
+                or edited_block.get("caption_text")
+                or ""
+            )
+            normalized["matrix"] = matrix
+            normalized["footnotes"] = [
+                _normalize_review_text(item)
+                for item in (edited_normalized.get("footnotes") or [])
+                if _normalize_review_text(item)
+            ]
+            existing_block["caption_text"] = normalized.get("caption") or None
+            existing_block["display_text"] = existing_block["caption_text"] or existing_block.get("display_text")
+        elif block_type == "diagram":
+            edited_normalized = edited_block.get("normalized_content") or {}
+            caption_text = _normalize_review_text(
+                edited_block.get("caption_text")
+                or existing_block.get("caption_text")
+                or existing_block.get("display_text")
+                or ""
+            )
+            visual_description = _normalize_review_text(edited_normalized.get("visual_description"))
+            normalized["visual_description"] = visual_description or None
+            existing_block["caption_text"] = caption_text or None
+            existing_block["display_text"] = caption_text or existing_block.get("display_text")
+
+            diagram_detail = dict(diagram_details_by_block.get(block_id) or {})
+            if not diagram_detail:
+                diagram_detail = {
+                    "block_id": block_id,
+                    "diagram_kind": normalized.get("diagram_kind") or existing_block.get("subtype") or "unknown",
+                    "ocr_text": edited_normalized.get("ocr_text") or [],
+                    "semantic_links": edited_normalized.get("semantic_links") or [],
+                    "question_answerable_facts": edited_normalized.get("question_answerable_facts") or [],
+                    "storage_path": edited_normalized.get("storage_path") or "",
+                    "vision_status": "completed",
+                }
+            diagram_detail["visual_description"] = visual_description or None
+            diagram_detail["vision_status"] = "completed"
+            diagram_details_by_block[block_id] = diagram_detail
+        else:
+            continue
+
+        existing_block["normalized_content"] = normalized
+        modified_count += 1
+
+    if modified_count == 0:
+        return jsonify({'error': 'No matching editable blocks were provided.'}), 400
+
+    _refresh_review_block_content(existing_blocks, diagram_details_by_block)
+    sorted_blocks = sorted(existing_blocks.values(), key=_review_block_sort_key)
+    markdown_output = _build_review_markdown(sorted_blocks, diagram_details_by_block)
+
+    segment_text_updates = {}
+    for block in sorted_blocks:
+        block_type = str(block.get("block_type") or "").lower()
+        normalized = block.get("normalized_content") or {}
+        if block_type == "text":
+            segment_text = _normalize_review_text(normalized.get("normalized_text") or block.get("display_text") or "")
+        elif block_type == "table":
+            segment_text = _normalize_review_text(normalized.get("linearized_text") or normalized.get("retrieval_text") or "")
+        elif block_type == "diagram":
+            segment_text = _normalize_review_text(normalized.get("visual_description") or block.get("caption_text") or "")
+        else:
+            segment_text = ""
+
+        if not segment_text:
+            continue
+        for segment_id in _collect_segment_ids_from_block(block):
+            segment_text_updates[segment_id] = segment_text
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            for block in sorted_blocks:
+                cur.execute(
+                    """
+                    UPDATE document_blocks
+                    SET
+                        subtype = %s,
+                        normalized_content = %s::jsonb,
+                        display_text = %s,
+                        caption_text = %s,
+                        source_metadata = %s::jsonb,
+                        embedding_status = %s,
+                        processing_status = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE document_id = %s
+                      AND block_id = %s
+                    """,
+                    (
+                        block.get("subtype"),
+                        Json(block.get("normalized_content") or {}),
+                        block.get("display_text"),
+                        block.get("caption_text"),
+                        Json(block.get("source_metadata") or {}),
+                        block.get("embedding_status"),
+                        block.get("processing_status"),
+                        document_id,
+                        block.get("block_id"),
+                    ),
+                )
+
+            if _relation_exists(cur, "diagram_block_details"):
+                for block_id, detail in diagram_details_by_block.items():
+                    block = existing_blocks.get(block_id) or {}
+                    normalized = block.get("normalized_content") or {}
+                    cur.execute(
+                        """
+                        INSERT INTO diagram_block_details (
+                            block_id,
+                            image_asset_id,
+                            diagram_kind,
+                            image_region,
+                            ocr_text,
+                            visual_description,
+                            semantic_links,
+                            question_answerable_facts,
+                            vision_status,
+                            last_analyzed_at,
+                            updated_at
+                        )
+                        VALUES (
+                            %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, 'completed', NOW(), NOW()
+                        )
+                        ON CONFLICT (block_id)
+                        DO UPDATE SET
+                            image_asset_id = COALESCE(EXCLUDED.image_asset_id, diagram_block_details.image_asset_id),
+                            diagram_kind = EXCLUDED.diagram_kind,
+                            image_region = EXCLUDED.image_region,
+                            ocr_text = EXCLUDED.ocr_text,
+                            visual_description = EXCLUDED.visual_description,
+                            semantic_links = EXCLUDED.semantic_links,
+                            question_answerable_facts = EXCLUDED.question_answerable_facts,
+                            vision_status = 'completed',
+                            last_analyzed_at = NOW(),
+                            updated_at = NOW()
+                        """,
+                        (
+                            block_id,
+                            normalized.get("image_asset_id"),
+                            detail.get("diagram_kind") or normalized.get("diagram_kind") or block.get("subtype") or "unknown",
+                            Json(normalized.get("image_region") or {}),
+                            Json(detail.get("ocr_text") or normalized.get("ocr_text") or []),
+                            detail.get("visual_description"),
+                            Json(detail.get("semantic_links") or normalized.get("semantic_links") or []),
+                            Json(detail.get("question_answerable_facts") or []),
+                        ),
+                    )
+
+            for segment_id, segment_text in segment_text_updates.items():
+                cur.execute(
+                    """
+                    UPDATE document_extraction_segments
+                    SET
+                        text = %s,
+                        metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                    WHERE document_id = %s
+                      AND segment_id = %s
+                    """,
+                    (
+                        segment_text,
+                        Json({"manual_review": {"updated_at": review_timestamp}}),
+                        document_id,
+                        segment_id,
+                    ),
+                )
+
+            extraction_metadata = dict(parser_result.get("metadata") or {})
+            extraction_metadata["markdown_output"] = markdown_output
+            extraction_metadata["review"] = {
+                "updated_at": review_timestamp,
+                "updated_from": "document_parser_results",
+                "modified_blocks": modified_count,
+            }
+            cur.execute(
+                """
+                UPDATE document_extractions
+                SET
+                    metadata = %s::jsonb,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE document_id = %s
+                """,
+                (
+                    Json(extraction_metadata),
+                    document_id,
+                ),
+            )
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to save reviewed parser content right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+    document_result["parser_result"]["document_blocks"] = sorted_blocks
+    document_result["parser_result"]["diagram_block_details"] = list(diagram_details_by_block.values())
+    document_result["parser_result"]["metadata"] = {
+        **(parser_result.get("metadata") or {}),
+        "markdown_output": markdown_output,
+        "review": {
+            "updated_at": review_timestamp,
+            "updated_from": "document_parser_results",
+            "modified_blocks": modified_count,
+        },
+    }
+    return jsonify(_build_parser_review_payload(document_result)), 200
 
 
 # ===========================================================================
