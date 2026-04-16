@@ -34,10 +34,10 @@ class EmbeddingServiceError(Exception):
 class EmbeddingService:
     def __init__(self) -> None:
         self.provider = (os.environ.get("EMBEDDING_PROVIDER") or "gemini").strip().lower()
-        default_model = "text-embedding-004" if self.provider == "gemini" else "text-embedding-3-small"
+        default_model = "gemini-embedding-001" if self.provider == "gemini" else "text-embedding-3-small"
         self.model = (os.environ.get("EMBEDDING_MODEL") or default_model).strip()
         self.batch_size = self._parse_positive_int(os.environ.get("EMBEDDING_BATCH_SIZE"), default=32)
-        self.expected_dimension = self._parse_positive_int(os.environ.get("EMBEDDING_DIMENSION"), default=None)
+        self.expected_dimension = self._parse_positive_int(os.environ.get("EMBEDDING_DIMENSION"), default=1536)
         self.api_key = self._resolve_api_key()
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -181,15 +181,23 @@ class EmbeddingService:
 
     def _embed_gemini_batch(self, batch: list[str]) -> list[list[float]]:
         model_ref = self.model if self.model.startswith("models/") else f"models/{self.model}"
+        requests_payload = [
+            {
+                "model": model_ref,
+                "content": {
+                    "parts": [{"text": text}],
+                },
+            }
+            for text in batch
+        ]
+        if self.expected_dimension and model_ref != "models/embedding-001":
+            for request_payload in requests_payload:
+                request_payload["outputDimensionality"] = int(self.expected_dimension)
+
         payload = {
             "requests": [
-                {
-                    "model": model_ref,
-                    "content": {
-                        "parts": [{"text": text}],
-                    },
-                }
-                for text in batch
+                request_payload
+                for request_payload in requests_payload
             ]
         }
         url = f"{GEMINI_API_BASE}/{model_ref}:batchEmbedContents?key={self.api_key}"
