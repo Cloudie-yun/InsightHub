@@ -420,6 +420,43 @@ def get_sidebar_conversations(user_id, limit: int = 8) -> list:
             conn.close()
 
 
+def _build_diagram_analysis_failure_payload(exc: Exception) -> tuple[dict, int]:
+    message = str(exc or "").strip()
+    normalized = message.lower()
+    if "503" in normalized and ("high demand" in normalized or "unavailable" in normalized):
+        return ({
+            "error": "Gemini is currently under high demand. Try again later, or use Copy Selected Image and Copy AI Prompt to ask an external AI yourself.",
+            "error_type": "provider_high_demand",
+            "fallback_action": "copy_image_and_prompt",
+            "usage": get_diagram_analysis_usage_summary(),
+        }, 503)
+    return ({
+        "error": message or "Unable to analyze selected diagrams right now.",
+        "error_type": "analysis_failed",
+        "usage": get_diagram_analysis_usage_summary(),
+    }, 500)
+
+
+def _load_latest_diagram_analysis_error(cur, block_ids: list[str]) -> str:
+    normalized_block_ids = [str(block_id).strip() for block_id in (block_ids or []) if str(block_id).strip()]
+    if not normalized_block_ids or not _relation_exists(cur, "diagram_block_analysis_runs"):
+        return ""
+    cur.execute(
+        """
+        SELECT error_message
+        FROM diagram_block_analysis_runs
+        WHERE block_id = ANY(%s::uuid[])
+          AND status = 'failed'
+          AND COALESCE(error_message, '') <> ''
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        (normalized_block_ids,),
+    )
+    row = cur.fetchone()
+    return str((row or [""])[0] or "").strip()
+
+
 def get_conversation_title(user_id, conversation_id) -> str:
     if not user_id or not conversation_id:
         return ""
@@ -2987,6 +3024,19 @@ def api_run_selected_diagram_analysis(document_id):
                 block_ids=selected_block_ids,
                 force_analyze=True,
             )
+            if selected_block_ids and not analyzed_block_ids:
+                last_error = _load_latest_diagram_analysis_error(cur, selected_block_ids)
+                conn.commit()
+                if last_error:
+                    payload, status_code = _build_diagram_analysis_failure_payload(RuntimeError(last_error))
+                else:
+                    payload, status_code = ({
+                        'error': 'No selected diagrams could be analyzed. Try Copy Selected Image and Copy AI Prompt instead.',
+                        'error_type': 'analysis_failed',
+                        'fallback_action': 'copy_image_and_prompt',
+                        'usage': get_diagram_analysis_usage_summary(),
+                    }, 503)
+                return jsonify(payload), status_code
         conn.commit()
     except DiagramVisionThrottleError as exc:
         if conn:
@@ -2999,7 +3049,8 @@ def api_run_selected_diagram_analysis(document_id):
         if conn:
             conn.rollback()
         logger.exception("Selected diagram analysis failed for document_id=%s blocks=%s", document_id, selected_block_ids)
-        return jsonify({'error': str(exc)}), 500
+        payload, status_code = _build_diagram_analysis_failure_payload(exc)
+        return jsonify(payload), status_code
     finally:
         if conn:
             conn.close()
