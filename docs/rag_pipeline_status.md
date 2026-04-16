@@ -472,7 +472,22 @@ curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
   -H "Content-Type: application/json" \
   -b "<SESSION_COOKIE>" \
   -d '{"query":"nonexistent token sequence zyxwvu"}'
+
+# 4) Retrieval diagnostics CLI (JSON output)
+python -m services.retrieval_diagnostics \
+  --conversation-id "<CONV_ID>" \
+  --document-ids "<DOC_ID_1>,<DOC_ID_2>" \
+  -k 8 \
+  "renewal clause"
+
+# 5) Retrieval diagnostics CLI (HTML troubleshooting report)
+python -m services.retrieval_diagnostics \
+  --conversation-id "<CONV_ID>" \
+  --pretty \
+  "renewal clause"
 ```
+
+The retrieval diagnostics command surfaces latency and candidate counts (`conversation_document_count`, `scoped_document_count`, `scoped_block_count`, and `eligible_candidate_count`) to quickly isolate filtering or performance issues during Milestone 2 verification.
 
 ### C) Failure visibility + retry
 
