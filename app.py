@@ -1414,6 +1414,7 @@ def signup():
     except Exception:
         if conn is not None:
             conn.rollback()
+        logging.getLogger(__name__).exception("Unexpected signup failure for email=%s", email)
         return jsonify({'error': 'Unable to create account right now.'}), 500
     finally:
         if conn is not None:
