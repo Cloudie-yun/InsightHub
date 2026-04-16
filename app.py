@@ -2738,6 +2738,65 @@ def api_save_document_parser_review(document_id):
         if conn is not None:
             conn.close()
 
+
+def get_document_file_record(user_id, document_id, conversation_id=None) -> dict | None:
+    if not user_id or not document_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if conversation_id:
+                cur.execute(
+                    """
+                    SELECT d.document_id, d.stored_filename, d.storage_path, d.file_extension, d.mime_type
+                    FROM conversations c
+                    JOIN conversation_documents cd ON cd.conversation_id = c.conversation_id
+                    JOIN documents d              ON d.document_id       = cd.document_id
+                    WHERE c.user_id         = %s
+                      AND c.conversation_id = %s
+                      AND d.document_id     = %s
+                      AND d.is_deleted      = FALSE
+                    LIMIT 1
+                    """,
+                    (user_id, conversation_id, document_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT document_id, stored_filename, storage_path, file_extension, mime_type
+                    FROM documents
+                    WHERE user_id     = %s
+                      AND document_id = %s
+                      AND is_deleted  = FALSE
+                    LIMIT 1
+                    """,
+                    (user_id, document_id),
+                )
+
+            row = cur.fetchone()
+            if not row:
+                return None
+
+            upload_path = ""
+            if row[2] and row[1]:
+                upload_path = f"{Path(str(row[2])).name}/{row[1]}"
+
+            return {
+                "document_id": str(row[0]),
+                "stored_filename": row[1] or "",
+                "storage_path": row[2] or "",
+                "file_extension": row[3] or "",
+                "mime_type": row[4] or "",
+                "upload_path": upload_path,
+            }
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
     document_result["parser_result"]["document_blocks"] = sorted_blocks
     document_result["parser_result"]["diagram_block_details"] = list(diagram_details_by_block.values())
     document_result["parser_result"]["metadata"] = {
