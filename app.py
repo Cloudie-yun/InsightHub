@@ -4,6 +4,7 @@ from email_service import send_email
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
+from threading import Lock, Thread
 import subprocess
 import psycopg2
 from psycopg2 import errors
@@ -28,12 +29,19 @@ from services.diagram_vision_service import (
     DiagramVisionThrottleError,
     run_diagram_analysis_for_document,
 )
+from services.embedding_worker import EmbeddingWorker
 from services.extraction_store import (
     build_extraction_payload,
     build_pending_extraction_payload,
     save_document_extraction,
     get_document_extraction as fetch_document_extraction,
     get_conversation_extractions as fetch_conversation_extractions,
+)
+from services.quota_router import (
+    TASK_TYPE_DIAGRAM_VISION,
+    get_quota_project_id,
+    get_task_models,
+    load_usage_state,
 )
 
 
@@ -73,6 +81,28 @@ def _is_truthy_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _read_float_env(value: str | None, default: float) -> float:
+    try:
+        parsed = float(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed
+
+
+EMBEDDING_AUTORUN_ENABLED = _is_truthy_env(os.getenv("EMBEDDING_AUTORUN_ENABLED", "1"))
+EMBEDDING_AUTORUN_LIMIT = max(1, int(os.getenv("EMBEDDING_AUTORUN_LIMIT", "256")))
+EMBEDDING_RETRY_POLL_SECONDS = max(1.0, _read_float_env(os.getenv("EMBEDDING_RETRY_POLL_SECONDS"), 15.0))
+embedding_autorun_executor = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="embedding-autorun",
+)
+embedding_autorun_lock = Lock()
+embedding_autorun_running = False
+embedding_autorun_requested = False
+embedding_retry_poller_lock = Lock()
+embedding_retry_poller_started = False
+
+
 def _relation_exists(cur, relation_name: str) -> bool:
     cur.execute("SELECT to_regclass(%s)", (relation_name,))
     row = cur.fetchone()
@@ -107,46 +137,157 @@ def _read_optional_int_env(name: str) -> int | None:
         return None
 
 
+def _run_embedding_autorun(trigger: str, limit: int) -> None:
+    global embedding_autorun_requested, embedding_autorun_running
+
+    while True:
+        try:
+            stats = EmbeddingWorker().run_once(limit=limit)
+            logger.info(
+                "embedding autorun completed trigger=%s selected=%s embedded=%s failed=%s skipped_idempotent=%s",
+                trigger,
+                stats["selected"],
+                stats["embedded"],
+                stats["failed"],
+                stats["skipped_idempotent"],
+            )
+        except Exception:
+            logger.exception("Embedding autorun failed for trigger=%s", trigger)
+
+        with embedding_autorun_lock:
+            if embedding_autorun_requested:
+                embedding_autorun_requested = False
+                trigger = f"{trigger}:coalesced"
+                continue
+
+            embedding_autorun_running = False
+            break
+
+
+def _schedule_embedding_autorun(trigger: str, *, limit: int = EMBEDDING_AUTORUN_LIMIT) -> None:
+    global embedding_autorun_requested, embedding_autorun_running
+
+    if not EMBEDDING_AUTORUN_ENABLED:
+        return
+
+    with embedding_autorun_lock:
+        if embedding_autorun_running:
+            embedding_autorun_requested = True
+            logger.info("Embedding autorun already running; coalescing trigger=%s", trigger)
+            return
+        embedding_autorun_running = True
+        embedding_autorun_requested = False
+
+    try:
+        embedding_autorun_executor.submit(_run_embedding_autorun, trigger, limit)
+    except Exception:
+        with embedding_autorun_lock:
+            embedding_autorun_running = False
+            embedding_autorun_requested = False
+        logger.exception("Unable to start embedding autorun for trigger=%s", trigger)
+
+
+def _embedding_retry_poller_loop() -> None:
+    while True:
+        try:
+            _schedule_embedding_autorun("retry_poller")
+        except Exception:
+            logger.exception("Embedding retry poller loop failed")
+        time.sleep(EMBEDDING_RETRY_POLL_SECONDS)
+
+
+def _start_embedding_retry_poller() -> None:
+    global embedding_retry_poller_started
+
+    if not EMBEDDING_AUTORUN_ENABLED:
+        return
+
+    with embedding_retry_poller_lock:
+        if embedding_retry_poller_started:
+            return
+        embedding_retry_poller_started = True
+
+    poller = Thread(
+        target=_embedding_retry_poller_loop,
+        name="embedding-retry-poller",
+        daemon=True,
+    )
+    poller.start()
+    logger.info(
+        "Started embedding retry poller interval_seconds=%s limit=%s",
+        EMBEDDING_RETRY_POLL_SECONDS,
+        EMBEDDING_AUTORUN_LIMIT,
+    )
+
+
 def _build_diagram_analysis_usage_summary(cur) -> dict:
-    rpm_limit = _read_optional_int_env("GEMINI_VISION_RPM_LIMIT")
-    rpd_limit = _read_optional_int_env("GEMINI_VISION_RPD_LIMIT")
-    minute_count = 0
-    day_count = 0
+    del cur
+    project_id = get_quota_project_id()
+    ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"))
+    usage_state = load_usage_state(project_id=project_id, model_names=ordered_models)
     now_utc = datetime.now(timezone.utc)
-    minute_window_start = now_utc - timedelta(minutes=1)
-    day_window_start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
-    if _relation_exists(cur, "diagram_block_analysis_runs"):
-        cur.execute(
-            """
-            SELECT
-                COUNT(*) FILTER (WHERE started_at >= %s) AS minute_count,
-                COUNT(*) FILTER (WHERE started_at >= %s) AS day_count
-            FROM diagram_block_analysis_runs
-            WHERE provider_name = 'gemini'
-            """,
-            (minute_window_start, day_window_start),
+    model_statuses = []
+    earliest_reset_at: datetime | None = None
+    available_models: list[str] = []
+
+    for model_name in ordered_models:
+        windows = usage_state.get(model_name, {})
+        blocked_windows = [
+            {
+                "window_type": window.window_type,
+                "used_count": window.used_count,
+                "reset_at": window.reset_at.isoformat() if window.reset_at else None,
+                "last_error_at": window.last_error_at.isoformat() if window.last_error_at else None,
+                "last_error_code": window.last_error_code,
+            }
+            for window in windows.values()
+            if window.is_exhausted
+        ]
+        is_available = not blocked_windows
+        status_label = "available" if is_available and windows else "untracked"
+        if blocked_windows:
+            status_label = "blocked"
+        if is_available:
+            available_models.append(model_name)
+        for blocked_window in blocked_windows:
+            reset_at_raw = blocked_window.get("reset_at")
+            if reset_at_raw:
+                try:
+                    reset_at = datetime.fromisoformat(reset_at_raw)
+                except ValueError:
+                    reset_at = None
+                if reset_at and (earliest_reset_at is None or reset_at < earliest_reset_at):
+                    earliest_reset_at = reset_at
+
+        model_statuses.append(
+            {
+                "model_name": model_name,
+                "is_available": is_available,
+                "status_label": status_label,
+                "blocked_windows": blocked_windows,
+                "last_reset_at": max(
+                    [window.reset_at for window in windows.values() if window.reset_at > now_utc],
+                    default=None,
+                ).isoformat() if windows else None,
+            }
         )
-        row = cur.fetchone() or (0, 0)
-        minute_count = int(row[0] or 0)
-        day_count = int(row[1] or 0)
 
-    rpm_remaining = None if rpm_limit is None else max(0, rpm_limit - minute_count)
-    rpd_remaining = None if rpd_limit is None else max(0, rpd_limit - day_count)
-    limit_parts = [
-        f"RPM left: {rpm_remaining}/{rpm_limit}" if rpm_limit is not None else "RPM limit not configured",
-        f"RPD left: {rpd_remaining}/{rpd_limit}" if rpd_limit is not None else "RPD limit not configured",
-    ]
+    preferred_model = ordered_models[0] if ordered_models else os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+    active_model = available_models[0] if available_models else None
+    hover_parts = [f"{status['model_name']}: {status['status_label']}" for status in model_statuses]
+    if earliest_reset_at is not None:
+        hover_parts.append(f"Earliest reset: {earliest_reset_at.isoformat()}")
+
     return {
         "provider": "gemini",
-        "model": os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
-        "rpm_limit": rpm_limit,
-        "rpd_limit": rpd_limit,
-        "minute_count": minute_count,
-        "day_count": day_count,
-        "rpm_remaining": rpm_remaining,
-        "rpd_remaining": rpd_remaining,
-        "hover_text": " | ".join(limit_parts),
+        "project_id": project_id,
+        "preferred_model": preferred_model,
+        "active_model": active_model,
+        "all_models_exhausted": not bool(available_models),
+        "earliest_reset_at": earliest_reset_at.isoformat() if earliest_reset_at else None,
+        "model_statuses": model_statuses,
+        "hover_text": " | ".join(hover_parts) if hover_parts else "No vision models configured.",
     }
 
 
@@ -160,13 +301,12 @@ def get_diagram_analysis_usage_summary() -> dict:
         logger.exception("Unable to load diagram analysis usage summary")
         return {
             "provider": "gemini",
-            "model": os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
-            "rpm_limit": _read_optional_int_env("GEMINI_VISION_RPM_LIMIT"),
-            "rpd_limit": _read_optional_int_env("GEMINI_VISION_RPD_LIMIT"),
-            "minute_count": 0,
-            "day_count": 0,
-            "rpm_remaining": None,
-            "rpd_remaining": None,
+            "project_id": get_quota_project_id(),
+            "preferred_model": os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
+            "active_model": None,
+            "all_models_exhausted": False,
+            "earliest_reset_at": None,
+            "model_statuses": [],
             "hover_text": "Usage information is unavailable right now.",
         }
     finally:
@@ -423,6 +563,13 @@ def get_sidebar_conversations(user_id, limit: int = 8) -> list:
 def _build_diagram_analysis_failure_payload(exc: Exception) -> tuple[dict, int]:
     message = str(exc or "").strip()
     normalized = message.lower()
+    if "no compatible model is currently available" in normalized:
+        return ({
+            "error": "All compatible Gemini vision models are temporarily unavailable. Try again later, or use Copy Selected Image and Copy AI Prompt if you need an immediate external fallback.",
+            "error_type": "vision_models_exhausted",
+            "fallback_action": "copy_image_and_prompt",
+            "usage": get_diagram_analysis_usage_summary(),
+        }, 429)
     if "503" in normalized and ("high demand" in normalized or "unavailable" in normalized):
         return ({
             "error": "Gemini is currently under high demand. Try again later, or use Copy Selected Image and Copy AI Prompt to ask an external AI yourself.",
@@ -2380,6 +2527,7 @@ def _run_document_parse_job(job: dict) -> None:
                 extraction_payload=extraction_payload,
             )
         conn.commit()
+        _schedule_embedding_autorun(f"document_parse:{document_id}")
     except Exception as exc:
         logger.exception("Background parse failed for document_id=%s", document_id)
         if conn is not None:
@@ -2873,6 +3021,7 @@ def api_save_document_parser_review(document_id):
                 ),
             )
         conn.commit()
+        _schedule_embedding_autorun(f"parser_review:{document_id}")
     except Exception:
         if conn is not None:
             conn.rollback()
@@ -3009,21 +3158,17 @@ def api_run_selected_diagram_analysis(document_id):
             if not _diagram_vision_schema_ready(cur):
                 return jsonify({'error': 'Diagram analysis tables are not ready yet.'}), 400
 
-            usage_summary = _build_diagram_analysis_usage_summary(cur)
-            selected_count = len(selected_block_ids)
-            rpd_remaining = usage_summary.get("rpd_remaining")
-            if rpd_remaining is not None and selected_count > rpd_remaining:
-                return jsonify({
-                    'error': 'Diagram analysis would exceed the configured per-day limit.',
-                    'usage': usage_summary,
-                }), 429
-
-            analyzed_block_ids = run_diagram_analysis_for_document(
+            analysis_result = run_diagram_analysis_for_document(
                 cur,
                 document_id=document_id,
                 block_ids=selected_block_ids,
                 force_analyze=True,
             )
+            analyzed_block_ids = analysis_result.get("analyzed_block_ids") or []
+            failed_block_ids = analysis_result.get("failed_block_ids") or []
+            exhausted_block_ids = analysis_result.get("exhausted_block_ids") or []
+            all_models_exhausted = bool(analysis_result.get("all_models_exhausted"))
+
             if selected_block_ids and not analyzed_block_ids:
                 last_error = _load_latest_diagram_analysis_error(cur, selected_block_ids)
                 conn.commit()
@@ -3031,10 +3176,13 @@ def api_run_selected_diagram_analysis(document_id):
                     payload, status_code = _build_diagram_analysis_failure_payload(RuntimeError(last_error))
                 else:
                     payload, status_code = ({
-                        'error': 'No selected diagrams could be analyzed. Try Copy Selected Image and Copy AI Prompt instead.',
+                        'error': 'No selected diagrams could be analyzed right now.',
                         'error_type': 'analysis_failed',
-                        'fallback_action': 'copy_image_and_prompt',
+                        'fallback_action': 'copy_image_and_prompt' if all_models_exhausted else None,
                         'usage': get_diagram_analysis_usage_summary(),
+                        'requested_block_ids': selected_block_ids,
+                        'failed_block_ids': failed_block_ids,
+                        'exhausted_block_ids': exhausted_block_ids,
                     }, 503)
                 return jsonify(payload), status_code
         conn.commit()
@@ -3067,6 +3215,21 @@ def api_run_selected_diagram_analysis(document_id):
     response_payload["diagram_analysis_usage"] = get_diagram_analysis_usage_summary()
     response_payload["requested_block_ids"] = selected_block_ids
     response_payload["analyzed_block_ids"] = analyzed_block_ids
+    response_payload["failed_block_ids"] = failed_block_ids
+    response_payload["exhausted_block_ids"] = exhausted_block_ids
+    response_payload["failure_reason_by_block"] = analysis_result.get("failure_reason_by_block") or {}
+    response_payload["all_models_exhausted"] = all_models_exhausted
+
+    if failed_block_ids:
+        response_payload["error"] = (
+            "Some selected diagrams were analyzed, but the remaining diagrams could not be processed because all compatible vision models are temporarily unavailable."
+            if all_models_exhausted
+            else "Some selected diagrams could not be analyzed."
+        )
+        response_payload["error_type"] = "partial_quota_exhaustion" if all_models_exhausted else "partial_analysis_failed"
+        response_payload["fallback_action"] = "copy_image_and_prompt" if all_models_exhausted else None
+        return jsonify(response_payload), 429 if all_models_exhausted else 207
+
     return jsonify(response_payload), 200
 
 
@@ -3118,4 +3281,7 @@ def uploaded_file_preview(filename):
 # ===========================================================================
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    debug_mode = True
+    if not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        _start_embedding_retry_poller()
+    app.run(debug=debug_mode)

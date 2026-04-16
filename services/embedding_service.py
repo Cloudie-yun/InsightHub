@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import email.utils
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from urllib import error, request
+from sentence_transformers import SentenceTransformer
 
+from services.quota_router import (
+    TASK_TYPE_EMBEDDING,
+    QuotaRouterError,
+    classify_quota_error,
+    extract_response_headers,
+    get_quota_project_id,
+    pick_available_model,
+    record_model_success,
+    record_quota_failure,
+)
 
 OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
@@ -18,6 +31,7 @@ class EmbeddingServiceError(Exception):
     retryable: bool
     provider: str
     status_code: int | None = None
+    retry_after_seconds: float | None = None
     details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -27,17 +41,38 @@ class EmbeddingServiceError(Exception):
             "retryable": self.retryable,
             "provider": self.provider,
             "status_code": self.status_code,
+            "retry_after_seconds": self.retry_after_seconds,
             "details": self.details or {},
         }
 
 
 class EmbeddingService:
+    _hf_model_instance = None
+    _hf_model_name = None
+
     def __init__(self) -> None:
         self.provider = (os.environ.get("EMBEDDING_PROVIDER") or "gemini").strip().lower()
-        default_model = "gemini-embedding-001" if self.provider == "gemini" else "text-embedding-3-small"
+
+        if self.provider == "gemini":
+            default_model = "gemini-embedding-001"
+            default_dimension = 1536
+        elif self.provider == "openai":
+            default_model = "text-embedding-3-small"
+            default_dimension = 1536
+        elif self.provider == "huggingface":
+            default_model = "sentence-transformers/all-MiniLM-L6-v2"
+            default_dimension = 384
+        else:
+            default_model = ""
+            default_dimension = 1536
+
         self.model = (os.environ.get("EMBEDDING_MODEL") or default_model).strip()
+        self.current_model_name = self.model
         self.batch_size = self._parse_positive_int(os.environ.get("EMBEDDING_BATCH_SIZE"), default=32)
-        self.expected_dimension = self._parse_positive_int(os.environ.get("EMBEDDING_DIMENSION"), default=1536)
+        self.expected_dimension = self._parse_positive_int(
+            os.environ.get("EMBEDDING_DIMENSION"),
+            default=default_dimension,
+        )
         self.api_key = self._resolve_api_key()
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -46,7 +81,7 @@ class EmbeddingService:
 
         normalized_texts = [self._normalize_text(text, idx) for idx, text in enumerate(texts)]
 
-        if self.provider not in {"openai", "gemini"}:
+        if self.provider not in {"openai", "gemini", "huggingface"}:
             raise EmbeddingServiceError(
                 code="unsupported_provider",
                 message=f"Embedding provider '{self.provider}' is not supported.",
@@ -54,8 +89,7 @@ class EmbeddingService:
                 provider=self.provider,
                 details={"configured_provider": self.provider},
             )
-
-        if not self.api_key:
+        if self.provider in {"openai", "gemini"} and not self.api_key:
             expected_key_hint = "GEMINI_API_KEY" if self.provider == "gemini" else "OPENAI_API_KEY"
             raise EmbeddingServiceError(
                 code="missing_api_key",
@@ -69,8 +103,10 @@ class EmbeddingService:
             batch = normalized_texts[start : start + self.batch_size]
             if self.provider == "openai":
                 batch_vectors = self._embed_openai_batch(batch)
-            else:
+            elif self.provider == "gemini":
                 batch_vectors = self._embed_gemini_batch(batch)
+            else:
+                batch_vectors = self._embed_huggingface_batch(batch)
             vectors.extend(batch_vectors)
 
         if len(vectors) != len(normalized_texts):
@@ -111,13 +147,19 @@ class EmbeddingService:
         except error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
             retryable = exc.code >= 500 or exc.code == 429
+            response_headers = self._serialize_headers(getattr(exc, "headers", None))
+            retry_after_seconds = self._parse_retry_after(response_headers.get("Retry-After"))
             raise EmbeddingServiceError(
                 code="provider_http_error",
                 message="Embedding provider request failed.",
                 retryable=retryable,
                 provider=self.provider,
                 status_code=exc.code,
-                details={"response_body": body[:1000]},
+                retry_after_seconds=retry_after_seconds,
+                details={
+                    "response_body": body[:1000],
+                    "response_headers": response_headers,
+                },
             ) from exc
         except error.URLError as exc:
             raise EmbeddingServiceError(
@@ -136,13 +178,18 @@ class EmbeddingService:
             ) from exc
 
         if status >= 400:
+            response_headers = self._serialize_headers(getattr(resp, "headers", None))
             raise EmbeddingServiceError(
                 code="provider_http_error",
                 message="Embedding provider request failed.",
                 retryable=status >= 500 or status == 429,
                 provider=self.provider,
                 status_code=status,
-                details={"response_body": body[:1000]},
+                retry_after_seconds=self._parse_retry_after(response_headers.get("Retry-After")),
+                details={
+                    "response_body": body[:1000],
+                    "response_headers": response_headers,
+                },
             )
 
         try:
@@ -180,28 +227,78 @@ class EmbeddingService:
         return [embedding for _, embedding in indexed_embeddings]
 
     def _embed_gemini_batch(self, batch: list[str]) -> list[list[float]]:
-        model_ref = self.model if self.model.startswith("models/") else f"models/{self.model}"
-        requests_payload = [
-            {
-                "model": model_ref,
-                "content": {
-                    "parts": [{"text": text}],
-                },
-            }
-            for text in batch
-        ]
-        if self.expected_dimension and model_ref != "models/embedding-001":
-            for request_payload in requests_payload:
-                request_payload["outputDimensionality"] = int(self.expected_dimension)
+        project_id = get_quota_project_id()
+        fallback_errors: list[EmbeddingServiceError] = []
+        attempted_models: set[str] = set()
+        raw_response: dict[str, Any] | None = None
 
-        payload = {
-            "requests": [
-                request_payload
-                for request_payload in requests_payload
+        while raw_response is None:
+            try:
+                selected_model = pick_available_model(
+                    TASK_TYPE_EMBEDDING,
+                    project_id=project_id,
+                    fallback_model=self.model,
+                )
+            except QuotaRouterError as exc:
+                latest_error = fallback_errors[-1] if fallback_errors else None
+                raise EmbeddingServiceError(
+                    code="quota_router_unavailable",
+                    message=str(exc),
+                    retryable=True,
+                    provider="gemini",
+                    status_code=latest_error.status_code if latest_error else None,
+                    retry_after_seconds=latest_error.retry_after_seconds if latest_error else None,
+                    details={
+                        "attempted_models": sorted(attempted_models),
+                        "last_error": latest_error.to_dict() if latest_error else None,
+                    },
+                ) from exc
+
+            attempted_models.add(selected_model)
+            self.current_model_name = selected_model
+            model_ref = selected_model if selected_model.startswith("models/") else f"models/{selected_model}"
+            requests_payload = [
+                {
+                    "model": model_ref,
+                    "content": {
+                        "parts": [{"text": text}],
+                    },
+                }
+                for text in batch
             ]
-        }
-        url = f"{GEMINI_API_BASE}/{model_ref}:batchEmbedContents?key={self.api_key}"
-        raw_response = self._post_json(url=url, payload=payload, provider="gemini")
+            if self.expected_dimension and model_ref != "models/embedding-001":
+                for request_payload in requests_payload:
+                    request_payload["outputDimensionality"] = int(self.expected_dimension)
+
+            payload = {"requests": [request_payload for request_payload in requests_payload]}
+            url = f"{GEMINI_API_BASE}/{model_ref}:batchEmbedContents?key={self.api_key}"
+
+            try:
+                raw_response = self._post_json(url=url, payload=payload, provider="gemini")
+            except EmbeddingServiceError as exc:
+                quota_error_code = classify_quota_error(
+                    status_code=exc.status_code,
+                    message=exc.message,
+                    details=exc.details,
+                )
+                if not quota_error_code:
+                    raise
+
+                record_quota_failure(
+                    project_id=project_id,
+                    model_name=selected_model,
+                    error_code=quota_error_code,
+                    retry_after_seconds=exc.retry_after_seconds,
+                    response_headers=extract_response_headers(exc.details),
+                )
+                fallback_errors.append(exc)
+
+        record_model_success(
+            project_id=project_id,
+            model_name=self.current_model_name,
+            request_count=1,
+            token_count=sum(len(text.split()) for text in batch),
+        )
 
         embeddings = raw_response.get("embeddings")
         if not isinstance(embeddings, list):
@@ -231,6 +328,34 @@ class EmbeddingService:
             vectors.append(values)
 
         return vectors
+    
+    def _embed_huggingface_batch(self, batch: list[str]) -> list[list[float]]:
+        try:
+            if (
+                EmbeddingService._hf_model_instance is None
+                or EmbeddingService._hf_model_name != self.model
+            ):
+                EmbeddingService._hf_model_instance = SentenceTransformer(self.model)
+                EmbeddingService._hf_model_name = self.model
+
+            model = EmbeddingService._hf_model_instance
+            vectors = model.encode(
+                batch,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+
+            return [vec.astype(float).tolist() for vec in vectors]
+
+        except Exception as exc:
+            raise EmbeddingServiceError(
+                code="provider_local_error",
+                message=f"Hugging Face embedding failed: {exc}",
+                retryable=True,
+                provider="huggingface",
+                details={"model": self.model},
+            ) from exc
 
     def _post_json(self, *, url: str, payload: dict[str, Any], provider: str) -> dict[str, Any]:
         req = request.Request(
@@ -247,13 +372,19 @@ class EmbeddingService:
         except error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
             retryable = exc.code >= 500 or exc.code == 429
+            response_headers = self._serialize_headers(getattr(exc, "headers", None))
+            retry_after_seconds = self._parse_retry_after(response_headers.get("Retry-After"))
             raise EmbeddingServiceError(
                 code="provider_http_error",
                 message="Embedding provider request failed.",
                 retryable=retryable,
                 provider=provider,
                 status_code=exc.code,
-                details={"response_body": body[:1000]},
+                retry_after_seconds=retry_after_seconds,
+                details={
+                    "response_body": body[:1000],
+                    "response_headers": response_headers,
+                },
             ) from exc
         except error.URLError as exc:
             raise EmbeddingServiceError(
@@ -272,13 +403,18 @@ class EmbeddingService:
             ) from exc
 
         if status >= 400:
+            response_headers = self._serialize_headers(getattr(resp, "headers", None))
             raise EmbeddingServiceError(
                 code="provider_http_error",
                 message="Embedding provider request failed.",
                 retryable=status >= 500 or status == 429,
                 provider=provider,
                 status_code=status,
-                details={"response_body": body[:1000]},
+                retry_after_seconds=self._parse_retry_after(response_headers.get("Retry-After")),
+                details={
+                    "response_body": body[:1000],
+                    "response_headers": response_headers,
+                },
             )
 
         try:
@@ -300,6 +436,9 @@ class EmbeddingService:
                 provider=provider,
             )
         return parsed
+
+    def get_effective_model_name(self) -> str:
+        return (self.current_model_name or self.model).strip()
 
     def _validate_vectors(self, vectors: list[list[float]]) -> None:
         inferred_dimension: int | None = None
@@ -395,3 +534,57 @@ class EmbeddingService:
             return (os.environ.get("GEMINI_API_KEY") or "").strip()
 
         return (os.environ.get("OPENAI_API_KEY") or "").strip()
+
+    @staticmethod
+    def _serialize_headers(headers: Any) -> dict[str, str]:
+        if not headers:
+            return {}
+
+        items: list[tuple[str, str]] = []
+        if hasattr(headers, "items"):
+            try:
+                items = list(headers.items())
+            except Exception:
+                items = []
+
+        selected_headers: dict[str, str] = {}
+        allowed_names = {
+            "retry-after",
+            "x-ratelimit-limit-requests",
+            "x-ratelimit-remaining-requests",
+            "x-ratelimit-reset-requests",
+            "x-ratelimit-limit-tokens",
+            "x-ratelimit-remaining-tokens",
+            "x-ratelimit-reset-tokens",
+        }
+        for key, value in items:
+            normalized_key = str(key or "").strip()
+            if not normalized_key or normalized_key.lower() not in allowed_names:
+                continue
+            selected_headers[normalized_key] = str(value or "").strip()[:200]
+        return selected_headers
+
+    @staticmethod
+    def _parse_retry_after(value: str | None) -> float | None:
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return None
+
+        try:
+            seconds = float(raw_value)
+            return max(0.0, seconds)
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            parsed_dt = email.utils.parsedate_to_datetime(raw_value)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+
+        if parsed_dt is None:
+            return None
+        if parsed_dt.tzinfo is None:
+            parsed_dt = parsed_dt.replace(tzinfo=timezone.utc)
+
+        delay_seconds = (parsed_dt - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, delay_seconds)

@@ -64,16 +64,38 @@
                 <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                         <h2 class="text-base font-semibold text-slate-900">Diagram Actions</h2>
-                        <p id="diagram-selection-status" class="text-sm text-slate-500">Select diagrams to analyze with our backend, copy one exact image, or copy a detailed external AI prompt.</p>
+                        <p id="diagram-selection-status" class="text-sm text-slate-500">Select diagrams to analyze with our backend, use each diagram card's Copy Image button for exact image copy, or copy a detailed external AI prompt.</p>
+                        <div id="diagram-model-statuses" class="mt-3 flex flex-wrap items-center gap-2">
+                            {% set usage = parser_document.diagram_analysis_usage or {} %}
+                            {% for model in usage.model_statuses or [] %}
+                                {% set status_label = model.status_label or "untracked" %}
+                                {% set is_active = usage.active_model and usage.active_model == model.model_name %}
+                                {% if status_label == "available" %}
+                                    {% set pill_classes = "border-emerald-200 bg-emerald-50 text-emerald-700" %}
+                                {% elif status_label == "blocked" %}
+                                    {% set pill_classes = "border-rose-200 bg-rose-50 text-rose-700" %}
+                                {% else %}
+                                    {% set pill_classes = "border-slate-200 bg-slate-50 text-slate-600" %}
+                                {% endif %}
+                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium {{ pill_classes }}" title="{{ model.model_name }}: {{ status_label }}">
+                                    <span class="font-semibold">{{ model.model_name }}</span>
+                                    <span class="uppercase tracking-wide">{{ status_label }}</span>
+                                    {% if is_active %}
+                                        <span class="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">active</span>
+                                    {% endif %}
+                                </span>
+                            {% endfor %}
+                            {% if not (usage.model_statuses or []) %}
+                                <span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">No model status available</span>
+                            {% endif %}
+                        </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <button id="analyze-selected-diagrams-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-wand-magic-sparkles"></i>Analyze Selected</button>
-                        <button id="copy-selected-diagram-image-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-image"></i>Copy Selected Image</button>
                         <button id="copy-diagram-prompt-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-copy"></i>Copy AI Prompt</button>
                         <button id="clear-diagram-selection-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-eraser"></i>Clear Selection</button>
                     </div>
                 </div>
-                <p id="diagram-action-feedback" class="mt-3 min-h-[20px] text-sm text-slate-500"></p>
             </div>
             <div id="review-blocks" class="space-y-5"></div>
         </div>
@@ -148,25 +170,40 @@ let initialParserDocument = {{ parser_document|tojson }};
     const pageScroller = document.querySelector("main");
     const diagramActionsPanel = document.getElementById("diagram-actions-panel");
     const analyzeSelectedDiagramsBtn = document.getElementById("analyze-selected-diagrams-btn");
-    const copySelectedDiagramImageBtn = document.getElementById("copy-selected-diagram-image-btn");
     const copyDiagramPromptBtn = document.getElementById("copy-diagram-prompt-btn");
     const clearDiagramSelectionBtn = document.getElementById("clear-diagram-selection-btn");
     const diagramSelectionStatus = document.getElementById("diagram-selection-status");
-    const diagramActionFeedback = document.getElementById("diagram-action-feedback");
+    const diagramModelStatuses = document.getElementById("diagram-model-statuses");
+    let copyDiagramPromptFeedbackTimer = null;
     const conversationId = {{ request.args.get('conversation_id')|tojson }};
     const selectedDiagramIds = new Set();
     const esc = (v) => String(v || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
     const norm = (v) => String(v || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+    const absoluteUrl = (v) => {
+        const raw = String(v || "").trim();
+        if (!raw) return "";
+        try {
+            return new URL(raw, window.location.origin).toString();
+        } catch (_error) {
+            return raw;
+        }
+    };
     const blocks = () => Array.isArray(parserDocument?.parser_result?.review_blocks) ? parserDocument.parser_result.review_blocks : [];
     const setStatus = (msg, bad=false) => { saveStatus.textContent = msg || ""; saveStatus.classList.toggle("text-red-600", !!bad); saveStatus.classList.toggle("text-slate-500", !bad); };
-    const setDiagramFeedback = (msg, bad=false) => {
-        if (!diagramActionFeedback) return;
-        diagramActionFeedback.textContent = msg || "";
-        diagramActionFeedback.classList.toggle("text-red-600", !!bad);
-        diagramActionFeedback.classList.toggle("text-emerald-600", !bad && !!msg);
-        diagramActionFeedback.classList.toggle("text-slate-500", !msg);
-    };
     const setDirty = (v) => { hasUnsavedChanges = !!v; if (hasUnsavedChanges) setStatus("You have unsaved review changes."); };
+    const showCopyDiagramPromptFeedback = () => {
+        if (!copyDiagramPromptBtn) return;
+        if (copyDiagramPromptFeedbackTimer) window.clearTimeout(copyDiagramPromptFeedbackTimer);
+        copyDiagramPromptBtn.innerHTML = `<i class="fa-solid fa-check"></i>Copied to clipboard!`;
+        copyDiagramPromptBtn.classList.add("border-emerald-200", "bg-emerald-50", "text-emerald-700");
+        copyDiagramPromptBtn.classList.remove("border-slate-200", "bg-white", "text-slate-700");
+        copyDiagramPromptFeedbackTimer = window.setTimeout(() => {
+            copyDiagramPromptBtn.innerHTML = `<i class="fa-regular fa-copy"></i>Copy AI Prompt`;
+            copyDiagramPromptBtn.classList.remove("border-emerald-200", "bg-emerald-50", "text-emerald-700");
+            copyDiagramPromptBtn.classList.add("border-slate-200", "bg-white", "text-slate-700");
+            copyDiagramPromptFeedbackTimer = null;
+        }, 1800);
+    };
     const ensureMatrix = (matrix) => {
         if (!Array.isArray(matrix)) return [];
         const rows = matrix.map((row) => Array.isArray(row) ? row.map((cell) => String(cell ?? "")) : [String(row ?? "")]);
@@ -181,8 +218,15 @@ let initialParserDocument = {{ parser_document|tojson }};
         for (let i = 0; i < aa.length; i += 1) if (aa[i] !== bb[i]) return aa[i] - bb[i];
         return String(a?.block_id || "").localeCompare(String(b?.block_id || ""));
     };
-    const selectedDiagramBlocks = () => [...blocks()].filter((block) => String(block?.block_type || "").toLowerCase() === "diagram" && selectedDiagramIds.has(String(block.block_id || "")));
+    const allDiagramBlocks = () => [...blocks()].filter((block) => String(block?.block_type || "").toLowerCase() === "diagram");
+    const selectedDiagramBlocks = () => allDiagramBlocks().filter((block) => selectedDiagramIds.has(String(block.block_id || "")));
     const getDiagramUsage = () => parserDocument?.diagram_analysis_usage || {};
+    const syncDiagramUsageFromPayload = (payload) => {
+        const usage = payload?.diagram_analysis_usage || payload?.usage;
+        if (!usage) return;
+        if (!parserDocument || typeof parserDocument !== "object") return;
+        parserDocument.diagram_analysis_usage = usage;
+    };
     const applyDiagramUsageUi = () => {
         const usage = getDiagramUsage();
         const hoverText = usage?.hover_text || "Diagram analysis limits are unavailable.";
@@ -190,28 +234,61 @@ let initialParserDocument = {{ parser_document|tojson }};
             analyzeSelectedDiagramsBtn.title = hoverText;
             analyzeSelectedDiagramsBtn.setAttribute("aria-label", `Analyze Selected. ${hoverText}`);
         }
+        if (diagramModelStatuses) {
+            const statuses = Array.isArray(usage?.model_statuses) ? usage.model_statuses : [];
+            if (!statuses.length) {
+                diagramModelStatuses.innerHTML = `<span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">No model status available</span>`;
+            } else {
+                diagramModelStatuses.innerHTML = statuses.map((status) => {
+                    const modelName = esc(status?.model_name || "unknown");
+                    const label = String(status?.status_label || "untracked").toLowerCase();
+                    const pillClasses = label === "available"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : label === "blocked"
+                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                            : "border-slate-200 bg-slate-50 text-slate-600";
+                    const activeTag = usage?.active_model && status?.model_name === usage.active_model
+                        ? `<span class="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">active</span>`
+                        : "";
+                    return `<span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${pillClasses}" title="${modelName}: ${esc(label)}"><span class="font-semibold">${modelName}</span><span class="uppercase tracking-wide">${esc(label)}</span>${activeTag}</span>`;
+                }).join("");
+            }
+        }
     };
     const updateDiagramActionState = () => {
         const selectedCount = selectedDiagramBlocks().length;
+        const totalDiagramCount = allDiagramBlocks().length;
         const disabled = selectedCount === 0;
-        const singleImageCopyDisabled = selectedCount !== 1;
         if (analyzeSelectedDiagramsBtn) analyzeSelectedDiagramsBtn.disabled = disabled;
-        if (copySelectedDiagramImageBtn) copySelectedDiagramImageBtn.disabled = singleImageCopyDisabled;
-        if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = disabled;
+        if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = totalDiagramCount === 0;
         if (clearDiagramSelectionBtn) clearDiagramSelectionBtn.disabled = disabled;
         if (diagramSelectionStatus) {
-            const usage = getDiagramUsage();
-            const usageText = usage?.hover_text ? ` ${usage.hover_text}.` : "";
             diagramSelectionStatus.textContent = selectedCount
-                ? `${selectedCount} diagram${selectedCount === 1 ? "" : "s"} selected. Analyze them here, copy one exact image, or copy an external AI prompt.${usageText}`
-                : `Select diagrams to analyze with our backend, copy one exact image, or copy a detailed external AI prompt.${usageText}`;
+                ? `${selectedCount} diagram${selectedCount === 1 ? "" : "s"} selected. Analyze them here, use each diagram card's Copy Image button for exact image copy, or copy an external AI prompt.`
+                : `Select diagrams to analyze with our backend, use each diagram card's Copy Image button for exact image copy, or copy an external AI prompt for all diagrams.`;
         }
     };
     const formatDiagramAnalysisError = (payload) => {
+        const analyzedCount = Array.isArray(payload?.analyzed_block_ids) ? payload.analyzed_block_ids.length : 0;
+        const failedCount = Array.isArray(payload?.failed_block_ids) ? payload.failed_block_ids.length : 0;
+        if (payload?.error_type === "vision_models_exhausted") {
+            return payload?.error || "All compatible Gemini vision models are temporarily unavailable.";
+        }
+        if (payload?.error_type === "partial_quota_exhaustion") {
+            return payload?.error || `Updated ${analyzedCount} diagram(s), but ${failedCount} diagram(s) could not be processed because all compatible vision models are temporarily unavailable.`;
+        }
+        if (payload?.error_type === "partial_analysis_failed") {
+            return payload?.error || `Updated ${analyzedCount} diagram(s), but ${failedCount} diagram(s) still failed analysis.`;
+        }
         if (payload?.error_type === "provider_high_demand" || payload?.fallback_action === "copy_image_and_prompt") {
-            return "Gemini is under high demand right now. Use Copy Selected Image and Copy AI Prompt, then ask another AI manually.";
+            return payload?.error || "Gemini is under high demand right now. Use each diagram card's Copy Image button and Copy AI Prompt, then ask another AI manually.";
         }
         return payload?.error || "Unable to analyze selected diagrams.";
+    };
+    const formatDiagramAnalysisSuccess = (payload) => {
+        const analyzedCount = Array.isArray(payload?.analyzed_block_ids) ? payload.analyzed_block_ids.length : 0;
+        if (analyzedCount <= 0) return "Diagram analysis finished, but no selected blocks were updated.";
+        return `Diagram analysis finished. Updated ${analyzedCount} selected block(s).`;
     };
     const updateDiagramActionsVisibility = () => {
         if (!diagramActionsPanel) return;
@@ -220,49 +297,73 @@ let initialParserDocument = {{ parser_document|tojson }};
     };
     const copyDiagramImageToClipboard = async (block) => {
         const imageUrl = String(block?.normalized_content?.image_url || "").trim();
-        if (!imageUrl) return setStatus("No image is available for the selected diagram.", true);
-        if (!navigator.clipboard || typeof window.ClipboardItem === "undefined") {
-            return setStatus("Image clipboard copy is not supported in this browser.", true);
-        }
+        if (!imageUrl) return setStatus("No image is available for this diagram.", true);
+        const imageHref = absoluteUrl(imageUrl);
         try {
-            const response = await fetch(imageUrl, { credentials: "same-origin" });
+            if (!navigator.clipboard || typeof window.ClipboardItem === "undefined" || typeof navigator.clipboard.write !== "function") {
+                throw new Error("image-clipboard-unsupported");
+            }
+            const response = await fetch(imageHref, { credentials: "same-origin" });
             if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
             const blob = await response.blob();
             const mimeType = blob.type || "image/png";
             await navigator.clipboard.write([new ClipboardItem({ [mimeType]: blob })]);
-            setStatus("Selected diagram image copied to clipboard.");
+            setStatus("Diagram image copied to clipboard.");
         } catch (_error) {
-            setStatus("Unable to copy the image to clipboard in this browser.", true);
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === "function" && imageHref) {
+                try {
+                    await navigator.clipboard.writeText(imageHref);
+                    setStatus("Image copy is not supported in this browser. The image URL was copied instead.");
+                    return;
+                } catch (_fallbackError) {
+                    // Fall through to the final error message below.
+                }
+            }
+            setStatus("Unable to copy the image in this browser. Try opening the image and copying it manually.", true);
         }
     };
     const buildExternalDiagramPrompt = () => {
-        const selected = selectedDiagramBlocks().sort(compareBlocks);
-        if (!selected.length) return "";
-        const sections = selected.map((block, index) => {
+        const sourceBlocks = selectedDiagramBlocks().length ? selectedDiagramBlocks() : allDiagramBlocks();
+        const ordered = [...sourceBlocks].sort(compareBlocks);
+        if (!ordered.length) return "";
+        const sections = ordered.map((block, index) => {
             const n = block?.normalized_content || {};
             const caption = norm(block.caption_text || `Diagram ${index + 1}`);
             const ocrText = Array.isArray(n.ocr_text) ? n.ocr_text.filter(Boolean).slice(0, 25) : [];
             const imageUrl = n.image_url || "";
             const lines = [
                 `Diagram ${index + 1}: ${caption || "Untitled diagram"}`,
-                "Task: Analyze the attached image and return a concise diagram description for retrieval.",
-                "Return:",
-                "- 1 short factual summary paragraph",
-                "- 3 to 8 key entities/components",
-                "- 2 to 8 explicit relationships or process steps",
-                "- 3 to 8 question-answerable facts",
-                "Requirements:",
-                "- Focus on meaning, not just appearance",
-                "- Do not invent missing details",
-                "- Be concise and technically precise",
+                "You are analyzing a diagram from an academic or technical document.",
+                "",
+                "Produce a structured description with the following sections:",
+                "",
+                "**Summary**",
+                "Write 2-4 factual sentences explaining what this diagram shows, its purpose, and what domain it belongs to (e.g., biology, systems architecture, statistics).",
+                "",
+                "**Figure Type**",
+                "Identify the diagram type (e.g., flowchart, network graph, bar chart, schematic, conceptual model, phylogenetic tree).",
+                "",
+                "**Key Components**",
+                "List the most important entities: nodes, labels, axes, legends, regions, or layers. For each, give a one-line description of its role.",
+                "",
+                "**Relationships & Structure**",
+                "Describe the explicit connections shown - arrows, flows, hierarchies, dependencies, comparisons, or sequences. Focus on the clearest and most meaningful ones.",
+                "",
+                "**Key Facts**",
+                "List 3-8 precise, self-contained facts that can directly answer questions about this diagram. Each fact should be standalone and unambiguous.",
+                "",
+                "Rules:",
+                "- Only describe what is visible or directly supported by the caption.",
+                "- Do not invent or infer beyond what the diagram shows.",
+                "- Be technically precise and concise. Avoid filler phrases.",
             ];
             if (imageUrl) lines.push(`Image URL for reference: ${window.location.origin}${imageUrl}`);
             if (ocrText.length) lines.push(`OCR hints: ${ocrText.join(" | ")}`);
             return lines.join("\n");
         });
         return [
-            "Use the selected diagram images one by one.",
-            "For each image, produce a concise description that I can paste into my document parser review.",
+            selectedDiagramBlocks().length ? "Use the selected diagram images one by one." : "Use the diagram images below one by one.",
+            "For each image, produce a structured description that I can paste into my document parser review.",
             "",
             ...sections,
         ].join("\n\n");
@@ -380,6 +481,9 @@ let initialParserDocument = {{ parser_document|tojson }};
                         <button type="button" data-action="${isEditing ? "close-edit" : "toggle-edit"}" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
                             <i class="fa-regular ${isEditing ? "fa-circle-check" : "fa-pen-to-square"}"></i>${isEditing ? "Done" : "Edit"}
                         </button>
+                        <button type="button" data-action="copy-image" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                            <i class="fa-regular fa-image"></i>Copy Image
+                        </button>
                         <label class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
                             <input type="checkbox" data-role="diagram-select" data-block-id="${esc(block.block_id)}" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" ${isSelected ? "checked" : ""}>
                             Select
@@ -486,7 +590,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         block.normalized_content = n;
         setDirty(true);
     });
-    reviewBlocksContainer?.addEventListener("click", (event) => {
+    reviewBlocksContainer?.addEventListener("click", async (event) => {
         const button = event.target.closest("button[data-action]");
         if (!button) return;
         const action = button.dataset.action || "";
@@ -504,6 +608,10 @@ let initialParserDocument = {{ parser_document|tojson }};
         }
         const block = findBlock(button.dataset.blockId || "");
         if (!block) return;
+        if (action === "copy-image") {
+            await copyDiagramImageToClipboard(block);
+            return;
+        }
         const n = block.normalized_content || {};
         const matrix = ensureMatrix(n.matrix || []);
         const colIndex = Number(button.dataset.colIndex);
@@ -539,11 +647,9 @@ let initialParserDocument = {{ parser_document|tojson }};
         const selected = selectedDiagramBlocks().sort(compareBlocks);
         if (!selected.length) return setStatus("Select at least one diagram to analyze.", true);
         analyzeSelectedDiagramsBtn.disabled = true;
-        if (copySelectedDiagramImageBtn) copySelectedDiagramImageBtn.disabled = true;
         if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = true;
         if (clearDiagramSelectionBtn) clearDiagramSelectionBtn.disabled = true;
         setStatus(`Analyzing ${selected.length} selected diagram${selected.length === 1 ? "" : "s"}...`);
-        setDiagramFeedback(`Analyzing ${selected.length} selected diagram${selected.length === 1 ? "" : "s"}...`);
         try {
             const params = new URLSearchParams();
             if (conversationId) params.set("conversation_id", String(conversationId));
@@ -554,39 +660,44 @@ let initialParserDocument = {{ parser_document|tojson }};
             });
             let payload = {};
             try { payload = await response.json(); } catch (_error) { payload = {}; }
+            syncDiagramUsageFromPayload(payload);
             if (!response.ok) {
+                if (payload?.parser_result) {
+                    initialParserDocument = payload;
+                    parserDocument = payload;
+                    selectedDiagramIds.clear();
+                    updateCounts();
+                    renderBlocks();
+                }
+                applyDiagramUsageUi();
+                updateDiagramActionState();
                 const message = formatDiagramAnalysisError(payload);
                 setStatus(message, true);
-                setDiagramFeedback(message, true);
                 return;
             }
             initialParserDocument = payload;
             parserDocument = payload;
             selectedDiagramIds.clear();
-            setStatus(`Diagram analysis finished. Updated ${Array.isArray(payload?.analyzed_block_ids) ? payload.analyzed_block_ids.length : 0} selected block(s).`);
-            setDiagramFeedback(`Diagram analysis finished. Updated ${Array.isArray(payload?.analyzed_block_ids) ? payload.analyzed_block_ids.length : 0} selected block(s).`);
+            const hasFailures = Array.isArray(payload?.failed_block_ids) && payload.failed_block_ids.length > 0;
+            const message = hasFailures ? formatDiagramAnalysisError(payload) : formatDiagramAnalysisSuccess(payload);
+            setStatus(message, hasFailures);
             updateCounts();
             renderBlocks();
             applyDiagramUsageUi();
             updateDiagramActionState();
         } catch (_error) {
             setStatus("Network error while analyzing selected diagrams.", true);
-            setDiagramFeedback("Network error while analyzing selected diagrams.", true);
         } finally {
             updateDiagramActionState();
         }
     });
-    copySelectedDiagramImageBtn?.addEventListener("click", async () => {
-        const selected = selectedDiagramBlocks().sort(compareBlocks);
-        if (selected.length !== 1) return setStatus("Select exactly one diagram to copy its image.", true);
-        await copyDiagramImageToClipboard(selected[0]);
-    });
     copyDiagramPromptBtn?.addEventListener("click", async () => {
         const text = buildExternalDiagramPrompt();
-        if (!text) return setStatus("No selected diagrams available for prompt copy.", true);
+        if (!text) return setStatus("No diagrams are available for prompt copy.", true);
         try {
             await navigator.clipboard.writeText(text);
-            setStatus("Diagram prompt copied to clipboard.");
+            showCopyDiagramPromptFeedback();
+            setStatus(selectedDiagramBlocks().length ? "Diagram prompt copied to clipboard." : "Diagram prompt for all diagrams copied to clipboard.");
         } catch (_error) {
             setStatus("Unable to copy automatically.", true);
         }
@@ -596,7 +707,6 @@ let initialParserDocument = {{ parser_document|tojson }};
         renderBlocks();
         updateDiagramActionState();
         setStatus("Diagram selection cleared.");
-        setDiagramFeedback("");
     });
     document.querySelectorAll(".review-filter").forEach((button) => {
         button.addEventListener("click", () => {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import email.utils
 import json
 import mimetypes
 import os
@@ -10,6 +11,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
@@ -17,9 +19,21 @@ from urllib import error, request
 
 from psycopg2.extras import Json
 
+from services.quota_router import (
+    TASK_TYPE_DIAGRAM_VISION,
+    QuotaRouterError,
+    classify_quota_error,
+    get_quota_project_id,
+    get_task_models,
+    pick_available_model,
+    record_model_success,
+    record_quota_failure,
+)
+
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_MODEL = os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+MAX_DIAGRAM_VISION_MODEL_ATTEMPTS = max(1, int(os.environ.get("DIAGRAM_VISION_MODEL_MAX_ATTEMPTS", "3")))
 PROMPT_VERSION = "diagram_v1"
 VISION_GATE_PROMPT_VERSION = "diagram_gate_v1"
 DIAGRAM_VISION_MIN_SCORE = float(os.environ.get("DIAGRAM_VISION_MIN_SCORE", "0.45"))
@@ -169,6 +183,41 @@ def _is_truthy_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_retry_after(value: str | None) -> float | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+
+    try:
+        return max(0.0, float(raw_value))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        parsed_dt = email.utils.parsedate_to_datetime(raw_value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+    if parsed_dt is None:
+        return None
+    if parsed_dt.tzinfo is None:
+        parsed_dt = parsed_dt.replace(tzinfo=timezone.utc)
+
+    return max(0.0, (parsed_dt - datetime.now(timezone.utc)).total_seconds())
+
+
+def _serialize_response_headers(headers: Any) -> dict[str, str]:
+    if not headers or not hasattr(headers, "items"):
+        return {}
+    selected_headers: dict[str, str] = {}
+    for key, value in headers.items():
+        normalized_key = str(key or "").strip()
+        if not normalized_key:
+            continue
+        selected_headers[normalized_key] = str(value or "").strip()[:200]
+    return selected_headers
+
+
 @dataclass
 class DiagramVisionInput:
     block_id: str
@@ -188,6 +237,17 @@ class DiagramVisionDecision:
 
 class DiagramVisionThrottleError(RuntimeError):
     pass
+
+
+@dataclass
+class DiagramVisionRequestError(RuntimeError):
+    message: str
+    status_code: int | None = None
+    retry_after_seconds: float | None = None
+    details: dict[str, Any] | None = None
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class ThrottledVisionQueue:
@@ -552,12 +612,20 @@ class GeminiDiagramVisionService:
 
         try:
             with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                response_headers = _serialize_response_headers(getattr(response, "headers", None))
                 raw = json.loads(response.read().decode("utf-8"))
-        # Add this to diagnose Gemini errors
         except error.HTTPError as http_error:
             details = http_error.read().decode("utf-8", errors="ignore")
-            print(f"[GEMINI ERROR] {http_error.code}: {details}")  # ← see exact error
-            raise RuntimeError(f"Gemini request failed: {http_error.code} {details}") from http_error
+            response_headers = _serialize_response_headers(getattr(http_error, "headers", None))
+            raise DiagramVisionRequestError(
+                message=f"Gemini request failed: {http_error.code} {details}",
+                status_code=http_error.code,
+                retry_after_seconds=_parse_retry_after(response_headers.get("Retry-After")),
+                details={
+                    "response_body": details[:1000],
+                    "response_headers": response_headers,
+                },
+            ) from http_error
 
         text = (
             raw.get("candidates", [{}])[0]
@@ -577,6 +645,7 @@ class GeminiDiagramVisionService:
             "raw_response": raw,
             "response_text": text,
             "candidate_metadata": _extract_candidate_metadata(raw),
+            "response_headers": response_headers,
         }
 
     def parse_analysis_result(self, analysis_result: dict[str, Any]) -> dict[str, Any]:
@@ -945,6 +1014,17 @@ def fetch_pending_diagram_inputs(
     return results
 
 
+def _empty_analysis_result() -> dict[str, Any]:
+    return {
+        "analyzed_block_ids": [],
+        "failed_block_ids": [],
+        "exhausted_block_ids": [],
+        "failure_reason_by_block": {},
+        "all_models_exhausted": False,
+        "last_error": "",
+    }
+
+
 def run_diagram_analysis_for_document(
     cur,
     *,
@@ -952,13 +1032,13 @@ def run_diagram_analysis_for_document(
     api_key: str | None = None,
     block_ids: list[str] | None = None,
     force_analyze: bool = False,
-) -> list[str]:
+) -> dict[str, Any]:
     api_key = api_key or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is required for diagram analysis")
 
-    service = GeminiDiagramVisionService(api_key=api_key)
-    analyzed_block_ids: list[str] = []
+    project_id = get_quota_project_id()
+    outcome = _empty_analysis_result()
 
     fetch_statuses = ["pending_vision_analysis", "failed", "skipped"] if force_analyze else None
     for item in fetch_pending_diagram_inputs(
@@ -987,9 +1067,62 @@ def run_diagram_analysis_for_document(
             )
             continue
         result: dict[str, Any] | None = None
+        selected_model = GEMINI_MODEL
+        all_models_exhausted_for_block = False
         try:
-            result = service.request_analysis(item)
-            result = service.parse_analysis_result(result)
+            fallback_errors: list[str] = []
+            attempted_models: list[str] = []
+            ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=GEMINI_MODEL)
+            max_attempts = min(MAX_DIAGRAM_VISION_MODEL_ATTEMPTS, max(1, len(ordered_models)))
+            while True:
+                if len(attempted_models) >= max_attempts:
+                    raise RuntimeError(
+                        "Diagram analysis failed after trying "
+                        f"{len(attempted_models)} model(s): {' | '.join(fallback_errors)}"
+                    )
+                try:
+                    selected_model = pick_available_model(
+                        TASK_TYPE_DIAGRAM_VISION,
+                        project_id=project_id,
+                        fallback_model=GEMINI_MODEL,
+                        excluded_models=attempted_models,
+                    )
+                except QuotaRouterError as exc:
+                    all_models_exhausted_for_block = True
+                    raise RuntimeError(
+                        f"{exc} Last quota failure: {fallback_errors[-1]}" if fallback_errors else str(exc)
+                    ) from exc
+
+                attempted_models.append(selected_model)
+                service = GeminiDiagramVisionService(api_key=api_key, model=selected_model)
+                try:
+                    result = service.request_analysis(item)
+                    result = service.parse_analysis_result(result)
+                    record_model_success(
+                        project_id=project_id,
+                        model_name=selected_model,
+                        request_count=1,
+                        response_headers=result.get("response_headers") or {},
+                    )
+                    break
+                except Exception as exc:
+                    quota_error_code = classify_quota_error(
+                        status_code=getattr(exc, "status_code", None),
+                        message=str(exc),
+                        details=getattr(exc, "details", None),
+                    )
+                    if not quota_error_code:
+                        raise
+                    record_quota_failure(
+                        project_id=project_id,
+                        model_name=selected_model,
+                        error_code=quota_error_code,
+                        retry_after_seconds=getattr(exc, "retry_after_seconds", None),
+                        response_headers=getattr(exc, "details", {}).get("response_headers", {}) if hasattr(exc, "details") else {},
+                    )
+                    fallback_errors.append(f"{selected_model}: {exc}")
+                    continue
+                fallback_errors.append(f"{selected_model}: {exc}")
             save_diagram_analysis(
                 cur,
                 block_id=item.block_id,
@@ -997,8 +1130,15 @@ def run_diagram_analysis_for_document(
                 diagram_kind=item.diagram_kind,
                 analysis_result=result,
             )
-            analyzed_block_ids.append(item.block_id)
+            outcome["analyzed_block_ids"].append(item.block_id)
         except Exception as exc:
+            failure_message = str(exc)
+            outcome["failed_block_ids"].append(item.block_id)
+            outcome["failure_reason_by_block"][item.block_id] = failure_message
+            outcome["last_error"] = failure_message
+            if all_models_exhausted_for_block or "No compatible model is currently available" in failure_message:
+                outcome["exhausted_block_ids"].append(item.block_id)
+                outcome["all_models_exhausted"] = True
             failure_payload = {}
             failure_raw_response = None
             if result:
@@ -1013,11 +1153,11 @@ def run_diagram_analysis_for_document(
                 cur,
                 block_id=item.block_id,
                 provider_name="gemini",
-                model_name=GEMINI_MODEL,
+                model_name=(result or {}).get("model_name") or selected_model,
                 prompt_version=PROMPT_VERSION,
                 request_payload=failure_payload,
                 raw_response=failure_raw_response,
-                error_message=str(exc),
+                error_message=failure_message,
             )
 
-    return analyzed_block_ids
+    return outcome
