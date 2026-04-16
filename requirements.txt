@@ -1,2 +1,6 @@
 flask
 gunicorn
+psycopg2-binary
+python-dotenv
+httpx
+beautifulsoup4

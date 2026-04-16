@@ -60,10 +60,11 @@
                 <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                         <h2 class="text-base font-semibold text-slate-900">Diagram Actions</h2>
-                        <p id="diagram-selection-status" class="text-sm text-slate-500">Select one or more diagrams to analyze with our backend or prepare an external AI prompt.</p>
+                        <p id="diagram-selection-status" class="text-sm text-slate-500">Select diagrams to analyze with our backend, copy one exact image, or copy a detailed external AI prompt.</p>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <button id="analyze-selected-diagrams-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-wand-magic-sparkles"></i>Analyze Selected</button>
+                        <button id="copy-selected-diagram-image-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-image"></i>Copy Selected Image</button>
                         <button id="copy-diagram-prompt-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-copy"></i>Copy AI Prompt</button>
                         <button id="clear-diagram-selection-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-eraser"></i>Clear Selection</button>
                     </div>
@@ -124,6 +125,7 @@ body.theme-dark .parser-review-card {
     const copyContextBtn = document.getElementById("copy-context-btn");
     const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
     const analyzeSelectedDiagramsBtn = document.getElementById("analyze-selected-diagrams-btn");
+    const copySelectedDiagramImageBtn = document.getElementById("copy-selected-diagram-image-btn");
     const copyDiagramPromptBtn = document.getElementById("copy-diagram-prompt-btn");
     const clearDiagramSelectionBtn = document.getElementById("clear-diagram-selection-btn");
     const diagramSelectionStatus = document.getElementById("diagram-selection-status");
@@ -152,13 +154,32 @@ body.theme-dark .parser-review-card {
     const updateDiagramActionState = () => {
         const selectedCount = selectedDiagramBlocks().length;
         const disabled = selectedCount === 0;
+        const singleImageCopyDisabled = selectedCount !== 1;
         if (analyzeSelectedDiagramsBtn) analyzeSelectedDiagramsBtn.disabled = disabled;
+        if (copySelectedDiagramImageBtn) copySelectedDiagramImageBtn.disabled = singleImageCopyDisabled;
         if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = disabled;
         if (clearDiagramSelectionBtn) clearDiagramSelectionBtn.disabled = disabled;
         if (diagramSelectionStatus) {
             diagramSelectionStatus.textContent = selectedCount
-                ? `${selectedCount} diagram${selectedCount === 1 ? "" : "s"} selected. Analyze them here or copy an external AI prompt.`
-                : "Select one or more diagrams to analyze with our backend or prepare an external AI prompt.";
+                ? `${selectedCount} diagram${selectedCount === 1 ? "" : "s"} selected. Analyze them here, copy one exact image, or copy an external AI prompt.`
+                : "Select diagrams to analyze with our backend, copy one exact image, or copy a detailed external AI prompt.";
+        }
+    };
+    const copyDiagramImageToClipboard = async (block) => {
+        const imageUrl = String(block?.normalized_content?.image_url || "").trim();
+        if (!imageUrl) return setStatus("No image is available for the selected diagram.", true);
+        if (!navigator.clipboard || typeof window.ClipboardItem === "undefined") {
+            return setStatus("Image clipboard copy is not supported in this browser.", true);
+        }
+        try {
+            const response = await fetch(imageUrl, { credentials: "same-origin" });
+            if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
+            const blob = await response.blob();
+            const mimeType = blob.type || "image/png";
+            await navigator.clipboard.write([new ClipboardItem({ [mimeType]: blob })]);
+            setStatus("Selected diagram image copied to clipboard.");
+        } catch (_error) {
+            setStatus("Unable to copy the image to clipboard in this browser.", true);
         }
     };
     const buildExternalDiagramPrompt = () => {
@@ -471,6 +492,7 @@ body.theme-dark .parser-review-card {
         const selected = selectedDiagramBlocks().sort(compareBlocks);
         if (!selected.length) return setStatus("Select at least one diagram to analyze.", true);
         analyzeSelectedDiagramsBtn.disabled = true;
+        if (copySelectedDiagramImageBtn) copySelectedDiagramImageBtn.disabled = true;
         if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = true;
         if (clearDiagramSelectionBtn) clearDiagramSelectionBtn.disabled = true;
         setStatus(`Analyzing ${selected.length} selected diagram${selected.length === 1 ? "" : "s"}...`);
@@ -498,6 +520,11 @@ body.theme-dark .parser-review-card {
         } finally {
             updateDiagramActionState();
         }
+    });
+    copySelectedDiagramImageBtn?.addEventListener("click", async () => {
+        const selected = selectedDiagramBlocks().sort(compareBlocks);
+        if (selected.length !== 1) return setStatus("Select exactly one diagram to copy its image.", true);
+        await copyDiagramImageToClipboard(selected[0]);
     });
     copyDiagramPromptBtn?.addEventListener("click", async () => copyText(buildExternalDiagramPrompt()));
     clearDiagramSelectionBtn?.addEventListener("click", () => {
