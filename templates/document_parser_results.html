@@ -175,6 +175,7 @@ let initialParserDocument = {{ parser_document|tojson }};
     const diagramSelectionStatus = document.getElementById("diagram-selection-status");
     const diagramModelStatuses = document.getElementById("diagram-model-statuses");
     let copyDiagramPromptFeedbackTimer = null;
+    const copyDiagramImageFeedbackTimers = new Map();
     const conversationId = {{ request.args.get('conversation_id')|tojson }};
     const selectedDiagramIds = new Set();
     const esc = (v) => String(v || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
@@ -203,6 +204,28 @@ let initialParserDocument = {{ parser_document|tojson }};
             copyDiagramPromptBtn.classList.add("border-slate-200", "bg-white", "text-slate-700");
             copyDiagramPromptFeedbackTimer = null;
         }, 1800);
+    };
+    const showCopyDiagramImageFeedback = (button, message, variant="success") => {
+        if (!(button instanceof HTMLElement)) return;
+        const existingTimer = copyDiagramImageFeedbackTimers.get(button);
+        if (existingTimer) window.clearTimeout(existingTimer);
+        button.innerHTML = variant === "success"
+            ? `<i class="fa-solid fa-check"></i>${esc(message)}`
+            : `<i class="fa-solid fa-link"></i>${esc(message)}`;
+        if (variant === "success") {
+            button.classList.add("border-emerald-200", "bg-emerald-50", "text-emerald-700");
+            button.classList.remove("border-slate-200", "bg-white", "text-slate-600");
+        } else {
+            button.classList.add("border-amber-200", "bg-amber-50", "text-amber-700");
+            button.classList.remove("border-slate-200", "bg-white", "text-slate-600");
+        }
+        const resetTimer = window.setTimeout(() => {
+            button.innerHTML = `<i class="fa-regular fa-image"></i>Copy Image`;
+            button.classList.remove("border-emerald-200", "bg-emerald-50", "text-emerald-700", "border-amber-200", "bg-amber-50", "text-amber-700");
+            button.classList.add("border-slate-200", "bg-white", "text-slate-600");
+            copyDiagramImageFeedbackTimers.delete(button);
+        }, 1800);
+        copyDiagramImageFeedbackTimers.set(button, resetTimer);
     };
     const ensureMatrix = (matrix) => {
         if (!Array.isArray(matrix)) return [];
@@ -295,7 +318,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         const show = activeFilter === "diagram";
         diagramActionsPanel.classList.toggle("hidden", !show);
     };
-    const copyDiagramImageToClipboard = async (block) => {
+    const copyDiagramImageToClipboard = async (block, button) => {
         const imageUrl = String(block?.normalized_content?.image_url || "").trim();
         if (!imageUrl) return setStatus("No image is available for this diagram.", true);
         const imageHref = absoluteUrl(imageUrl);
@@ -306,14 +329,43 @@ let initialParserDocument = {{ parser_document|tojson }};
             const response = await fetch(imageHref, { credentials: "same-origin" });
             if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
             const blob = await response.blob();
-            const mimeType = blob.type || "image/png";
-            await navigator.clipboard.write([new ClipboardItem({ [mimeType]: blob })]);
-            setStatus("Diagram image copied to clipboard.");
-        } catch (_error) {
+            const objectUrl = URL.createObjectURL(blob);
+            const pngBlob = await new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement("canvas");
+                    canvas.width = img.naturalWidth || img.width;
+                    canvas.height = img.naturalHeight || img.height;
+                    const ctx = canvas.getContext("2d");
+                    if (!ctx) {
+                        URL.revokeObjectURL(objectUrl);
+                        reject(new Error("Canvas 2D context is unavailable."));
+                        return;
+                    }
+                    ctx.drawImage(img, 0, 0);
+                    canvas.toBlob((nextBlob) => {
+                        URL.revokeObjectURL(objectUrl);
+                        if (!nextBlob) {
+                            reject(new Error("Unable to convert image to PNG for clipboard copy."));
+                            return;
+                        }
+                        resolve(nextBlob);
+                    }, "image/png");
+                };
+                img.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    reject(new Error("Unable to decode image for clipboard copy."));
+                };
+                img.src = objectUrl;
+            });
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+            showCopyDiagramImageFeedback(button, "Copied to clipboard!");
+        } catch (error) {
+            console.error("Clipboard write failed:", error?.name || "Error", error?.message || error);
             if (navigator.clipboard && typeof navigator.clipboard.writeText === "function" && imageHref) {
                 try {
                     await navigator.clipboard.writeText(imageHref);
-                    setStatus("Image copy is not supported in this browser. The image URL was copied instead.");
+                    showCopyDiagramImageFeedback(button, "Image URL copied", "fallback");
                     return;
                 } catch (_fallbackError) {
                     // Fall through to the final error message below.
@@ -323,50 +375,31 @@ let initialParserDocument = {{ parser_document|tojson }};
         }
     };
     const buildExternalDiagramPrompt = () => {
-        const sourceBlocks = selectedDiagramBlocks().length ? selectedDiagramBlocks() : allDiagramBlocks();
-        const ordered = [...sourceBlocks].sort(compareBlocks);
-        if (!ordered.length) return "";
-        const sections = ordered.map((block, index) => {
-            const n = block?.normalized_content || {};
-            const caption = norm(block.caption_text || `Diagram ${index + 1}`);
-            const ocrText = Array.isArray(n.ocr_text) ? n.ocr_text.filter(Boolean).slice(0, 25) : [];
-            const imageUrl = n.image_url || "";
-            const lines = [
-                `Diagram ${index + 1}: ${caption || "Untitled diagram"}`,
-                "You are analyzing a diagram from an academic or technical document.",
-                "",
-                "Produce a structured description with the following sections:",
-                "",
-                "**Summary**",
-                "Write 2-4 factual sentences explaining what this diagram shows, its purpose, and what domain it belongs to (e.g., biology, systems architecture, statistics).",
-                "",
-                "**Figure Type**",
-                "Identify the diagram type (e.g., flowchart, network graph, bar chart, schematic, conceptual model, phylogenetic tree).",
-                "",
-                "**Key Components**",
-                "List the most important entities: nodes, labels, axes, legends, regions, or layers. For each, give a one-line description of its role.",
-                "",
-                "**Relationships & Structure**",
-                "Describe the explicit connections shown - arrows, flows, hierarchies, dependencies, comparisons, or sequences. Focus on the clearest and most meaningful ones.",
-                "",
-                "**Key Facts**",
-                "List 3-8 precise, self-contained facts that can directly answer questions about this diagram. Each fact should be standalone and unambiguous.",
-                "",
-                "Rules:",
-                "- Only describe what is visible or directly supported by the caption.",
-                "- Do not invent or infer beyond what the diagram shows.",
-                "- Be technically precise and concise. Avoid filler phrases.",
-            ];
-            if (imageUrl) lines.push(`Image URL for reference: ${window.location.origin}${imageUrl}`);
-            if (ocrText.length) lines.push(`OCR hints: ${ocrText.join(" | ")}`);
-            return lines.join("\n");
-        });
         return [
-            selectedDiagramBlocks().length ? "Use the selected diagram images one by one." : "Use the diagram images below one by one.",
-            "For each image, produce a structured description that I can paste into my document parser review.",
+            "You are analyzing a diagram from an academic or technical document.",
             "",
-            ...sections,
-        ].join("\n\n");
+            "Produce a structured description with the following sections:",
+            "",
+            "**Summary**",
+            "Write 2-4 factual sentences explaining what this diagram shows, its purpose, and what domain it belongs to (e.g., biology, systems architecture, statistics).",
+            "",
+            "**Figure Type**",
+            "Identify the diagram type (e.g., flowchart, network graph, bar chart, schematic, conceptual model, phylogenetic tree).",
+            "",
+            "**Key Components**",
+            "List the most important entities: nodes, labels, axes, legends, regions, or layers. For each, give a one-line description of its role.",
+            "",
+            "**Relationships & Structure**",
+            "Describe the explicit connections shown - arrows, flows, hierarchies, dependencies, comparisons, or sequences. Focus on the clearest and most meaningful ones.",
+            "",
+            "**Key Facts**",
+            "List 3-8 precise, self-contained facts that can directly answer questions about this diagram. Each fact should be standalone and unambiguous.",
+            "",
+            "Rules:",
+            "- Only describe what is visible in the diagram.",
+            "- Do not invent or infer beyond what the diagram shows.",
+            "- Be technically precise and concise. Avoid filler phrases.",
+        ].join("\n");
     };
     const updateCounts = () => {
         const count = { total: 0, text: 0, table: 0, diagram: 0 };
@@ -609,7 +642,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         const block = findBlock(button.dataset.blockId || "");
         if (!block) return;
         if (action === "copy-image") {
-            await copyDiagramImageToClipboard(block);
+            await copyDiagramImageToClipboard(block, button);
             return;
         }
         const n = block.normalized_content || {};
@@ -697,7 +730,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         try {
             await navigator.clipboard.writeText(text);
             showCopyDiagramPromptFeedback();
-            setStatus(selectedDiagramBlocks().length ? "Diagram prompt copied to clipboard." : "Diagram prompt for all diagrams copied to clipboard.");
+            setStatus("Diagram prompt copied to clipboard.");
         } catch (_error) {
             setStatus("Unable to copy automatically.", true);
         }
