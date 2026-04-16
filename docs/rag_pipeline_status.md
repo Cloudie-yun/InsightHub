@@ -259,6 +259,221 @@ Pass condition:
 - count is non-zero (and increases after test upload),
 - recent rows include expected model metadata.
 
+---
+
+# Milestone 2 Retrieval API Contract
+
+This section defines the **Milestone 2 evidence retrieval API** (no LLM generation yet). The endpoint returns top-k ranked blocks to support later grounded answer generation.
+
+## Endpoint
+
+- **Method**: `POST`
+- **Path**: `/api/conversations/<conversation_id>/retrieval`
+- **Auth**: same authenticated user/session requirements as existing conversation APIs.
+
+## Request schema
+
+```json
+{
+  "query": "What does the contract say about renewal?",
+  "k": 8,
+  "document_ids": ["doc_123", "doc_456"]
+}
+```
+
+### Fields
+
+- `query` (string, required)
+  - Must be non-empty after trimming whitespace.
+  - Recommended max length: 4000 chars (reject larger payloads as invalid input).
+- `k` (integer, optional)
+  - Defaults to **8** when omitted.
+  - Maximum allowed: **20**.
+  - Minimum allowed: **1**.
+- `document_ids` (array[string], optional)
+  - If present, each id must belong to the given `conversation_id` and requesting user.
+  - If omitted, retrieval searches across all conversation-scoped documents available to that conversation.
+
+## Response schema (success)
+
+```json
+{
+  "conversation_id": "conv_001",
+  "query": "What does the contract say about renewal?",
+  "k_requested": 8,
+  "k_returned": 3,
+  "metric": "cosine_distance",
+  "results": [
+    {
+      "rank": 1,
+      "block_id": "b_101",
+      "document_id": "doc_123",
+      "distance": 0.1123,
+      "similarity": 0.8877,
+      "retrieval_text": "The agreement renews automatically every 12 months...",
+      "source": {
+        "unit_index": 42,
+        "page": 7,
+        "block_type": "paragraph"
+      }
+    }
+  ]
+}
+```
+
+### Notes
+
+- `distance` is the raw ranking metric.
+- `similarity` is a convenience field (`1 - distance` for cosine distance) for UI display.
+- `k_returned` may be lower than requested when eligible blocks are fewer than `k`.
+
+## Ranking behavior (required)
+
+1. **Distance metric**: `cosine_distance` over query embedding vs. `document_block_embeddings.embedding`.
+2. **Primary sort**: ascending `distance` (smaller is more similar).
+3. **Tie-breaker #1**: ascending `document_blocks.id` (stable deterministic order).
+4. **Tie-breaker #2**: ascending `document_blocks.unit_index` when present.
+5. **Default `k`**: `8`.
+6. **Max `k`**: `20` (reject larger values with `400`).
+
+## Filtering rules (required)
+
+Retrieval candidates MUST satisfy all rules:
+
+1. `document_blocks.retrievable = TRUE`.
+2. `document_blocks.embedding_status = 'embedded'`.
+3. Block has an embedded vector row (`document_block_embeddings.block_id = document_blocks.id`).
+4. Block belongs to the requested `conversation_id` through its parent document.
+5. If `document_ids` is supplied, block’s `document_id` must be in that supplied set.
+
+Practical implication:
+
+- Blocks that are parsed but not yet embedded are excluded.
+- Blocks outside the conversation scope are excluded even if IDs are guessed by a client.
+
+## Error responses
+
+### 400 Bad Request (input validation)
+
+Use for malformed payloads:
+
+- missing/blank `query`
+- non-integer `k`
+- `k < 1` or `k > 20`
+- `document_ids` not an array of strings
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "k must be an integer between 1 and 20."
+  }
+}
+```
+
+### 403 Forbidden (scope violation)
+
+Use when user requests documents/conversation they do not own or cannot access.
+
+```json
+{
+  "error": {
+    "code": "forbidden",
+    "message": "You do not have access to one or more requested documents."
+  }
+}
+```
+
+### 404 Not Found
+
+Use when the target conversation does not exist for the current user.
+
+```json
+{
+  "error": {
+    "code": "conversation_not_found",
+    "message": "Conversation not found."
+  }
+}
+```
+
+### 200 OK with empty retrieval outcome
+
+Milestone 2 treats “no eligible matches” as a successful retrieval call with zero results.
+
+```json
+{
+  "conversation_id": "conv_001",
+  "query": "Explain the cancellation terms",
+  "k_requested": 8,
+  "k_returned": 0,
+  "metric": "cosine_distance",
+  "results": []
+}
+```
+
+## Milestone 2 acceptance checklist
+
+Use these checks to mark Milestone 2 complete.
+
+1. **API contract available and implemented**
+   - `POST /api/conversations/<conversation_id>/retrieval` accepts `query`, optional `k`, optional `document_ids`.
+2. **Ranking is deterministic**
+   - Repeated calls with same inputs return same ordering when distances tie.
+3. **`k` behavior enforced**
+   - Omitted `k` resolves to `8`.
+   - `k > 20` returns `400 invalid_request`.
+4. **Filtering rules enforced**
+   - Non-embedded blocks never appear.
+   - Out-of-scope conversation/doc IDs are not retrievable.
+5. **Empty retrieval is non-error**
+   - No matching eligible blocks returns `200` with `results: []`.
+
+### Concrete SQL/API verification
+
+Run SQL (example diagnostic query):
+
+```sql
+SELECT
+  db.id AS block_id,
+  db.document_id,
+  db.embedding_status,
+  db.retrievable,
+  dbe.block_id IS NOT NULL AS has_vector
+FROM document_blocks db
+LEFT JOIN document_block_embeddings dbe ON dbe.block_id = db.id
+WHERE db.document_id = '<DOC_ID>'
+ORDER BY db.id
+LIMIT 50;
+```
+
+Pass criteria:
+
+- only rows with `retrievable=true`, `embedding_status='embedded'`, and `has_vector=true` are eligible.
+
+API checks (example):
+
+```bash
+# 1) Default k check
+curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
+  -H "Content-Type: application/json" \
+  -b "<SESSION_COOKIE>" \
+  -d '{"query":"renewal clause"}'
+
+# 2) k upper bound check (expect 400)
+curl -s -o /tmp/m2_err.json -w "%{http_code}\n" \
+  -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
+  -H "Content-Type: application/json" \
+  -b "<SESSION_COOKIE>" \
+  -d '{"query":"renewal clause","k":21}'
+
+# 3) Empty retrieval check (expect 200 and results: [])
+curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
+  -H "Content-Type: application/json" \
+  -b "<SESSION_COOKIE>" \
+  -d '{"query":"nonexistent token sequence zyxwvu"}'
+```
+
 ### C) Failure visibility + retry
 
 Force or wait for a known failure scenario, then run:
