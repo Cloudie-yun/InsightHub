@@ -56,6 +56,19 @@
                     </div>
                 </div>
             </div>
+            <div class="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-900">Diagram Actions</h2>
+                        <p id="diagram-selection-status" class="text-sm text-slate-500">Select one or more diagrams to analyze with our backend or prepare an external AI prompt.</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="analyze-selected-diagrams-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-wand-magic-sparkles"></i>Analyze Selected</button>
+                        <button id="copy-diagram-prompt-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-copy"></i>Copy AI Prompt</button>
+                        <button id="clear-diagram-selection-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-eraser"></i>Clear Selection</button>
+                    </div>
+                </div>
+            </div>
             <div id="review-blocks" class="space-y-5"></div>
         </div>
         <aside class="space-y-5 xl:sticky xl:top-24 xl:self-start">
@@ -110,7 +123,12 @@ body.theme-dark .parser-review-card {
     const previewPre = document.getElementById("review-markdown-preview");
     const copyContextBtn = document.getElementById("copy-context-btn");
     const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
+    const analyzeSelectedDiagramsBtn = document.getElementById("analyze-selected-diagrams-btn");
+    const copyDiagramPromptBtn = document.getElementById("copy-diagram-prompt-btn");
+    const clearDiagramSelectionBtn = document.getElementById("clear-diagram-selection-btn");
+    const diagramSelectionStatus = document.getElementById("diagram-selection-status");
     const conversationId = {{ request.args.get('conversation_id')|tojson }};
+    const selectedDiagramIds = new Set();
     const esc = (v) => String(v || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
     const norm = (v) => String(v || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
     const blocks = () => Array.isArray(parserDocument?.parser_result?.review_blocks) ? parserDocument.parser_result.review_blocks : [];
@@ -129,6 +147,51 @@ body.theme-dark .parser-review-card {
         const bb = [Number(b?.source_unit_index ?? 0), Number(b?.reading_order ?? 999999), rank[String(b?.block_type || "").toLowerCase()] ?? 9];
         for (let i = 0; i < aa.length; i += 1) if (aa[i] !== bb[i]) return aa[i] - bb[i];
         return String(a?.block_id || "").localeCompare(String(b?.block_id || ""));
+    };
+    const selectedDiagramBlocks = () => [...blocks()].filter((block) => String(block?.block_type || "").toLowerCase() === "diagram" && selectedDiagramIds.has(String(block.block_id || "")));
+    const updateDiagramActionState = () => {
+        const selectedCount = selectedDiagramBlocks().length;
+        const disabled = selectedCount === 0;
+        if (analyzeSelectedDiagramsBtn) analyzeSelectedDiagramsBtn.disabled = disabled;
+        if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = disabled;
+        if (clearDiagramSelectionBtn) clearDiagramSelectionBtn.disabled = disabled;
+        if (diagramSelectionStatus) {
+            diagramSelectionStatus.textContent = selectedCount
+                ? `${selectedCount} diagram${selectedCount === 1 ? "" : "s"} selected. Analyze them here or copy an external AI prompt.`
+                : "Select one or more diagrams to analyze with our backend or prepare an external AI prompt.";
+        }
+    };
+    const buildExternalDiagramPrompt = () => {
+        const selected = selectedDiagramBlocks().sort(compareBlocks);
+        if (!selected.length) return "";
+        const sections = selected.map((block, index) => {
+            const n = block?.normalized_content || {};
+            const caption = norm(block.caption_text || `Diagram ${index + 1}`);
+            const ocrText = Array.isArray(n.ocr_text) ? n.ocr_text.filter(Boolean).slice(0, 25) : [];
+            const imageUrl = n.image_url || "";
+            const lines = [
+                `Diagram ${index + 1}: ${caption || "Untitled diagram"}`,
+                "Task: Analyze the attached image and return a concise diagram description for retrieval.",
+                "Return:",
+                "- 1 short factual summary paragraph",
+                "- 3 to 8 key entities/components",
+                "- 2 to 8 explicit relationships or process steps",
+                "- 3 to 8 question-answerable facts",
+                "Requirements:",
+                "- Focus on meaning, not just appearance",
+                "- Do not invent missing details",
+                "- Be concise and technically precise",
+            ];
+            if (imageUrl) lines.push(`Image URL for reference: ${window.location.origin}${imageUrl}`);
+            if (ocrText.length) lines.push(`OCR hints: ${ocrText.join(" | ")}`);
+            return lines.join("\n");
+        });
+        return [
+            "Use the selected diagram images one by one.",
+            "For each image, produce a concise description that I can paste into my document parser review.",
+            "",
+            ...sections,
+        ].join("\n\n");
     };
     const buildContextMarkdown = () => {
         const parts = [];
@@ -234,6 +297,7 @@ body.theme-dark .parser-review-card {
     };
     const renderDiagram = (block, index) => {
         const n = block.normalized_content || {};
+        const isSelected = selectedDiagramIds.has(String(block.block_id || ""));
         const caption = block.caption_text || "";
         const description = n.visual_description || "";
         const imageUrl = n.image_url || "";
@@ -257,6 +321,10 @@ body.theme-dark .parser-review-card {
                         </div>
                         <div><h3 class="text-lg font-semibold text-slate-900">Diagram Interpretation</h3><p class="text-sm text-slate-500">Describe what the diagram means so the chatbot can reason over it.</p></div>
                     </div>
+                    <label class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
+                        <input type="checkbox" data-role="diagram-select" data-block-id="${esc(block.block_id)}" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" ${isSelected ? "checked" : ""}>
+                        Select
+                    </label>
                 </div>
                 <div class="mt-5 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
                     <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -351,6 +419,12 @@ body.theme-dark .parser-review-card {
             block.caption_text = target.value;
         } else if (role === "diagram-description") {
             n.visual_description = target.value;
+        } else if (role === "diagram-select") {
+            const blockIdValue = String(block.block_id || "");
+            if (target.checked) selectedDiagramIds.add(blockIdValue);
+            else selectedDiagramIds.delete(blockIdValue);
+            updateDiagramActionState();
+            return;
         }
         block.normalized_content = n;
         setDirty(true);
@@ -392,6 +466,45 @@ body.theme-dark .parser-review-card {
         setDirty(true);
         renderBlocks();
         refreshPreview();
+    });
+    analyzeSelectedDiagramsBtn?.addEventListener("click", async () => {
+        const selected = selectedDiagramBlocks().sort(compareBlocks);
+        if (!selected.length) return setStatus("Select at least one diagram to analyze.", true);
+        analyzeSelectedDiagramsBtn.disabled = true;
+        if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = true;
+        if (clearDiagramSelectionBtn) clearDiagramSelectionBtn.disabled = true;
+        setStatus(`Analyzing ${selected.length} selected diagram${selected.length === 1 ? "" : "s"}...`);
+        try {
+            const params = new URLSearchParams();
+            if (conversationId) params.set("conversation_id", String(conversationId));
+            const response = await fetch(`/api/documents/${encodeURIComponent(parserDocument?.document_id || "")}/diagram-analysis${params.toString() ? `?${params.toString()}` : ""}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ block_ids: selected.map((block) => block.block_id) }),
+            });
+            let payload = {};
+            try { payload = await response.json(); } catch (_error) { payload = {}; }
+            if (!response.ok) return setStatus(payload?.error || "Unable to analyze selected diagrams.", true);
+            initialParserDocument = payload;
+            parserDocument = payload;
+            selectedDiagramIds.clear();
+            setStatus(`Diagram analysis finished. Updated ${Array.isArray(payload?.analyzed_block_ids) ? payload.analyzed_block_ids.length : 0} selected block(s).`);
+            updateCounts();
+            renderBlocks();
+            refreshPreview();
+            updateDiagramActionState();
+        } catch (_error) {
+            setStatus("Network error while analyzing selected diagrams.", true);
+        } finally {
+            updateDiagramActionState();
+        }
+    });
+    copyDiagramPromptBtn?.addEventListener("click", async () => copyText(buildExternalDiagramPrompt()));
+    clearDiagramSelectionBtn?.addEventListener("click", () => {
+        selectedDiagramIds.clear();
+        renderBlocks();
+        updateDiagramActionState();
+        setStatus("Diagram selection cleared.");
     });
     document.querySelectorAll(".review-filter").forEach((button) => {
         button.addEventListener("click", () => {
@@ -448,6 +561,7 @@ body.theme-dark .parser-review-card {
     renderBlocks();
     updateCounts();
     refreshPreview();
+    updateDiagramActionState();
 })();
 </script>
 {% endblock %}

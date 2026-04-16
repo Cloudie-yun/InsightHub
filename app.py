@@ -2811,6 +2811,77 @@ def get_document_file_record(user_id, document_id, conversation_id=None) -> dict
     return jsonify(_build_parser_review_payload(document_result)), 200
 
 
+@app.route('/api/documents/<document_id>/diagram-analysis', methods=['POST'])
+def api_run_selected_diagram_analysis(document_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to analyze diagrams.'}), 401
+
+    conversation_id = (request.args.get("conversation_id") or "").strip() or None
+    payload = request.get_json(silent=True) or {}
+    selected_block_ids = [
+        str(block_id).strip()
+        for block_id in (payload.get("block_ids") or [])
+        if str(block_id).strip()
+    ]
+    if not selected_block_ids:
+        return jsonify({'error': 'At least one diagram must be selected.'}), 400
+
+    document_result = get_document_parser_result(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if not document_result:
+        return jsonify({'error': 'Document not found.'}), 404
+
+    parser_result = document_result.get("parser_result") or {}
+    diagram_block_ids = {
+        str(block.get("block_id"))
+        for block in (parser_result.get("document_blocks") or [])
+        if str(block.get("block_type") or "").lower() == "diagram" and block.get("block_id")
+    }
+    invalid_block_ids = [block_id for block_id in selected_block_ids if block_id not in diagram_block_ids]
+    if invalid_block_ids:
+        return jsonify({'error': 'Some selected blocks are not valid diagram blocks.', 'invalid_block_ids': invalid_block_ids}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if not _diagram_vision_schema_ready(cur):
+                return jsonify({'error': 'Diagram analysis tables are not ready yet.'}), 400
+
+            analyzed_block_ids = run_diagram_analysis_for_document(
+                cur,
+                document_id=document_id,
+                block_ids=selected_block_ids,
+                force_analyze=True,
+            )
+        conn.commit()
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        logger.exception("Selected diagram analysis failed for document_id=%s blocks=%s", document_id, selected_block_ids)
+        return jsonify({'error': str(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+    refreshed_result = get_document_parser_result(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if not refreshed_result:
+        return jsonify({'error': 'Document not found after analysis.'}), 404
+
+    response_payload = _build_parser_review_payload(refreshed_result)
+    response_payload["requested_block_ids"] = selected_block_ids
+    response_payload["analyzed_block_ids"] = analyzed_block_ids
+    return jsonify(response_payload), 200
+
+
 # ===========================================================================
 # 10. FILE SERVING ROUTES
 # ===========================================================================

@@ -7,6 +7,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -19,6 +20,10 @@ GEMINI_MODEL = os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 PROMPT_VERSION = "diagram_v1"
 VISION_GATE_PROMPT_VERSION = "diagram_gate_v1"
 DIAGRAM_VISION_MIN_SCORE = float(os.environ.get("DIAGRAM_VISION_MIN_SCORE", "0.45"))
+GEMINI_VISION_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_VISION_MAX_OUTPUT_TOKENS", "8192"))
+DIAGRAM_ASSETS_BASE_DIR = Path(
+    os.environ.get("DIAGRAM_ASSETS_BASE_DIR", r"C:\Users\Clouddy\Desktop\FYP2\uploads")
+)
 
 _POSITIVE_DIAGRAM_KEYWORDS = {
     "architecture",
@@ -179,13 +184,18 @@ Produce structured information that helps a document-grounded chatbot answer que
 
 Instructions:
 1. Identify the figure type.
-2. Read any visible labels or text inside the figure.
-3. Explain what the figure shows in a short factual summary.
-4. Extract key entities such as nodes, labels, components, legends, arrows, or axes.
-5. Extract explicit relationships shown by arrows, lines, containment, comparison, or dependency.
+2. Read only the most useful visible labels or text inside the figure. Deduplicate repeated labels.
+3. Explain what the figure shows in a short factual summary of 2-4 sentences.
+4. Extract key entities such as nodes, labels, components, legends, arrows, or axes. Keep only the most important ones.
+5. Extract explicit relationships shown by arrows, lines, containment, comparison, or dependency. Keep only the clearest relationships.
 6. Extract concise facts that a chatbot can directly reuse in question answering.
 7. Do not invent information that is not visible or reasonably supported by the caption/context.
-8. Return JSON only.
+8. Keep the response compact:
+   - `ocr_text`: at most 25 items
+   - `key_entities`: at most 15 items
+   - `relationships`: at most 15 items
+   - `question_answerable_facts`: at most 12 items
+9. Return JSON only.
 
 Caption:
 {caption if caption else "null"}
@@ -261,16 +271,185 @@ def _encode_file_base64(path: str) -> str:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
+def _clean_response_text(raw_text: str) -> str:
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
+
+
+def _extract_json_object_text(raw_text: str) -> str:
+    text = _clean_response_text(raw_text)
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end >= start:
+        return text[start : end + 1]
+    return text
+
+
+def _normalize_doubled_quotes(text: str) -> str:
+    if text.count('""') < 4:
+        return text
+    return text.replace('""', '"')
+
+
+def _repair_json_text(text: str) -> str:
+    repaired: list[str] = []
+    in_string = False
+    escape_next = False
+    length = len(text)
+    index = 0
+
+    while index < length:
+        char = text[index]
+
+        if escape_next:
+            repaired.append(char)
+            escape_next = False
+            index += 1
+            continue
+
+        if char == "\\":
+            repaired.append(char)
+            escape_next = True
+            index += 1
+            continue
+
+        if char == '"':
+            if in_string:
+                look_ahead = index + 1
+                while look_ahead < length and text[look_ahead] in " \t\r\n":
+                    look_ahead += 1
+                next_char = text[look_ahead] if look_ahead < length else ""
+                if next_char and next_char not in {",", "}", "]", ":"}:
+                    repaired.append('\\"')
+                    index += 1
+                    continue
+            in_string = not in_string
+            repaired.append(char)
+            index += 1
+            continue
+
+        if in_string and char == "\n":
+            repaired.append("\\n")
+            index += 1
+            continue
+
+        if in_string and char == "\r":
+            repaired.append("\\r")
+            index += 1
+            continue
+
+        if in_string and char == "\t":
+            repaired.append("\\t")
+            index += 1
+            continue
+
+        repaired.append(char)
+        index += 1
+
+    return "".join(repaired)
+
+
+def _parse_gemini_json_text(raw_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    parse_attempts = [
+        ("direct_json", lambda text: _clean_response_text(text)),
+        (
+            "normalized_object",
+            lambda text: _normalize_doubled_quotes(_extract_json_object_text(text)),
+        ),
+        (
+            "repaired_json",
+            lambda text: _repair_json_text(_normalize_doubled_quotes(_extract_json_object_text(text))),
+        ),
+    ]
+
+    attempt_errors: list[str] = []
+    last_preview = ""
+
+    for attempt_number, (attempt_name, transform) in enumerate(parse_attempts, start=1):
+        candidate = transform(raw_text)
+        last_preview = candidate[:500]
+        try:
+            parsed = json.loads(candidate)
+            return parsed, {
+                "attempt_count": attempt_number,
+                "attempt_name": attempt_name,
+                "attempt_errors": attempt_errors,
+                "normalized_preview": last_preview,
+            }
+        except JSONDecodeError as exc:
+            attempt_errors.append(f"attempt {attempt_number} ({attempt_name}): {exc}")
+
+    raise ValueError(
+        "Gemini returned invalid JSON text after 3 local parse attempts. "
+        f"Attempt errors: {' | '.join(attempt_errors)}. "
+        f"Response text preview: {last_preview}"
+    )
+
+
+def _extract_candidate_metadata(raw_response: dict[str, Any]) -> dict[str, Any]:
+    candidate = (raw_response.get("candidates") or [{}])[0]
+    usage_metadata = raw_response.get("usageMetadata") or {}
+    return {
+        "finish_reason": candidate.get("finishReason"),
+        "safety_ratings": candidate.get("safetyRatings") or [],
+        "avg_logprobs": candidate.get("avgLogprobs"),
+        "usage_metadata": usage_metadata,
+    }
+
+
+def resolve_image_path(storage_path: str) -> str:
+    raw_path = str(storage_path or "").strip()
+    if not raw_path:
+        raise FileNotFoundError("Diagram image storage_path is empty")
+
+    original = Path(raw_path)
+    candidate_paths: list[Path] = []
+
+    if original.is_absolute():
+        candidate_paths.append(original)
+    else:
+        candidate_paths.append((Path.cwd() / original).resolve(strict=False))
+        candidate_paths.append((DIAGRAM_ASSETS_BASE_DIR / original).resolve(strict=False))
+
+        normalized_parts = original.parts
+        if normalized_parts and normalized_parts[0].lower() == "uploads":
+            candidate_paths.append((Path.cwd() / Path(*normalized_parts)).resolve(strict=False))
+            candidate_paths.append((DIAGRAM_ASSETS_BASE_DIR / Path(*normalized_parts[1:])).resolve(strict=False))
+
+    checked: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidate_paths:
+        candidate_str = str(candidate)
+        if candidate_str in seen:
+            continue
+        seen.add(candidate_str)
+        checked.append(candidate_str)
+        if candidate.exists():
+            return candidate_str
+
+    raise FileNotFoundError(
+        "Diagram image not found for storage_path "
+        f"{raw_path!r}. Checked: {', '.join(checked)}"
+    )
+
+
 class GeminiDiagramVisionService:
     def __init__(self, *, api_key: str, model: str = GEMINI_MODEL, timeout_seconds: int = 60) -> None:
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
 
-    def analyze(self, item: DiagramVisionInput) -> dict[str, Any]:
-        image_path = Path(item.image_path)
-        if not image_path.exists():
-            raise FileNotFoundError(f"Diagram image not found: {image_path}")
+    def request_analysis(self, item: DiagramVisionInput) -> dict[str, Any]:
+        resolved_image_path = resolve_image_path(item.image_path)
+        image_path = Path(resolved_image_path)
 
         payload = {
             "contents": [
@@ -292,7 +471,7 @@ class GeminiDiagramVisionService:
                 "responseJsonSchema": DIAGRAM_RESPONSE_SCHEMA,
                 "temperature": 0.1,
                 "topP": 0.95,
-                "maxOutputTokens": 2048,
+                "maxOutputTokens": GEMINI_VISION_MAX_OUTPUT_TOKENS,
             },
         }
 
@@ -307,8 +486,10 @@ class GeminiDiagramVisionService:
         try:
             with request.urlopen(req, timeout=self.timeout_seconds) as response:
                 raw = json.loads(response.read().decode("utf-8"))
+        # Add this to diagnose Gemini errors
         except error.HTTPError as http_error:
             details = http_error.read().decode("utf-8", errors="ignore")
+            print(f"[GEMINI ERROR] {http_error.code}: {details}")  # ← see exact error
             raise RuntimeError(f"Gemini request failed: {http_error.code} {details}") from http_error
 
         text = (
@@ -327,8 +508,30 @@ class GeminiDiagramVisionService:
             "prompt_version": PROMPT_VERSION,
             "request_payload": payload,
             "raw_response": raw,
-            "parsed_output": json.loads(text),
+            "response_text": text,
+            "candidate_metadata": _extract_candidate_metadata(raw),
         }
+
+    def parse_analysis_result(self, analysis_result: dict[str, Any]) -> dict[str, Any]:
+        response_text = analysis_result.get("response_text", "")
+        candidate_metadata = analysis_result.get("candidate_metadata") or {}
+        finish_reason = str(candidate_metadata.get("finish_reason") or "").strip().upper()
+
+        if finish_reason == "MAX_TOKENS":
+            raise ValueError(
+                "Gemini response was truncated by maxOutputTokens before JSON completed. "
+                f"finish_reason={finish_reason}. Response text preview: {response_text[:500]}"
+            )
+
+        parsed_output, parse_metadata = _parse_gemini_json_text(response_text)
+        enriched_result = dict(analysis_result)
+        enriched_result["parsed_output"] = parsed_output
+        enriched_result["parse_metadata"] = parse_metadata
+        return enriched_result
+
+    def analyze(self, item: DiagramVisionInput) -> dict[str, Any]:
+        captured_result = self.request_analysis(item)
+        return self.parse_analysis_result(captured_result)
 
 
 def save_diagram_analysis(cur, *, block_id: str, image_asset_id: str | None, diagram_kind: str, analysis_result: dict[str, Any]) -> None:
@@ -449,6 +652,7 @@ def save_diagram_analysis_failure(
     model_name: str,
     prompt_version: str,
     request_payload: dict[str, Any],
+    raw_response: dict[str, Any] | None = None,
     error_message: str,
 ) -> None:
     analysis_run_id = str(uuid.uuid4())
@@ -462,11 +666,12 @@ def save_diagram_analysis_failure(
             model_name,
             prompt_version,
             request_payload,
+            raw_response,
             status,
             error_message,
             completed_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s::jsonb, 'failed', %s, NOW())
+        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, 'failed', %s, NOW())
         """,
         (
             analysis_run_id,
@@ -475,6 +680,7 @@ def save_diagram_analysis_failure(
             model_name,
             prompt_version,
             Json(request_payload),
+            Json(raw_response or {}),
             error_message,
         ),
     )
@@ -577,14 +783,43 @@ def save_diagram_analysis_skipped(
         ),
     )
 
-
-def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: int = 2000) -> list[DiagramVisionInput]:
-    statuses = ["pending_vision_analysis", "failed"]
-    if _is_truthy_env(os.environ.get("DIAGRAM_VISION_INCLUDE_SKIPPED", "0")):
-        statuses.append("skipped")
+def debug_diagram_pipeline(cur, document_id: str, api_key: str):
+    items = fetch_pending_diagram_inputs(cur, document_id=document_id)
+    print(f"Found {len(items)} pending diagram blocks")
+    
+    for item in items:
+        try:
+            resolved_path = resolve_image_path(item.image_path)
+        except FileNotFoundError as exc:
+            resolved_path = f"[missing] {exc}"
+        print(f"\n--- Block: {item.block_id} ---")
+        print(f"  image_path : {item.image_path}")
+        print(f"  resolved   : {resolved_path}")
+        print(f"  path exists: {Path(resolved_path).exists() if not resolved_path.startswith('[missing]') else False}")
+        print(f"  caption    : {item.caption_text!r}")
+        print(f"  nearby_text: {(item.nearby_text or '')[:80]!r}")
+        
+        decision = score_diagram_for_vision(item)
+        print(f"  score      : {decision.score} (threshold: {DIAGRAM_VISION_MIN_SCORE})")
+        print(f"  analyze?   : {decision.should_analyze}")
+        print(f"  reasons    : {decision.reasons}")
+        
+def fetch_pending_diagram_inputs(
+    cur,
+    *,
+    document_id: str,
+    context_char_limit: int = 2000,
+    block_ids: list[str] | None = None,
+    statuses: list[str] | None = None,
+) -> list[DiagramVisionInput]:
+    normalized_block_ids = [str(block_id).strip() for block_id in (block_ids or []) if str(block_id).strip()]
+    effective_statuses = list(statuses or ["pending_vision_analysis", "failed"])
+    if statuses is None and _is_truthy_env(os.environ.get("DIAGRAM_VISION_INCLUDE_SKIPPED", "0")):
+        effective_statuses.append("skipped")
+    effective_statuses = [str(status).strip() for status in effective_statuses if str(status).strip()]
 
     cur.execute(
-        """
+        f"""
         WITH ordered_blocks AS (
             SELECT
                 db.block_id,
@@ -607,6 +842,7 @@ def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: i
                 ON dbd.block_id = db.block_id
             WHERE db.document_id = %s
               AND db.block_type = 'diagram'
+              {"AND db.block_id = ANY(%s)" if normalized_block_ids else ""}
         )
         SELECT
             block_id,
@@ -620,7 +856,11 @@ def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: i
           AND vision_status = ANY(%s)
         ORDER BY source_unit_index ASC, reading_order ASC NULLS LAST
         """,
-        (document_id, context_char_limit, statuses),
+        (
+            (document_id, normalized_block_ids, context_char_limit, effective_statuses)
+            if normalized_block_ids
+            else (document_id, context_char_limit, effective_statuses)
+        ),
     )
 
     results = []
@@ -638,7 +878,14 @@ def fetch_pending_diagram_inputs(cur, *, document_id: str, context_char_limit: i
     return results
 
 
-def run_diagram_analysis_for_document(cur, *, document_id: str, api_key: str | None = None) -> list[str]:
+def run_diagram_analysis_for_document(
+    cur,
+    *,
+    document_id: str,
+    api_key: str | None = None,
+    block_ids: list[str] | None = None,
+    force_analyze: bool = False,
+) -> list[str]:
     api_key = api_key or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is required for diagram analysis")
@@ -646,9 +893,24 @@ def run_diagram_analysis_for_document(cur, *, document_id: str, api_key: str | N
     service = GeminiDiagramVisionService(api_key=api_key)
     analyzed_block_ids: list[str] = []
 
-    for item in fetch_pending_diagram_inputs(cur, document_id=document_id):
+    fetch_statuses = ["pending_vision_analysis", "failed", "skipped"] if force_analyze else None
+    for item in fetch_pending_diagram_inputs(
+        cur,
+        document_id=document_id,
+        block_ids=block_ids,
+        statuses=fetch_statuses,
+    ):
         decision = score_diagram_for_vision(item)
-        if not decision.should_analyze:
+        print(f"[SCORE] block={item.block_id} score={decision.score} analyze={decision.should_analyze}")
+        print(f"        reasons={decision.reasons}")
+        print(f"[PATH] Checking: {item.image_path}")
+        try:
+            resolved_path = resolve_image_path(item.image_path)
+            print(f"[PATH] Resolved: {resolved_path}")
+            print(f"[PATH] Exists: {Path(resolved_path).exists()}")
+        except FileNotFoundError as exc:
+            print(f"[PATH] Resolution failed: {exc}")
+        if not force_analyze and not decision.should_analyze:
             save_diagram_analysis_skipped(
                 cur,
                 block_id=item.block_id,
@@ -657,8 +919,10 @@ def run_diagram_analysis_for_document(cur, *, document_id: str, api_key: str | N
                 decision=decision,
             )
             continue
+        result: dict[str, Any] | None = None
         try:
-            result = service.analyze(item)
+            result = service.request_analysis(item)
+            result = service.parse_analysis_result(result)
             save_diagram_analysis(
                 cur,
                 block_id=item.block_id,
@@ -668,13 +932,24 @@ def run_diagram_analysis_for_document(cur, *, document_id: str, api_key: str | N
             )
             analyzed_block_ids.append(item.block_id)
         except Exception as exc:
+            failure_payload = {}
+            failure_raw_response = None
+            if result:
+                failure_payload = dict(result.get("request_payload") or {})
+                failure_payload["_gemini_response_text"] = result.get("response_text", "")
+                if result.get("candidate_metadata"):
+                    failure_payload["_candidate_metadata"] = result.get("candidate_metadata")
+                if result.get("parse_metadata"):
+                    failure_payload["_parse_metadata"] = result.get("parse_metadata")
+                failure_raw_response = result.get("raw_response")
             save_diagram_analysis_failure(
                 cur,
                 block_id=item.block_id,
                 provider_name="gemini",
                 model_name=GEMINI_MODEL,
                 prompt_version=PROMPT_VERSION,
-                request_payload={},
+                request_payload=failure_payload,
+                raw_response=failure_raw_response,
                 error_message=str(exc),
             )
 
