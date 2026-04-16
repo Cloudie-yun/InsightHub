@@ -34,6 +34,7 @@ from services.diagram_vision_service import (
     run_diagram_analysis_for_document,
 )
 from services.embedding_worker import EmbeddingWorker
+from services.embedding_service import EmbeddingService, EmbeddingServiceError
 from services.extraction_store import (
     build_extraction_payload,
     build_pending_extraction_payload,
@@ -96,6 +97,9 @@ def _read_float_env(value: str | None, default: float) -> float:
 EMBEDDING_AUTORUN_ENABLED = _is_truthy_env(os.getenv("EMBEDDING_AUTORUN_ENABLED", "1"))
 EMBEDDING_AUTORUN_LIMIT = max(1, int(os.getenv("EMBEDDING_AUTORUN_LIMIT", "256")))
 EMBEDDING_RETRY_POLL_SECONDS = max(1.0, _read_float_env(os.getenv("EMBEDDING_RETRY_POLL_SECONDS"), 15.0))
+RETRIEVAL_DEFAULT_K = max(1, int(os.getenv("RETRIEVAL_DEFAULT_K", "5")))
+RETRIEVAL_MAX_K = max(RETRIEVAL_DEFAULT_K, int(os.getenv("RETRIEVAL_MAX_K", "20")))
+RETRIEVAL_SNIPPET_MAX_CHARS = max(120, int(os.getenv("RETRIEVAL_SNIPPET_MAX_CHARS", "450")))
 embedding_autorun_executor = ThreadPoolExecutor(
     max_workers=1,
     thread_name_prefix="embedding-autorun",
@@ -222,6 +226,40 @@ def _start_embedding_retry_poller() -> None:
         EMBEDDING_RETRY_POLL_SECONDS,
         EMBEDDING_AUTORUN_LIMIT,
     )
+
+
+def _parse_retrieve_k(value) -> int:
+    if value in (None, ""):
+        return RETRIEVAL_DEFAULT_K
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("k must be an integer.")
+    if parsed < 1:
+        raise ValueError("k must be at least 1.")
+    return min(parsed, RETRIEVAL_MAX_K)
+
+
+def _normalize_document_id_list(raw_document_ids) -> list[str]:
+    if raw_document_ids is None:
+        return []
+    if not isinstance(raw_document_ids, list):
+        raise ValueError("document_ids must be an array of document IDs.")
+    normalized_ids: list[str] = []
+    seen_ids: set[str] = set()
+    for item in raw_document_ids:
+        normalized = str(item or "").strip()
+        if not normalized:
+            continue
+        if normalized in seen_ids:
+            continue
+        seen_ids.add(normalized)
+        normalized_ids.append(normalized)
+    return normalized_ids
+
+
+def _vector_literal(vector: list[float]) -> str:
+    return "[" + ",".join(str(float(value)) for value in vector) + "]"
 
 
 def _build_diagram_analysis_usage_summary(cur) -> dict:
@@ -2788,6 +2826,131 @@ def api_conversation_documents(conversation_id):
         "conversation_id": conversation_id,
         "documents": documents,
     }), 200
+
+
+@app.route('/api/conversations/<conversation_id>/retrieve', methods=['POST'])
+def api_conversation_retrieve(conversation_id):
+    user_id = session.get("user_id")
+    conversation_id = (conversation_id or "").strip()
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+    if not conversation_exists_for_user(user_id, conversation_id):
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return jsonify({'error': 'query is required.'}), 400
+
+    try:
+        requested_document_ids = _normalize_document_id_list(payload.get("document_ids"))
+        k = _parse_retrieve_k(payload.get("k"))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    started_at = time.perf_counter()
+    conn = None
+    try:
+        embedding_service = EmbeddingService()
+        query_vector = embedding_service.embed_texts([query])[0]
+    except EmbeddingServiceError as exc:
+        logger.exception("Conversation retrieval embedding failed conversation_id=%s", conversation_id)
+        return jsonify({
+            'error': 'Could not embed retrieval query.',
+            'details': exc.to_dict(),
+        }), 503
+    except Exception:
+        logger.exception("Conversation retrieval unexpected embedding failure conversation_id=%s", conversation_id)
+        return jsonify({'error': 'Unable to retrieve context right now.'}), 500
+
+    query_vector_literal = _vector_literal(query_vector)
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT d.document_id::text
+                FROM conversations c
+                JOIN conversation_documents cd ON cd.conversation_id = c.conversation_id
+                JOIN documents d              ON d.document_id       = cd.document_id
+                WHERE c.conversation_id = %s
+                  AND c.user_id = %s
+                  AND d.is_deleted = FALSE
+                """,
+                (conversation_id, user_id),
+            )
+            allowed_document_ids = {str(row[0]) for row in cur.fetchall()}
+
+            if requested_document_ids:
+                invalid_document_ids = [
+                    document_id for document_id in requested_document_ids if document_id not in allowed_document_ids
+                ]
+                if invalid_document_ids:
+                    return jsonify({
+                        'error': 'One or more document_ids are not part of this conversation.',
+                        'invalid_document_ids': invalid_document_ids,
+                    }), 400
+                scoped_document_ids = requested_document_ids
+            else:
+                scoped_document_ids = list(allowed_document_ids)
+
+            if not scoped_document_ids:
+                timing_ms = round((time.perf_counter() - started_at) * 1000.0, 2)
+                return jsonify({
+                    'query': query,
+                    'results': [],
+                    'k': k,
+                    'timing_ms': timing_ms,
+                }), 200
+
+            cur.execute(
+                """
+                SELECT
+                    db.block_id::text,
+                    db.document_id::text,
+                    1 - (dbe.embedding <=> %s::vector) AS score,
+                    COALESCE(db.normalized_content->>'retrieval_text', db.display_text, '') AS retrieval_text,
+                    COALESCE(db.source_metadata, '{}'::jsonb) AS source_metadata
+                FROM document_blocks db
+                JOIN document_block_embeddings dbe ON dbe.block_id = db.block_id
+                WHERE db.document_id = ANY(%s::uuid[])
+                  AND db.embedding_status = 'embedded'
+                  AND NULLIF(BTRIM(COALESCE(db.normalized_content->>'retrieval_text', db.display_text, '')), '') IS NOT NULL
+                ORDER BY dbe.embedding <=> %s::vector ASC
+                LIMIT %s
+                """,
+                (query_vector_literal, scoped_document_ids, query_vector_literal, k),
+            )
+            rows = cur.fetchall()
+
+        results = []
+        for block_id, document_id, score, retrieval_text, source_metadata in rows:
+            snippet = (retrieval_text or "").strip()
+            if len(snippet) > RETRIEVAL_SNIPPET_MAX_CHARS:
+                snippet = snippet[:RETRIEVAL_SNIPPET_MAX_CHARS].rstrip() + "…"
+            results.append({
+                'block_id': block_id,
+                'document_id': document_id,
+                'score': float(score) if score is not None else None,
+                'snippet': snippet,
+                'source_metadata': source_metadata or {},
+            })
+
+        timing_ms = round((time.perf_counter() - started_at) * 1000.0, 2)
+        return jsonify({
+            'query': query,
+            'results': results,
+            'k': k,
+            'timing_ms': timing_ms,
+        }), 200
+    except Exception:
+        logger.exception("Conversation retrieval failed conversation_id=%s", conversation_id)
+        return jsonify({'error': 'Unable to retrieve context right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @app.route('/api/documents/<document_id>/parser-results', methods=['GET'])
