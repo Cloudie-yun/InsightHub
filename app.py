@@ -1,27 +1,31 @@
 from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session, redirect, url_for
-from db import get_db_connection
-from email_service import send_email
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 from threading import Lock, Thread
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urljoin, urlencode, quote
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 import subprocess
 import psycopg2
 from psycopg2 import errors
 from psycopg2.extras import Json
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 import os
 import re
-from urllib.parse import urljoin, urlencode, quote
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
 import json
 import logging
 import mimetypes
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from db import get_db_connection
+from email_service import send_email
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 from services.document_parser import parse_document
@@ -223,7 +227,7 @@ def _start_embedding_retry_poller() -> None:
 def _build_diagram_analysis_usage_summary(cur) -> dict:
     del cur
     project_id = get_quota_project_id()
-    ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"))
+    ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=os.getenv("GEMINI_VISION_MODEL", "gemini-3-flash"))
     usage_state = load_usage_state(project_id=project_id, model_names=ordered_models)
     now_utc = datetime.now(timezone.utc)
 
@@ -273,7 +277,7 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
             }
         )
 
-    preferred_model = ordered_models[0] if ordered_models else os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+    preferred_model = ordered_models[0] if ordered_models else os.getenv("GEMINI_VISION_MODEL", "gemini-3-flash")
     active_model = available_models[0] if available_models else None
     hover_parts = [f"{status['model_name']}: {status['status_label']}" for status in model_statuses]
     if earliest_reset_at is not None:
@@ -302,7 +306,7 @@ def get_diagram_analysis_usage_summary() -> dict:
         return {
             "provider": "gemini",
             "project_id": get_quota_project_id(),
-            "preferred_model": os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
+            "preferred_model": os.getenv("GEMINI_VISION_MODEL", "gemini-3-flash"),
             "active_model": None,
             "all_models_exhausted": False,
             "earliest_reset_at": None,
@@ -1081,6 +1085,42 @@ def _refresh_review_block_content(blocks_by_id: dict[str, dict], diagram_details
         block["normalized_content"] = normalized
         block["embedding_status"] = "ready" if retrieval_text else "not_ready"
         block["processing_status"] = "retrieval_prepared" if retrieval_text else block.get("processing_status")
+
+
+def _get_review_impacted_block_ids(blocks_by_id: dict[str, dict], changed_block_ids: set[str]) -> set[str]:
+    impacted_block_ids = {str(block_id) for block_id in changed_block_ids if str(block_id)}
+    if not impacted_block_ids:
+        return impacted_block_ids
+
+    for block_id, block in blocks_by_id.items():
+        candidate_ids = _get_context_candidate_ids(block)
+        if any(candidate_id in impacted_block_ids for candidate_id in candidate_ids):
+            impacted_block_ids.add(str(block_id))
+
+    return impacted_block_ids
+
+
+def _get_context_candidate_ids(block: dict) -> list[str]:
+    linked_context = block.get("linked_context") or {}
+    candidate_ids = linked_context.get("explainer_block_ids") or linked_context.get("nearby_block_ids") or []
+    return [str(block_id) for block_id in candidate_ids if str(block_id)]
+
+
+def _build_review_persist_snapshot(block: dict, diagram_detail: dict | None = None) -> dict:
+    normalized = deepcopy(block.get("normalized_content") or {})
+    source_metadata = deepcopy(block.get("source_metadata") or {})
+    snapshot = {
+        "subtype": block.get("subtype"),
+        "normalized_content": normalized,
+        "display_text": block.get("display_text"),
+        "caption_text": block.get("caption_text"),
+        "source_metadata": source_metadata,
+        "embedding_status": block.get("embedding_status"),
+        "processing_status": block.get("processing_status"),
+    }
+    if diagram_detail is not None:
+        snapshot["diagram_detail"] = deepcopy(diagram_detail)
+    return snapshot
 
 
 def _matrix_to_markdown(matrix: list[list[str]]) -> str:
@@ -2800,8 +2840,15 @@ def api_save_document_parser_review(document_id):
         for detail in (parser_result.get("diagram_block_details") or [])
         if detail.get("block_id")
     }
+    original_block_snapshots = {
+        block_id: _build_review_persist_snapshot(
+            block,
+            diagram_details_by_block.get(block_id),
+        )
+        for block_id, block in existing_blocks.items()
+    }
 
-    modified_count = 0
+    requested_block_ids: set[str] = set()
     review_timestamp = datetime.now(timezone.utc).isoformat()
     for edited_block in edited_blocks:
         block_id = str((edited_block or {}).get("block_id") or "").strip()
@@ -2811,12 +2858,6 @@ def api_save_document_parser_review(document_id):
 
         block_type = str(existing_block.get("block_type") or "").lower()
         normalized = dict(existing_block.get("normalized_content") or {})
-        source_metadata = dict(existing_block.get("source_metadata") or {})
-        source_metadata["manual_review"] = {
-            "updated_at": review_timestamp,
-            "updated_from": "document_parser_results",
-        }
-        existing_block["source_metadata"] = source_metadata
 
         if block_type == "text":
             text_value = _normalize_review_text(
@@ -2824,24 +2865,56 @@ def api_save_document_parser_review(document_id):
                 or edited_block.get("display_text")
                 or ""
             )
+            current_text_value = _normalize_review_text(
+                normalized.get("text_content") or normalized.get("normalized_text") or existing_block.get("display_text") or ""
+            )
+            if text_value == current_text_value:
+                continue
+            requested_block_ids.add(block_id)
+            source_metadata = dict(existing_block.get("source_metadata") or {})
+            source_metadata["manual_review"] = {
+                "updated_at": review_timestamp,
+                "updated_from": "document_parser_results",
+            }
+            existing_block["source_metadata"] = source_metadata
             normalized["text_content"] = text_value
             normalized["normalized_text"] = text_value
             existing_block["display_text"] = text_value
         elif block_type == "table":
             edited_normalized = edited_block.get("normalized_content") or {}
-            matrix = _normalize_matrix(edited_normalized.get("matrix") or [])
-            normalized["title"] = _normalize_inline_text(edited_normalized.get("title"))
-            normalized["caption"] = _normalize_review_text(
+            title = _normalize_inline_text(edited_normalized.get("title"))
+            caption = _normalize_review_text(
                 edited_normalized.get("caption")
                 or edited_block.get("caption_text")
                 or ""
             )
-            normalized["matrix"] = matrix
-            normalized["footnotes"] = [
+            matrix = _normalize_matrix(edited_normalized.get("matrix") or [])
+            footnotes = [
                 _normalize_review_text(item)
                 for item in (edited_normalized.get("footnotes") or [])
                 if _normalize_review_text(item)
             ]
+            current_title = _normalize_inline_text(normalized.get("title"))
+            current_caption = _normalize_review_text(normalized.get("caption") or existing_block.get("caption_text") or "")
+            current_matrix = _normalize_matrix(normalized.get("matrix") or [])
+            current_footnotes = [
+                _normalize_review_text(item)
+                for item in (normalized.get("footnotes") or [])
+                if _normalize_review_text(item)
+            ]
+            if title == current_title and caption == current_caption and matrix == current_matrix and footnotes == current_footnotes:
+                continue
+            requested_block_ids.add(block_id)
+            source_metadata = dict(existing_block.get("source_metadata") or {})
+            source_metadata["manual_review"] = {
+                "updated_at": review_timestamp,
+                "updated_from": "document_parser_results",
+            }
+            existing_block["source_metadata"] = source_metadata
+            normalized["title"] = title
+            normalized["caption"] = caption
+            normalized["matrix"] = matrix
+            normalized["footnotes"] = footnotes
             existing_block["caption_text"] = normalized.get("caption") or None
             existing_block["display_text"] = existing_block["caption_text"] or existing_block.get("display_text")
         elif block_type == "diagram":
@@ -2853,6 +2926,47 @@ def api_save_document_parser_review(document_id):
                 or ""
             )
             visual_description = _normalize_review_text(edited_normalized.get("visual_description"))
+            current_diagram_detail = dict(diagram_details_by_block.get(block_id) or {})
+            current_visual_description = _normalize_review_text(normalized.get("visual_description"))
+            current_caption_text = _normalize_review_text(
+                existing_block.get("caption_text") or existing_block.get("display_text") or ""
+            )
+            current_ocr_text = current_diagram_detail.get("ocr_text") or normalized.get("ocr_text") or []
+            if not isinstance(current_ocr_text, list):
+                current_ocr_text = []
+            current_semantic_links = current_diagram_detail.get("semantic_links") or normalized.get("semantic_links") or []
+            if not isinstance(current_semantic_links, list):
+                current_semantic_links = []
+            current_question_answerable_facts = current_diagram_detail.get("question_answerable_facts") or []
+            if not isinstance(current_question_answerable_facts, list):
+                current_question_answerable_facts = []
+            current_storage_path = str(current_diagram_detail.get("storage_path") or edited_normalized.get("storage_path") or "")
+            next_ocr_text = edited_normalized.get("ocr_text") or []
+            if not isinstance(next_ocr_text, list):
+                next_ocr_text = []
+            next_semantic_links = edited_normalized.get("semantic_links") or []
+            if not isinstance(next_semantic_links, list):
+                next_semantic_links = []
+            next_question_answerable_facts = edited_normalized.get("question_answerable_facts") or []
+            if not isinstance(next_question_answerable_facts, list):
+                next_question_answerable_facts = []
+            next_storage_path = str(edited_normalized.get("storage_path") or "")
+            if (
+                caption_text == current_caption_text
+                and visual_description == current_visual_description
+                and next_ocr_text == current_ocr_text
+                and next_semantic_links == current_semantic_links
+                and next_question_answerable_facts == current_question_answerable_facts
+                and next_storage_path == current_storage_path
+            ):
+                continue
+            requested_block_ids.add(block_id)
+            source_metadata = dict(existing_block.get("source_metadata") or {})
+            source_metadata["manual_review"] = {
+                "updated_at": review_timestamp,
+                "updated_from": "document_parser_results",
+            }
+            existing_block["source_metadata"] = source_metadata
             normalized["visual_description"] = visual_description or None
             existing_block["caption_text"] = caption_text or None
             existing_block["display_text"] = caption_text or existing_block.get("display_text")
@@ -2860,14 +2974,14 @@ def api_save_document_parser_review(document_id):
             diagram_detail = dict(diagram_details_by_block.get(block_id) or {})
             if not diagram_detail:
                 diagram_detail = {
-                    "block_id": block_id,
-                    "diagram_kind": normalized.get("diagram_kind") or existing_block.get("subtype") or "unknown",
-                    "ocr_text": edited_normalized.get("ocr_text") or [],
-                    "semantic_links": edited_normalized.get("semantic_links") or [],
-                    "question_answerable_facts": edited_normalized.get("question_answerable_facts") or [],
-                    "storage_path": edited_normalized.get("storage_path") or "",
-                    "vision_status": "completed",
-                }
+                        "block_id": block_id,
+                        "diagram_kind": normalized.get("diagram_kind") or existing_block.get("subtype") or "unknown",
+                        "ocr_text": next_ocr_text,
+                        "semantic_links": next_semantic_links,
+                        "question_answerable_facts": next_question_answerable_facts,
+                        "storage_path": edited_normalized.get("storage_path") or "",
+                        "vision_status": "completed",
+                    }
             diagram_detail["visual_description"] = visual_description or None
             diagram_detail["vision_status"] = "completed"
             diagram_details_by_block[block_id] = diagram_detail
@@ -2875,17 +2989,45 @@ def api_save_document_parser_review(document_id):
             continue
 
         existing_block["normalized_content"] = normalized
-        modified_count += 1
-
-    if modified_count == 0:
+    if not requested_block_ids:
         return jsonify({'error': 'No matching editable blocks were provided.'}), 400
 
     _refresh_review_block_content(existing_blocks, diagram_details_by_block)
+    directly_changed_block_ids = {
+        block_id
+        for block_id in requested_block_ids
+        if _build_review_persist_snapshot(
+            existing_blocks.get(block_id) or {},
+            diagram_details_by_block.get(block_id),
+        ) != original_block_snapshots.get(block_id)
+    }
+    if not directly_changed_block_ids:
+        return jsonify({'error': 'No parser review changes were detected.'}), 400
+
+    impacted_block_ids = _get_review_impacted_block_ids(existing_blocks, directly_changed_block_ids)
+    impacted_blocks = {block_id: existing_blocks[block_id] for block_id in impacted_block_ids if block_id in existing_blocks}
+    _refresh_review_block_content(impacted_blocks, diagram_details_by_block)
+
+    modified_block_ids = {
+        block_id
+        for block_id in impacted_block_ids
+        if _build_review_persist_snapshot(
+            existing_blocks.get(block_id) or {},
+            diagram_details_by_block.get(block_id),
+        ) != original_block_snapshots.get(block_id)
+    }
+    modified_count = len(modified_block_ids)
+    if modified_count == 0:
+        return jsonify({'error': 'No parser review changes were detected.'}), 400
+
     sorted_blocks = sorted(existing_blocks.values(), key=_review_block_sort_key)
     markdown_output = _build_review_markdown(sorted_blocks, diagram_details_by_block)
 
     segment_text_updates = {}
     for block in sorted_blocks:
+        block_id = str(block.get("block_id") or "")
+        if block_id not in modified_block_ids:
+            continue
         block_type = str(block.get("block_type") or "").lower()
         normalized = block.get("normalized_content") or {}
         if block_type == "text":
@@ -2907,6 +3049,9 @@ def api_save_document_parser_review(document_id):
         conn = get_db_connection()
         with conn.cursor() as cur:
             for block in sorted_blocks:
+                block_id = str(block.get("block_id") or "")
+                if block_id not in modified_block_ids:
+                    continue
                 cur.execute(
                     """
                     UPDATE document_blocks
@@ -2931,12 +3076,14 @@ def api_save_document_parser_review(document_id):
                         block.get("embedding_status"),
                         block.get("processing_status"),
                         document_id,
-                        block.get("block_id"),
+                        block_id,
                     ),
                 )
 
             if _relation_exists(cur, "diagram_block_details"):
                 for block_id, detail in diagram_details_by_block.items():
+                    if str(block_id) not in modified_block_ids:
+                        continue
                     block = existing_blocks.get(block_id) or {}
                     normalized = block.get("normalized_content") or {}
                     cur.execute(

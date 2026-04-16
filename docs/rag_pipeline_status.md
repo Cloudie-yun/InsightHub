@@ -94,7 +94,7 @@ Milestone 1 does **not** include:
 Run:
 
 ```bash
-python services/embedding_diagnostics.py --pretty
+python -m services.embedding_diagnostics --pretty
 ```
 
 Expected:
@@ -108,13 +108,13 @@ Expected:
 Single pass:
 
 ```bash
-python services/embedding_worker.py --limit 256 --batch-size 64 --max-attempts 3 --retry-backoff-seconds 1.0
+python -m services.embedding_worker --limit 256 --batch-size 64 --max-attempts 3 --retry-backoff-seconds 1.0
 ```
 
 Continuous mode:
 
 ```bash
-python services/embedding_worker.py --loop --sleep-seconds 2 --limit 256 --batch-size 64 --max-attempts 3 --retry-backoff-seconds 1.0
+python -m services.embedding_worker --loop --sleep-seconds 2 --limit 256 --batch-size 64 --max-attempts 3 --retry-backoff-seconds 1.0
 ```
 
 Expected logs include:
@@ -226,7 +226,7 @@ Use this section during release validation so completion is tied to concrete evi
 2. Run the worker in loop mode until queue settles:
 
 ```bash
-python services/embedding_worker.py --loop --sleep-seconds 2 --limit 256 --batch-size 64 --max-attempts 3 --retry-backoff-seconds 1.0
+python -m services.embedding_worker --loop --sleep-seconds 2 --limit 256 --batch-size 64 --max-attempts 3 --retry-backoff-seconds 1.0
 ```
 
 3. In a separate terminal, confirm status progression:
@@ -303,5 +303,6 @@ Confirm no Milestone 2 dependency was introduced:
 
 ## Notes
 
+- In this repository, prefer module execution (`python -m services.embedding_worker`, `python -m services.embedding_diagnostics`) so imports resolve correctly from the repo root.
 - `embedding_runs` is optional by schema rollout sequence; worker continues without it, but observability is reduced.
 - If your team prefers, this can be converted into a formal runbook with environment-specific commands.

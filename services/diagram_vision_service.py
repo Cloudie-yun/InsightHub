@@ -32,8 +32,6 @@ from services.quota_router import (
 
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_MODEL = os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
-MAX_DIAGRAM_VISION_MODEL_ATTEMPTS = max(1, int(os.environ.get("DIAGRAM_VISION_MODEL_MAX_ATTEMPTS", "3")))
 PROMPT_VERSION = "diagram_v1"
 VISION_GATE_PROMPT_VERSION = "diagram_gate_v1"
 DIAGRAM_VISION_MIN_SCORE = float(os.environ.get("DIAGRAM_VISION_MIN_SCORE", "0.45"))
@@ -41,6 +39,14 @@ GEMINI_VISION_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_VISION_MAX_OUTPUT_T
 DIAGRAM_ASSETS_BASE_DIR = Path(
     os.environ.get("DIAGRAM_ASSETS_BASE_DIR", str(Path.cwd() / "uploads"))
 )
+
+
+def _get_default_gemini_model() -> str:
+    return os.environ.get("GEMINI_VISION_MODEL", "gemini-3-flash")
+
+
+def _get_max_diagram_vision_model_attempts() -> int:
+    return max(1, int(os.environ.get("DIAGRAM_VISION_MODEL_MAX_ATTEMPTS", "3")))
 
 
 def _read_limit_env(name: str, default: int | None = None) -> int | None:
@@ -248,6 +254,22 @@ class DiagramVisionRequestError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
+
+
+def _should_retry_with_another_model(exc: Exception) -> bool:
+    if isinstance(exc, DiagramVisionRequestError):
+        return True
+    if isinstance(exc, ValueError):
+        message = str(exc or "").lower()
+        return any(
+            marker in message
+            for marker in (
+                "gemini returned no json text",
+                "gemini response was truncated",
+                "gemini returned invalid json text",
+            )
+        )
+    return False
 
 
 class ThrottledVisionQueue:
@@ -568,9 +590,9 @@ def resolve_image_path(storage_path: str) -> str:
 
 
 class GeminiDiagramVisionService:
-    def __init__(self, *, api_key: str, model: str = GEMINI_MODEL, timeout_seconds: int = 60) -> None:
+    def __init__(self, *, api_key: str, model: str | None = None, timeout_seconds: int = 60) -> None:
         self.api_key = api_key
-        self.model = model
+        self.model = model or _get_default_gemini_model()
         self.timeout_seconds = timeout_seconds
 
     def request_analysis(self, item: DiagramVisionInput) -> dict[str, Any]:
@@ -1067,13 +1089,14 @@ def run_diagram_analysis_for_document(
             )
             continue
         result: dict[str, Any] | None = None
-        selected_model = GEMINI_MODEL
+        selected_model = _get_default_gemini_model()
         all_models_exhausted_for_block = False
         try:
             fallback_errors: list[str] = []
             attempted_models: list[str] = []
-            ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=GEMINI_MODEL)
-            max_attempts = min(MAX_DIAGRAM_VISION_MODEL_ATTEMPTS, max(1, len(ordered_models)))
+            default_model = _get_default_gemini_model()
+            ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=default_model)
+            max_attempts = min(_get_max_diagram_vision_model_attempts(), max(1, len(ordered_models)))
             while True:
                 if len(attempted_models) >= max_attempts:
                     raise RuntimeError(
@@ -1084,7 +1107,7 @@ def run_diagram_analysis_for_document(
                     selected_model = pick_available_model(
                         TASK_TYPE_DIAGRAM_VISION,
                         project_id=project_id,
-                        fallback_model=GEMINI_MODEL,
+                        fallback_model=default_model,
                         excluded_models=attempted_models,
                     )
                 except QuotaRouterError as exc:
@@ -1111,15 +1134,16 @@ def run_diagram_analysis_for_document(
                         message=str(exc),
                         details=getattr(exc, "details", None),
                     )
-                    if not quota_error_code:
+                    if quota_error_code:
+                        record_quota_failure(
+                            project_id=project_id,
+                            model_name=selected_model,
+                            error_code=quota_error_code,
+                            retry_after_seconds=getattr(exc, "retry_after_seconds", None),
+                            response_headers=getattr(exc, "details", {}).get("response_headers", {}) if hasattr(exc, "details") else {},
+                        )
+                    elif not _should_retry_with_another_model(exc):
                         raise
-                    record_quota_failure(
-                        project_id=project_id,
-                        model_name=selected_model,
-                        error_code=quota_error_code,
-                        retry_after_seconds=getattr(exc, "retry_after_seconds", None),
-                        response_headers=getattr(exc, "details", {}).get("response_headers", {}) if hasattr(exc, "details") else {},
-                    )
                     fallback_errors.append(f"{selected_model}: {exc}")
                     continue
                 fallback_errors.append(f"{selected_model}: {exc}")

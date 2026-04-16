@@ -5,33 +5,37 @@
     <header class="parser-review-header sticky top-5 z-20 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-md before:pointer-events-none before:absolute before:-top-5 before:left-0 before:right-0 before:h-5 before:rounded-t-2xl before:bg-slate-50/70 before:backdrop-blur-md before:content-['']">
         <div class="flex flex-col gap-3 px-4 py-4 lg:px-6">
             <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                <div class="min-w-0 space-y-2">
-                    <div class="flex flex-wrap items-center gap-2d text-xs text-slate-500">
-                        {% if parser_result_context.conversation_title %}
-                            <a href="{{ url_for('chat', conversation_id=request.args.get('conversation_id')) }}" class="font-medium text-slate-600 transition hover:text-slate-900">
-                                {{ parser_result_context.conversation_title }}
-                            </a>
-                            <span>/</span>
-                        {% endif %}
-                        <span class="truncate">{{ parser_document.original_filename }}</span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-3">
-                        <div class="text-sm font-semibold tracking-tight text-slate-900">InsightHub Parse Review</div>
+	            <div class="min-w-0 space-y-2">
+                    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+	                {% if parser_result_context.conversation_title %}
+	                    <a href="{{ url_for('chat', conversation_id=request.args.get('conversation_id')) }}" class="font-medium text-slate-600 transition hover:text-slate-900">
+                            {{ parser_result_context.conversation_title }}
+                        </a>
+                        <span>/</span>
+                    {% endif %}
+                    <span class="truncate">{{ parser_document.original_filename }}</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <div class="text-sm font-semibold tracking-tight text-slate-900">InsightHub Parse Review</div>
                         <span class="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">single document</span>
                         <span id="parse-status-value" class="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-emerald-700">{{ parser_document.parser_result.parser_status or "unknown" }}</span>
-                    </div>
-                </div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <button id="reset-review-btn" type="button" class="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
-                        Revert
-                    </button>
-                    <button id="save-review-btn" type="button" class="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60">
+	                </div>
+	            </div>
+	            <div class="flex flex-wrap items-center gap-2">
+	                {% if request.args.get('conversation_id') %}
+                        <a href="{{ url_for('chat', conversation_id=request.args.get('conversation_id')) }}" class="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                            Back to chat
+	                    </a>
+	                {% endif %}
+	                <button id="reset-review-btn" type="button" class="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+	                    Revert
+	                </button>
+	                <button id="save-review-btn" type="button" class="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60">
                         Save
                     </button>
                 </div>
             </div>
-            <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                <input id="document-title-input" type="text" value="{{ parser_document.original_filename or 'Research Systems Review.pdf' }}" aria-label="Document title" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100 xl:max-w-2xl">
+            <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
                 <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500">
                     <span id="total-block-count">{{ parser_document.parser_result.review_summary.total_blocks }} items</span>
                     <span>Text <span id="text-block-count" class="font-semibold text-slate-700">{{ parser_document.parser_result.review_summary.text_blocks }}</span></span>
@@ -161,6 +165,7 @@ let initialParserDocument = {{ parser_document|tojson }};
     let parserDocument = JSON.parse(JSON.stringify(initialParserDocument));
     let activeFilter = "all";
     let hasUnsavedChanges = false;
+    const dirtyBlockIds = new Set();
     const editingBlockIds = new Set();
     const reviewBlocksContainer = document.getElementById("review-blocks");
     const saveReviewBtn = document.getElementById("save-review-btn");
@@ -569,7 +574,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         }).join("");
     };
     const savePayload = () => ({
-        blocks: [...blocks()].sort(compareBlocks).map((block) => {
+        blocks: [...blocks()].sort(compareBlocks).filter((block) => dirtyBlockIds.has(String(block?.block_id || ""))).map((block) => {
             const n = block?.normalized_content || {};
             const item = { block_id: block.block_id, block_type: block.block_type, caption_text: block.caption_text || "", display_text: block.display_text || "", normalized_content: {} };
             if (block.block_type === "text") {
@@ -621,6 +626,7 @@ let initialParserDocument = {{ parser_document|tojson }};
             return;
         }
         block.normalized_content = n;
+        dirtyBlockIds.add(String(blockId || ""));
         setDirty(true);
     });
     reviewBlocksContainer?.addEventListener("click", async (event) => {
@@ -757,6 +763,7 @@ let initialParserDocument = {{ parser_document|tojson }};
     });
     resetReviewBtn?.addEventListener("click", () => {
         parserDocument = JSON.parse(JSON.stringify(initialParserDocument));
+        dirtyBlockIds.clear();
         editingBlockIds.clear();
         setDirty(false);
         setStatus("Review changes reset to the last loaded version.");
@@ -764,6 +771,10 @@ let initialParserDocument = {{ parser_document|tojson }};
         renderBlocks();
     });
     saveReviewBtn?.addEventListener("click", async () => {
+        if (!dirtyBlockIds.size) {
+            setStatus("No review changes to save.");
+            return;
+        }
         saveReviewBtn.disabled = true;
         setStatus("Saving reviewed context...");
         try {
@@ -780,6 +791,7 @@ let initialParserDocument = {{ parser_document|tojson }};
             initialParserDocument = payload;
             parserDocument = payload;
             document.getElementById("last-review-value").textContent = parserDocument?.parser_result?.metadata?.review?.updated_at || "Saved";
+            dirtyBlockIds.clear();
             editingBlockIds.clear();
             setDirty(false);
             setStatus("Reviewed context saved. Future retrieval should use this edited version.");
