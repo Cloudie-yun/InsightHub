@@ -4,7 +4,7 @@
 <div class="h-full min-h-0 flex flex-col overflow-hidden bg-slate-50">
 	    <header class="h-11 px-6 bg-slate-50 flex items-center justify-between flex-shrink-0">
 	        <div class="flex items-center gap-2 min-w-0">
-	            <h1 class="text-base font-semibold text-slate-800 truncate">{{ "Demo Conversation" if demo_messages else "" }}</h1>
+	            <h1 class="text-base font-semibold text-slate-800 truncate">{{ conversation_title or ("Demo Conversation" if demo_messages else "") }}</h1>
 	            {% if highlight_new_conversation %}
 	            <span class="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
 	                Recently created

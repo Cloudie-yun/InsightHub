@@ -5,7 +5,10 @@ import json
 import mimetypes
 import os
 import re
+import threading
+import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from json import JSONDecodeError
 from pathlib import Path
@@ -24,6 +27,16 @@ GEMINI_VISION_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_VISION_MAX_OUTPUT_T
 DIAGRAM_ASSETS_BASE_DIR = Path(
     os.environ.get("DIAGRAM_ASSETS_BASE_DIR", str(Path.cwd() / "uploads"))
 )
+
+
+def _read_limit_env(name: str, default: int | None = None) -> int | None:
+    raw_value = str(os.environ.get(name, "") or "").strip()
+    if not raw_value:
+        return default
+    try:
+        return max(0, int(raw_value))
+    except (TypeError, ValueError):
+        return default
 
 _POSITIVE_DIAGRAM_KEYWORDS = {
     "architecture",
@@ -171,6 +184,59 @@ class DiagramVisionDecision:
     score: float
     should_analyze: bool
     reasons: list[str]
+
+
+class DiagramVisionThrottleError(RuntimeError):
+    pass
+
+
+class ThrottledVisionQueue:
+    def __init__(self, rpm_limit: int | None = None, daily_limit: int | None = None) -> None:
+        self.rpm_limit = rpm_limit
+        self.daily_limit = daily_limit
+        self.request_times: deque[float] = deque()
+        self.daily_count = 0
+        self.daily_reset = time.time() + 86400
+        self.lock = threading.Lock()
+
+    def _reset_daily_window_if_needed(self, now: float) -> None:
+        if now > self.daily_reset:
+            self.daily_count = 0
+            self.daily_reset = now + 86400
+
+    def wait_if_needed(self) -> None:
+        while True:
+            sleep_time = 0.0
+            with self.lock:
+                now = time.time()
+                self._reset_daily_window_if_needed(now)
+
+                if self.daily_limit is not None and self.daily_count >= self.daily_limit:
+                    wait = max(0.0, self.daily_reset - now)
+                    raise DiagramVisionThrottleError(
+                        f"Daily Gemini vision limit reached. Resets in {wait / 3600:.1f} hours"
+                    )
+
+                while self.request_times and now - self.request_times[0] >= 60:
+                    self.request_times.popleft()
+
+                if self.rpm_limit is not None and len(self.request_times) >= self.rpm_limit:
+                    oldest = self.request_times[0]
+                    sleep_time = max(0.0, 60 - (now - oldest) + 0.5)
+                else:
+                    self.request_times.append(now)
+                    self.daily_count += 1
+                    return
+
+            if sleep_time > 0:
+                print(f"[THROTTLE] Waiting {sleep_time:.1f}s for Gemini vision quota")
+                time.sleep(sleep_time)
+
+
+VISION_QUEUE = ThrottledVisionQueue(
+    rpm_limit=_read_limit_env("GEMINI_VISION_RPM_LIMIT"),
+    daily_limit=_read_limit_env("GEMINI_VISION_RPD_LIMIT"),
+)
 
 
 def build_diagram_prompt(*, caption: str | None, nearby_text: str | None) -> str:
@@ -448,6 +514,7 @@ class GeminiDiagramVisionService:
         self.timeout_seconds = timeout_seconds
 
     def request_analysis(self, item: DiagramVisionInput) -> dict[str, Any]:
+        VISION_QUEUE.wait_if_needed()
         resolved_image_path = resolve_image_path(item.image_path)
         image_path = Path(resolved_image_path)
 
@@ -842,7 +909,7 @@ def fetch_pending_diagram_inputs(
                 ON dbd.block_id = db.block_id
             WHERE db.document_id = %s
               AND db.block_type = 'diagram'
-              {"AND db.block_id = ANY(%s)" if normalized_block_ids else ""}
+              {"AND db.block_id = ANY(%s::uuid[])" if normalized_block_ids else ""}
         )
         SELECT
             block_id,

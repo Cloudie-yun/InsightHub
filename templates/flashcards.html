@@ -2,57 +2,667 @@
 
 {% block content %}
 <div class="flex flex-col h-full">
+
     <!-- Header/Breadcrumb -->
-    <div class="px-8 py-4 border-b border-gray-200 bg-white">
+    <div class="px-8 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
         <div class="flex items-center gap-2 text-gray-500">
             <a href="/chat" class="hover:text-brand-600"><i class="fa-solid fa-arrow-left"></i> Back to Chat</a>
             <span>/</span>
-            <span class="text-brand-700 font-bold">Machine Learning Flashcards</span>
+            <span class="text-brand-700 font-bold" id="deck-title">Machine Learning Flashcards</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <span id="progress-text" class="text-sm text-gray-400 mr-2">Card 1 of 1</span>
+            <button onclick="openEditModal()" title="Edit cards" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-pen-to-square"></i></button>
+            <button onclick="saveToLocalStorage()" title="Save deck" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-floppy-disk"></i></button>
+            <button onclick="exportDeck()" title="Export as JSON" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-download"></i></button>
+        </div>
+    </div>
+
+    <!-- Empty State: No Cards Yet -->
+    <div id="empty-state" class="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50 hidden">
+        <div class="text-center max-w-md">
+            <div class="w-20 h-20 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fa-solid fa-layer-group text-3xl text-brand-400"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">No cards yet</h2>
+            <p class="text-gray-500 mb-6">Add your first flashcard manually, import a set, or let AI generate them for you.</p>
+            <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                <button onclick="openCreateModal()" class="px-5 py-2.5 bg-brand-600 text-white rounded-xl font-medium hover:bg-brand-700 transition flex items-center gap-2 justify-center">
+                    <i class="fa-solid fa-plus"></i> Create Manually
+                </button>
+                <button onclick="openImportModal()" class="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition flex items-center gap-2 justify-center">
+                    <i class="fa-solid fa-file-import"></i> Import Cards
+                </button>
+                <button onclick="openAIModal()" class="px-5 py-2.5 bg-white border border-brand-200 text-brand-600 rounded-xl font-medium hover:bg-brand-50 transition flex items-center gap-2 justify-center">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> AI Generate
+                </button>
+            </div>
         </div>
     </div>
 
     <!-- Card Area -->
-    <div class="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50 relative">
-        
+    <div id="card-area" class="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50 relative">
+
         <!-- Controls Top Right -->
-        <div class="absolute top-8 right-8 flex gap-2">
-            <button class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm"><i class="fa-solid fa-pen-to-square"></i></button>
-            <button class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm"><i class="fa-solid fa-floppy-disk"></i></button>
-            <button class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm"><i class="fa-solid fa-download"></i></button>
+        <div class="absolute top-6 left-8 flex gap-2">
+            <button onclick="openCreateModal()" title="Add card" class="px-4 h-9 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition flex items-center gap-2">
+                <i class="fa-solid fa-plus"></i> Add Card
+            </button>
+            <button onclick="openImportModal()" title="Import cards" class="px-4 h-9 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 transition flex items-center gap-2">
+                <i class="fa-solid fa-file-import"></i> Import
+            </button>
+            <button onclick="openAIModal()" title="AI Generate" class="px-4 h-9 bg-white border border-brand-200 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50 transition flex items-center gap-2">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> AI Generate
+            </button>
+        </div>
+
+        <!-- Shuffle Toggle -->
+        <div class="absolute top-6 right-8 flex items-center gap-2">
+            <label class="flex items-center gap-2 cursor-pointer select-none text-sm text-gray-500">
+                <span>Shuffle</span>
+                <div class="relative">
+                    <input type="checkbox" id="shuffle-toggle" class="sr-only peer" onchange="toggleShuffle()">
+                    <div class="w-10 h-5 bg-gray-200 peer-checked:bg-brand-500 rounded-full transition-colors"></div>
+                    <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></div>
+                </div>
+            </label>
         </div>
 
         <!-- Main Card -->
         <div class="flex items-center gap-8 w-full max-w-4xl justify-center">
-            
+
             <!-- Left Arrow -->
-            <button class="h-12 w-12 rounded-full border-2 border-brand-700 text-brand-700 flex items-center justify-center text-xl hover:bg-brand-50 transition">
+            <button onclick="prevCard()" id="btn-prev" class="h-12 w-12 rounded-full border-2 border-brand-700 text-brand-700 flex items-center justify-center text-xl hover:bg-brand-50 transition disabled:opacity-30 disabled:cursor-not-allowed">
                 <i class="fa-solid fa-arrow-left"></i>
             </button>
 
-            <!-- Card -->
-            <div class="bg-white w-full h-96 rounded-3xl shadow-xl border-2 border-brand-200 flex flex-col items-center justify-center p-12 text-center relative group cursor-pointer perspective">
-                <div class="text-xs text-gray-400 absolute top-4 uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-full">Press Space to Flip</div>
-                
-                <h2 class="text-3xl font-bold text-brand-800">What is supervised learning?</h2>
-                
-                <!-- Decorative bottom border line from image -->
-                <div class="absolute bottom-0 left-0 w-full h-2 bg-gradient-to-r from-transparent via-brand-300 to-transparent"></div>
+            <!-- Flip Card Wrapper -->
+            <div class="w-full" style="perspective: 1200px;">
+                <div id="flip-card" onclick="flipCard()" class="relative w-full h-96 cursor-pointer" style="transform-style: preserve-3d; transition: transform 0.55s cubic-bezier(0.4,0.2,0.2,1);">
+
+                    <!-- Front Face -->
+                    <div class="absolute inset-0 bg-white rounded-3xl shadow-xl border-2 border-brand-200 flex flex-col items-center justify-center p-12 text-center" style="backface-visibility: hidden;">
+                        <div class="text-xs text-gray-400 absolute top-4 uppercase tracking-widest bg-gray-100 px-3 py-1 rounded-full">
+                            <i class="fa-regular fa-hand-pointer mr-1"></i> Click or press Space to flip
+                        </div>
+                        <div class="text-xs font-semibold text-brand-400 uppercase tracking-wider mb-3">Question</div>
+                        <h2 id="card-front" class="text-2xl font-bold text-brand-800 leading-snug"></h2>
+                        <div class="absolute bottom-4 right-4 flex gap-2">
+                            <button onclick="editCurrentCard(event)" title="Edit this card" class="h-8 w-8 rounded-lg bg-gray-100 text-gray-400 hover:text-brand-600 hover:bg-brand-50 flex items-center justify-center text-sm transition"><i class="fa-solid fa-pen"></i></button>
+                            <button onclick="deleteCurrentCard(event)" title="Delete this card" class="h-8 w-8 rounded-lg bg-gray-100 text-gray-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center text-sm transition"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                        <div class="absolute bottom-0 left-0 w-full h-2 bg-gradient-to-r from-transparent via-brand-300 to-transparent rounded-b-3xl"></div>
+                    </div>
+
+                    <!-- Back Face -->
+                    <div class="absolute inset-0 bg-brand-700 rounded-3xl shadow-xl border-2 border-brand-500 flex flex-col items-center justify-center p-12 text-center" style="backface-visibility: hidden; transform: rotateY(180deg);">
+                        <div class="text-xs text-brand-200 absolute top-4 uppercase tracking-widest bg-brand-600 px-3 py-1 rounded-full">
+                            <i class="fa-regular fa-lightbulb mr-1"></i> Answer
+                        </div>
+                        <div class="text-xs font-semibold text-brand-300 uppercase tracking-wider mb-3">Answer</div>
+                        <p id="card-back" class="text-xl text-white leading-relaxed"></p>
+                        <div class="absolute bottom-0 left-0 w-full h-2 bg-gradient-to-r from-transparent via-brand-400 to-transparent rounded-b-3xl"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Right Arrow -->
-            <button class="h-12 w-12 rounded-full border-2 border-brand-700 text-brand-700 flex items-center justify-center text-xl hover:bg-brand-50 transition">
+            <button onclick="nextCard()" id="btn-next" class="h-12 w-12 rounded-full border-2 border-brand-700 text-brand-700 flex items-center justify-center text-xl hover:bg-brand-50 transition disabled:opacity-30 disabled:cursor-not-allowed">
                 <i class="fa-solid fa-arrow-right"></i>
             </button>
         </div>
 
         <!-- Pagination Dots -->
-        <div class="flex gap-2 mt-8">
-            <div class="w-8 h-2 bg-brand-600 rounded-full"></div>
-            <div class="w-2 h-2 bg-gray-300 rounded-full"></div>
-            <div class="w-2 h-2 bg-gray-300 rounded-full"></div>
-            <div class="w-2 h-2 bg-gray-300 rounded-full"></div>
-        </div>
+        <div id="pagination-dots" class="flex gap-2 mt-8 flex-wrap justify-center max-w-xs"></div>
 
+        <!-- Keyboard hint -->
+        <div class="mt-4 text-xs text-gray-400 flex gap-4">
+            <span><kbd class="bg-gray-100 px-1.5 py-0.5 rounded text-gray-500">←</kbd> <kbd class="bg-gray-100 px-1.5 py-0.5 rounded text-gray-500">→</kbd> Navigate</span>
+            <span><kbd class="bg-gray-100 px-1.5 py-0.5 rounded text-gray-500">Space</kbd> Flip</span>
+        </div>
     </div>
 </div>
+
+<!-- ─────────────────────────────────────────────
+     MODAL: Create / Edit Single Card
+───────────────────────────────────────────── -->
+<div id="modal-card" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+        <div class="flex items-center justify-between mb-5">
+            <h3 id="modal-card-title" class="text-lg font-bold text-gray-800">Add New Card</h3>
+            <button onclick="closeModal('modal-card')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Question (Front)</label>
+                <textarea id="input-front" rows="3" placeholder="Enter the question or term…" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"></textarea>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Answer (Back)</label>
+                <textarea id="input-back" rows="4" placeholder="Enter the answer or definition…" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"></textarea>
+            </div>
+        </div>
+        <input type="hidden" id="edit-index" value="-1">
+        <div class="flex justify-end gap-3 mt-6">
+            <button onclick="closeModal('modal-card')" class="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition">Cancel</button>
+            <button onclick="saveCard()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium">Save Card</button>
+        </div>
+    </div>
+</div>
+
+<!-- ─────────────────────────────────────────────
+     MODAL: Import Cards
+───────────────────────────────────────────── -->
+<div id="modal-import" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6">
+        <div class="flex items-center justify-between mb-5">
+            <h3 class="text-lg font-bold text-gray-800">Import Flashcards</h3>
+            <button onclick="closeModal('modal-import')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex gap-1 bg-gray-100 p-1 rounded-xl mb-5">
+            <button onclick="switchImportTab('tab-text')" id="tab-text-btn" class="flex-1 py-2 text-sm font-medium rounded-lg bg-white shadow text-brand-600 transition">Paste Text</button>
+            <button onclick="switchImportTab('tab-csv')" id="tab-csv-btn" class="flex-1 py-2 text-sm font-medium rounded-lg text-gray-500 hover:text-gray-700 transition">CSV / File</button>
+            <button onclick="switchImportTab('tab-json')" id="tab-json-btn" class="flex-1 py-2 text-sm font-medium rounded-lg text-gray-500 hover:text-gray-700 transition">JSON</button>
+        </div>
+
+        <!-- Tab: Paste Text -->
+        <div id="tab-text" class="import-tab">
+            <p class="text-xs text-gray-500 mb-3">Enter one card per line. Separate the question and answer with a <code class="bg-gray-100 px-1 rounded">|</code> or <code class="bg-gray-100 px-1 rounded">tab</code>.</p>
+            <textarea id="import-text" rows="8" placeholder="What is supervised learning? | Learning with labeled training data&#10;What is a neural network? | A model inspired by biological neurons" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"></textarea>
+            <div class="mt-2 text-xs text-gray-400">Example: <code>Term | Definition</code></div>
+        </div>
+
+        <!-- Tab: CSV -->
+        <div id="tab-csv" class="import-tab hidden">
+            <p class="text-xs text-gray-500 mb-3">Upload a CSV file with two columns: <strong>question</strong> and <strong>answer</strong>. The first row can be a header (it will be skipped if it contains no separator).</p>
+            <label class="block w-full border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-brand-400 hover:bg-brand-50 transition">
+                <i class="fa-solid fa-file-csv text-3xl text-gray-300 mb-2"></i>
+                <div class="text-sm text-gray-500">Click to upload CSV</div>
+                <input type="file" accept=".csv,.txt" class="hidden" onchange="handleCSVUpload(event)">
+            </label>
+            <div id="csv-preview" class="mt-3 text-xs text-gray-500 hidden"></div>
+        </div>
+
+        <!-- Tab: JSON -->
+        <div id="tab-json" class="import-tab hidden">
+            <p class="text-xs text-gray-500 mb-3">Paste a JSON array: <code class="bg-gray-100 px-1 rounded">[{"front": "Q", "back": "A"}, …]</code></p>
+            <textarea id="import-json" rows="8" placeholder='[{"front": "What is overfitting?", "back": "When a model learns noise in training data."}]' class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"></textarea>
+        </div>
+
+        <div id="import-error" class="mt-3 text-sm text-red-500 hidden"></div>
+
+        <div class="flex items-center justify-between mt-6">
+            <label class="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
+                <input type="checkbox" id="import-replace" class="rounded">
+                Replace existing cards
+            </label>
+            <div class="flex gap-3">
+                <button onclick="closeModal('modal-import')" class="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition">Cancel</button>
+                <button onclick="importCards()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium">Import</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─────────────────────────────────────────────
+     MODAL: Edit Deck (all cards)
+───────────────────────────────────────────── -->
+<div id="modal-edit-deck" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 flex flex-col max-h-[90vh]">
+        <div class="flex items-center justify-between mb-4 shrink-0">
+            <h3 class="text-lg font-bold text-gray-800">Edit Deck</h3>
+            <button onclick="closeModal('modal-edit-deck')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+        </div>
+        <div class="mb-4 shrink-0">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Deck Name</label>
+            <input id="deck-name-input" type="text" class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+        </div>
+        <div id="deck-card-list" class="overflow-y-auto flex-1 space-y-3 pr-1"></div>
+        <div class="flex justify-between mt-4 shrink-0">
+            <button onclick="openCreateModal()" class="px-4 py-2 text-sm text-brand-600 border border-brand-200 rounded-xl hover:bg-brand-50 transition flex items-center gap-2">
+                <i class="fa-solid fa-plus"></i> Add Card
+            </button>
+            <button onclick="saveDeckEdit()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<!-- ─────────────────────────────────────────────
+     MODAL: AI Generate (TODO stub)
+───────────────────────────────────────────── -->
+<div id="modal-ai" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 text-center">
+        <div class="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <i class="fa-solid fa-wand-magic-sparkles text-2xl text-brand-400"></i>
+        </div>
+        <h3 class="text-lg font-bold text-gray-800 mb-2">AI Card Generation</h3>
+        <p class="text-sm text-gray-500 mb-4">This feature is coming soon! AI will be able to generate flashcard decks from topics, documents, or chat history.</p>
+        <div class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700 text-left mb-5">
+            <strong>TODO:</strong> Integrate with backend AI endpoint to accept a topic/document and return structured <code>{"front", "back"}</code> card pairs.
+        </div>
+        <button onclick="closeModal('modal-ai')" class="px-5 py-2 text-sm bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition font-medium">Close</button>
+    </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-sm px-5 py-2.5 rounded-full shadow-lg z-[100] opacity-0 pointer-events-none transition-opacity duration-300">Saved!</div>
+
+<style>
+.perspective { perspective: 1200px; }
+</style>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let deck = [];           // [{front, back}, …]
+let order = [];          // indices into deck (supports shuffle)
+let currentPos = 0;      // index into order[]
+let isFlipped = false;
+let shuffleMode = false;
+let pendingCSVCards = [];
+let activeImportTab = 'tab-text';
+
+const STORAGE_KEY = 'flashcards_deck_v1';
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            deck = parsed.cards || [];
+            document.getElementById('deck-title').textContent = parsed.name || 'Flashcards';
+        } catch(e) { deck = []; }
+    }
+
+    // Seed a default card if empty for demo purposes
+    if (deck.length === 0) {
+        deck = [
+            { front: "What is supervised learning?", back: "A type of machine learning where the model is trained on labeled data — input-output pairs — so it can learn to predict outputs for new inputs." },
+            { front: "What is overfitting?", back: "When a model learns the training data too well, including its noise, causing poor generalization to new data." },
+            { front: "What is a neural network?", back: "A computational model loosely inspired by the brain, composed of layers of interconnected nodes (neurons) that transform inputs into predictions." },
+            { front: "What is gradient descent?", back: "An optimization algorithm that iteratively adjusts model parameters to minimize a loss function by moving in the direction of the steepest decrease." },
+        ];
+    }
+
+    rebuildOrder();
+    renderCard();
+});
+
+// ─── Order & Navigation ────────────────────────────────────────────────────────
+function rebuildOrder() {
+    order = deck.map((_, i) => i);
+    if (shuffleMode) {
+        for (let i = order.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [order[i], order[j]] = [order[j], order[i]];
+        }
+    }
+    currentPos = Math.min(currentPos, Math.max(0, order.length - 1));
+}
+
+function toggleShuffle() {
+    shuffleMode = document.getElementById('shuffle-toggle').checked;
+    rebuildOrder();
+    currentPos = 0;
+    renderCard();
+}
+
+function prevCard() {
+    if (currentPos > 0) {
+        currentPos--;
+        isFlipped = false;
+        animateCardChange('right');
+    }
+}
+
+function nextCard() {
+    if (currentPos < order.length - 1) {
+        currentPos++;
+        isFlipped = false;
+        animateCardChange('left');
+    }
+}
+
+function animateCardChange(direction) {
+    const card = document.getElementById('flip-card');
+    const cls = direction === 'left' ? 'translate-x-4' : '-translate-x-4';
+    card.style.opacity = '0';
+    card.style.transform = `translateX(${direction === 'left' ? '30px' : '-30px'})`;
+    setTimeout(() => {
+        renderCard(false); // don't reset transform
+        card.style.transition = 'none';
+        card.style.transform = `translateX(${direction === 'left' ? '-30px' : '30px'})`;
+        card.style.opacity = '0';
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                card.style.transition = 'transform 0.55s cubic-bezier(0.4,0.2,0.2,1), opacity 0.25s ease';
+                card.style.transform = 'rotateY(0deg)';
+                card.style.opacity = '1';
+            });
+        });
+    }, 200);
+}
+
+// ─── Render ────────────────────────────────────────────────────────────────────
+function renderCard(resetFlip = true) {
+    const emptyState = document.getElementById('empty-state');
+    const cardArea = document.getElementById('card-area');
+
+    if (deck.length === 0) {
+        emptyState.classList.remove('hidden');
+        cardArea.classList.add('hidden');
+        return;
+    }
+
+    emptyState.classList.add('hidden');
+    cardArea.classList.remove('hidden');
+
+    if (resetFlip) {
+        isFlipped = false;
+        const card = document.getElementById('flip-card');
+        card.style.transform = 'rotateY(0deg)';
+        card.style.opacity = '1';
+        card.style.transition = 'transform 0.55s cubic-bezier(0.4,0.2,0.2,1)';
+    }
+
+    const idx = order[currentPos];
+    const c = deck[idx];
+    document.getElementById('card-front').textContent = c.front;
+    document.getElementById('card-back').textContent = c.back;
+    document.getElementById('progress-text').textContent = `Card ${currentPos + 1} of ${deck.length}`;
+
+    // Arrows
+    document.getElementById('btn-prev').disabled = currentPos === 0;
+    document.getElementById('btn-next').disabled = currentPos === order.length - 1;
+
+    // Dots
+    const dotsContainer = document.getElementById('pagination-dots');
+    dotsContainer.innerHTML = '';
+    const maxDots = 12;
+    const show = Math.min(deck.length, maxDots);
+    for (let i = 0; i < show; i++) {
+        const dot = document.createElement('div');
+        const active = i === currentPos % maxDots;
+        dot.className = active
+            ? 'w-8 h-2 bg-brand-600 rounded-full transition-all duration-300'
+            : 'w-2 h-2 bg-gray-300 rounded-full transition-all duration-300 cursor-pointer hover:bg-gray-400';
+        if (!active) dot.onclick = (e => (pos => () => { currentPos = pos; isFlipped = false; renderCard(); })(i))(i);
+        dotsContainer.appendChild(dot);
+    }
+    if (deck.length > maxDots) {
+        const more = document.createElement('div');
+        more.className = 'text-xs text-gray-400 flex items-center';
+        more.textContent = `+${deck.length - maxDots}`;
+        dotsContainer.appendChild(more);
+    }
+}
+
+function flipCard() {
+    isFlipped = !isFlipped;
+    const card = document.getElementById('flip-card');
+    card.style.transform = isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)';
+}
+
+// ─── Keyboard ──────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+    const tag = document.activeElement.tagName;
+    if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flipCard(); }
+    if (e.key === 'ArrowLeft') prevCard();
+    if (e.key === 'ArrowRight') nextCard();
+});
+
+// ─── Create / Edit Card Modal ─────────────────────────────────────────────────
+function openCreateModal() {
+    document.getElementById('modal-card-title').textContent = 'Add New Card';
+    document.getElementById('input-front').value = '';
+    document.getElementById('input-back').value = '';
+    document.getElementById('edit-index').value = '-1';
+    openModal('modal-card');
+}
+
+function editCurrentCard(e) {
+    e && e.stopPropagation();
+    const idx = order[currentPos];
+    const c = deck[idx];
+    document.getElementById('modal-card-title').textContent = 'Edit Card';
+    document.getElementById('input-front').value = c.front;
+    document.getElementById('input-back').value = c.back;
+    document.getElementById('edit-index').value = idx;
+    openModal('modal-card');
+}
+
+function saveCard() {
+    const front = document.getElementById('input-front').value.trim();
+    const back = document.getElementById('input-back').value.trim();
+    if (!front || !back) { shakeModal('modal-card'); return; }
+
+    const editIdx = parseInt(document.getElementById('edit-index').value);
+    if (editIdx >= 0) {
+        deck[editIdx] = { front, back };
+    } else {
+        deck.push({ front, back });
+        rebuildOrder();
+        currentPos = order.indexOf(deck.length - 1);
+    }
+
+    closeModal('modal-card');
+    renderCard();
+    showToast(editIdx >= 0 ? 'Card updated!' : 'Card added!');
+}
+
+function deleteCurrentCard(e) {
+    e && e.stopPropagation();
+    const idx = order[currentPos];
+    deck.splice(idx, 1);
+    rebuildOrder();
+    currentPos = Math.min(currentPos, Math.max(0, order.length - 1));
+    renderCard();
+    showToast('Card deleted.');
+}
+
+// ─── Edit Deck Modal ──────────────────────────────────────────────────────────
+function openEditModal() {
+    document.getElementById('deck-name-input').value = document.getElementById('deck-title').textContent;
+    renderDeckList();
+    openModal('modal-edit-deck');
+}
+
+function renderDeckList() {
+    const list = document.getElementById('deck-card-list');
+    list.innerHTML = deck.map((c, i) => `
+        <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200 group">
+            <div class="flex-1 min-w-0">
+                <div class="text-xs font-medium text-gray-500 mb-0.5">Q:</div>
+                <div class="text-sm text-gray-800 truncate">${escHtml(c.front)}</div>
+                <div class="text-xs font-medium text-gray-500 mt-1 mb-0.5">A:</div>
+                <div class="text-sm text-gray-500 truncate">${escHtml(c.back)}</div>
+            </div>
+            <div class="flex gap-1 shrink-0">
+                <button onclick="editCardFromList(${i})" class="h-7 w-7 rounded-lg bg-white border border-gray-200 text-gray-400 hover:text-brand-600 flex items-center justify-center text-xs transition"><i class="fa-solid fa-pen"></i></button>
+                <button onclick="deleteCardFromList(${i})" class="h-7 w-7 rounded-lg bg-white border border-gray-200 text-gray-400 hover:text-red-500 flex items-center justify-center text-xs transition"><i class="fa-solid fa-trash"></i></button>
+            </div>
+        </div>
+    `).join('') || '<p class="text-sm text-gray-400 text-center py-4">No cards yet. Add some!</p>';
+}
+
+function editCardFromList(i) {
+    document.getElementById('modal-card-title').textContent = 'Edit Card';
+    document.getElementById('input-front').value = deck[i].front;
+    document.getElementById('input-back').value = deck[i].back;
+    document.getElementById('edit-index').value = i;
+    closeModal('modal-edit-deck');
+    openModal('modal-card');
+}
+
+function deleteCardFromList(i) {
+    deck.splice(i, 1);
+    rebuildOrder();
+    currentPos = Math.min(currentPos, Math.max(0, order.length - 1));
+    renderDeckList();
+    renderCard();
+}
+
+function saveDeckEdit() {
+    const name = document.getElementById('deck-name-input').value.trim() || 'Flashcards';
+    document.getElementById('deck-title').textContent = name;
+    closeModal('modal-edit-deck');
+    showToast('Deck saved!');
+}
+
+// ─── Import ────────────────────────────────────────────────────────────────────
+function openImportModal() {
+    document.getElementById('import-text').value = '';
+    document.getElementById('import-json').value = '';
+    document.getElementById('import-error').classList.add('hidden');
+    document.getElementById('csv-preview').classList.add('hidden');
+    pendingCSVCards = [];
+    switchImportTab('tab-text');
+    openModal('modal-import');
+}
+
+function switchImportTab(tab) {
+    activeImportTab = tab;
+    ['tab-text', 'tab-csv', 'tab-json'].forEach(t => {
+        document.getElementById(t).classList.toggle('hidden', t !== tab);
+        const btn = document.getElementById(t + '-btn');
+        btn.classList.toggle('bg-white', t === tab);
+        btn.classList.toggle('shadow', t === tab);
+        btn.classList.toggle('text-brand-600', t === tab);
+        btn.classList.toggle('text-gray-500', t !== tab);
+    });
+}
+
+function handleCSVUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const lines = e.target.result.split('\n').filter(l => l.trim());
+        pendingCSVCards = [];
+        lines.forEach(line => {
+            const parts = line.includes(',') ? line.split(',') : line.split('\t');
+            if (parts.length >= 2) {
+                const front = parts[0].replace(/^"|"$/g, '').trim();
+                const back = parts.slice(1).join(',').replace(/^"|"$/g, '').trim();
+                if (front && back) pendingCSVCards.push({ front, back });
+            }
+        });
+        const preview = document.getElementById('csv-preview');
+        preview.classList.remove('hidden');
+        preview.textContent = `Found ${pendingCSVCards.length} card(s) — e.g. "${pendingCSVCards[0]?.front || ''}"`;
+    };
+    reader.readAsText(file);
+}
+
+function importCards() {
+    const replace = document.getElementById('import-replace').checked;
+    let cards = [];
+    const errEl = document.getElementById('import-error');
+    errEl.classList.add('hidden');
+
+    try {
+        if (activeImportTab === 'tab-text') {
+            const lines = document.getElementById('import-text').value.split('\n').filter(l => l.trim());
+            lines.forEach(line => {
+                const sep = line.includes('|') ? '|' : '\t';
+                const parts = line.split(sep);
+                if (parts.length >= 2) {
+                    const front = parts[0].trim();
+                    const back = parts.slice(1).join(sep).trim();
+                    if (front && back) cards.push({ front, back });
+                }
+            });
+        } else if (activeImportTab === 'tab-csv') {
+            cards = pendingCSVCards;
+        } else if (activeImportTab === 'tab-json') {
+            const raw = document.getElementById('import-json').value.trim();
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) throw new Error('Expected a JSON array');
+            parsed.forEach(item => {
+                const front = (item.front || item.question || item.term || '').trim();
+                const back = (item.back || item.answer || item.definition || '').trim();
+                if (front && back) cards.push({ front, back });
+            });
+        }
+    } catch(e) {
+        errEl.textContent = 'Parse error: ' + e.message;
+        errEl.classList.remove('hidden');
+        return;
+    }
+
+    if (cards.length === 0) {
+        errEl.textContent = 'No valid cards found. Check the format and try again.';
+        errEl.classList.remove('hidden');
+        return;
+    }
+
+    if (replace) {
+        deck = cards;
+    } else {
+        deck = [...deck, ...cards];
+    }
+
+    rebuildOrder();
+    currentPos = 0;
+    closeModal('modal-import');
+    renderCard();
+    showToast(`Imported ${cards.length} card${cards.length > 1 ? 's' : ''}!`);
+}
+
+// ─── AI Modal ─────────────────────────────────────────────────────────────────
+function openAIModal() { openModal('modal-ai'); }
+
+// ─── Save / Export ────────────────────────────────────────────────────────────
+function saveToLocalStorage() {
+    const name = document.getElementById('deck-title').textContent;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ name, cards: deck }));
+    showToast('Deck saved to browser!');
+}
+
+function exportDeck() {
+    const name = document.getElementById('deck-title').textContent;
+    const json = JSON.stringify({ name, cards: deck }, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (name.replace(/\s+/g, '_') || 'flashcards') + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported!');
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+function shakeModal(id) {
+    const el = document.getElementById(id).querySelector('.bg-white');
+    el.classList.add('animate-bounce');
+    setTimeout(() => el.classList.remove('animate-bounce'), 600);
+}
+
+function showToast(msg) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.opacity = '1';
+    toast.style.pointerEvents = 'auto';
+    setTimeout(() => { toast.style.opacity = '0'; toast.style.pointerEvents = 'none'; }, 2200);
+}
+
+function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Close modals on backdrop click
+document.querySelectorAll('[id^="modal-"]').forEach(modal => {
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal(modal.id);
+    });
+});
+</script>
+
 {% endblock %}

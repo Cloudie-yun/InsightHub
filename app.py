@@ -24,7 +24,10 @@ import time
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 from services.document_parser import parse_document
-from services.diagram_vision_service import run_diagram_analysis_for_document
+from services.diagram_vision_service import (
+    DiagramVisionThrottleError,
+    run_diagram_analysis_for_document,
+)
 from services.extraction_store import (
     build_extraction_payload,
     build_pending_extraction_payload,
@@ -91,6 +94,84 @@ def _diagram_vision_schema_ready(cur) -> bool:
         )
         return False
     return True
+
+
+def _read_optional_int_env(name: str) -> int | None:
+    raw_value = str(os.getenv(name, "") or "").strip()
+    if not raw_value:
+        return None
+    try:
+        return max(0, int(raw_value))
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid integer env value for %s=%r", name, raw_value)
+        return None
+
+
+def _build_diagram_analysis_usage_summary(cur) -> dict:
+    rpm_limit = _read_optional_int_env("GEMINI_VISION_RPM_LIMIT")
+    rpd_limit = _read_optional_int_env("GEMINI_VISION_RPD_LIMIT")
+    minute_count = 0
+    day_count = 0
+    now_utc = datetime.now(timezone.utc)
+    minute_window_start = now_utc - timedelta(minutes=1)
+    day_window_start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
+
+    if _relation_exists(cur, "diagram_block_analysis_runs"):
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE started_at >= %s) AS minute_count,
+                COUNT(*) FILTER (WHERE started_at >= %s) AS day_count
+            FROM diagram_block_analysis_runs
+            WHERE provider_name = 'gemini'
+            """,
+            (minute_window_start, day_window_start),
+        )
+        row = cur.fetchone() or (0, 0)
+        minute_count = int(row[0] or 0)
+        day_count = int(row[1] or 0)
+
+    rpm_remaining = None if rpm_limit is None else max(0, rpm_limit - minute_count)
+    rpd_remaining = None if rpd_limit is None else max(0, rpd_limit - day_count)
+    limit_parts = [
+        f"RPM left: {rpm_remaining}/{rpm_limit}" if rpm_limit is not None else "RPM limit not configured",
+        f"RPD left: {rpd_remaining}/{rpd_limit}" if rpd_limit is not None else "RPD limit not configured",
+    ]
+    return {
+        "provider": "gemini",
+        "model": os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
+        "rpm_limit": rpm_limit,
+        "rpd_limit": rpd_limit,
+        "minute_count": minute_count,
+        "day_count": day_count,
+        "rpm_remaining": rpm_remaining,
+        "rpd_remaining": rpd_remaining,
+        "hover_text": " | ".join(limit_parts),
+    }
+
+
+def get_diagram_analysis_usage_summary() -> dict:
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            return _build_diagram_analysis_usage_summary(cur)
+    except Exception:
+        logger.exception("Unable to load diagram analysis usage summary")
+        return {
+            "provider": "gemini",
+            "model": os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
+            "rpm_limit": _read_optional_int_env("GEMINI_VISION_RPM_LIMIT"),
+            "rpd_limit": _read_optional_int_env("GEMINI_VISION_RPD_LIMIT"),
+            "minute_count": 0,
+            "day_count": 0,
+            "rpm_remaining": None,
+            "rpd_remaining": None,
+            "hover_text": "Usage information is unavailable right now.",
+        }
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 # ===========================================================================
@@ -339,6 +420,33 @@ def get_sidebar_conversations(user_id, limit: int = 8) -> list:
             conn.close()
 
 
+def get_conversation_title(user_id, conversation_id) -> str:
+    if not user_id or not conversation_id:
+        return ""
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT title
+                FROM conversations
+                WHERE user_id = %s
+                  AND conversation_id = %s
+                LIMIT 1
+                """,
+                (user_id, conversation_id),
+            )
+            row = cur.fetchone()
+        return (row[0] or "").strip() if row else ""
+    except Exception:
+        return ""
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def get_conversation_documents(user_id, conversation_id) -> list:
     if not user_id or not conversation_id:
         return []
@@ -446,6 +554,7 @@ def get_document_parser_result(user_id, document_id, conversation_id=None) -> di
             if not document_row:
                 return None
 
+            document_file_record = get_document_file_record(user_id, document_id, conversation_id)
             extraction_payload = (
                 fetch_document_extraction(cur, document_id=document_id, conversation_id=conversation_id)
                 or build_pending_extraction_payload(document_id=document_id)
@@ -456,6 +565,7 @@ def get_document_parser_result(user_id, document_id, conversation_id=None) -> di
                 "original_filename": document_row[1] or "",
                 "file_extension":    document_row[2] or "",
                 "mime_type":         document_row[3] or "",
+                "upload_path":       (document_file_record or {}).get("upload_path", ""),
                 "parser_result":     extraction_payload,
             }
     except Exception:
@@ -885,6 +995,8 @@ def _build_parser_review_payload(document_result: dict) -> dict:
             "source_unit_type": block.get("source_unit_type"),
             "source_unit_index": block.get("source_unit_index"),
             "reading_order": block.get("reading_order"),
+            "confidence": block.get("confidence"),
+            "updated_at": block.get("updated_at"),
             "display_text": block.get("display_text"),
             "caption_text": block.get("caption_text"),
             "embedding_status": block.get("embedding_status"),
@@ -943,11 +1055,17 @@ def _build_parser_review_payload(document_result: dict) -> dict:
         review_blocks.append(item)
 
     metadata = parser_result.get("metadata") or {}
+    upload_path = str(document_result.get("upload_path") or "").strip()
+    preview_url = f"/uploads/preview/{quote(upload_path, safe='/')}" if upload_path else ""
+    upload_url = f"/uploads/{quote(upload_path, safe='/')}" if upload_path else ""
     return {
         "document_id": document_result.get("document_id"),
         "original_filename": document_result.get("original_filename") or "",
         "file_extension": document_result.get("file_extension") or "",
         "mime_type": document_result.get("mime_type") or "",
+        "upload_path": upload_path,
+        "preview_url": preview_url,
+        "upload_url": upload_url,
         "parser_result": {
             "parser_status": parser_result.get("parser_status"),
             "parser_version": parser_result.get("parser_version"),
@@ -1271,6 +1389,7 @@ def chat():
     user_id                     = session.get("user_id")
     current_conversation_id     = (request.args.get("conversation_id") or "").strip()
     highlight_new_conversation   = request.args.get("new") == "1"
+    conversation_title          = get_conversation_title(user_id, current_conversation_id)
 
     if current_conversation_id and not conversation_exists_for_user(user_id, current_conversation_id):
         return render_template(
@@ -1285,6 +1404,7 @@ def chat():
         'chat.html',
         active_page                 = 'chat',
         current_conversation_id     = current_conversation_id,
+        conversation_title          = conversation_title,
         highlight_new_conversation  = highlight_new_conversation,
         conversation_documents      = conversation_documents,
         demo_messages               = _demo_chat_messages() if not current_conversation_id else [],
@@ -1298,17 +1418,17 @@ def document_parser_results(document_id):
         return redirect(url_for("dashboard"))
 
     conversation_id = (request.args.get("conversation_id") or "").strip() or None
+    parser_result_context = get_document_parser_result_context(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
     document_result = get_document_parser_result(
         user_id         = user_id,
         document_id     = document_id,
         conversation_id = conversation_id,
     )
     if not document_result:
-        parser_result_context = get_document_parser_result_context(
-            user_id=user_id,
-            document_id=document_id,
-            conversation_id=conversation_id,
-        )
         return render_template(
             "document_parser_results_not_found.html",
             active_page="chat",
@@ -1318,10 +1438,12 @@ def document_parser_results(document_id):
         ), 404
 
     review_document = _build_parser_review_payload(document_result)
+    review_document["diagram_analysis_usage"] = get_diagram_analysis_usage_summary()
     return render_template(
         "document_parser_results.html",
         active_page="chat",
         parser_document=review_document,
+        parser_result_context=parser_result_context,
     )
 
 
@@ -2220,25 +2342,6 @@ def _run_document_parse_job(job: dict) -> None:
                 document_id=document_id,
                 extraction_payload=extraction_payload,
             )
-
-            auto_vision_enabled = _is_truthy_env(os.getenv("DIAGRAM_VISION_AUTO_ANALYZE", "1"))
-            if auto_vision_enabled and _diagram_vision_schema_ready(cur):
-                try:
-                    analyzed_block_ids = run_diagram_analysis_for_document(
-                        cur,
-                        document_id=str(document_id),
-                    )
-                    if analyzed_block_ids:
-                        logger.info(
-                            "Diagram vision analysis saved for document_id=%s blocks=%s",
-                            document_id,
-                            len(analyzed_block_ids),
-                        )
-                except Exception:
-                    logger.exception(
-                        "Diagram vision analysis skipped/failed for document_id=%s",
-                        document_id,
-                    )
         conn.commit()
     except Exception as exc:
         logger.exception("Background parse failed for document_id=%s", document_id)
@@ -2741,6 +2844,18 @@ def api_save_document_parser_review(document_id):
         if conn is not None:
             conn.close()
 
+    refreshed_result = get_document_parser_result(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if not refreshed_result:
+        return jsonify({'error': 'Document not found after saving review.'}), 404
+
+    response_payload = _build_parser_review_payload(refreshed_result)
+    response_payload["diagram_analysis_usage"] = get_diagram_analysis_usage_summary()
+    return jsonify(response_payload), 200
+
 
 def get_document_file_record(user_id, document_id, conversation_id=None) -> dict | None:
     if not user_id or not document_id:
@@ -2811,7 +2926,9 @@ def get_document_file_record(user_id, document_id, conversation_id=None) -> dict
             "modified_blocks": modified_count,
         },
     }
-    return jsonify(_build_parser_review_payload(document_result)), 200
+    review_document = _build_parser_review_payload(document_result)
+    review_document["diagram_analysis_usage"] = get_diagram_analysis_usage_summary()
+    return jsonify(review_document), 200
 
 
 @app.route('/api/documents/<document_id>/diagram-analysis', methods=['POST'])
@@ -2855,6 +2972,15 @@ def api_run_selected_diagram_analysis(document_id):
             if not _diagram_vision_schema_ready(cur):
                 return jsonify({'error': 'Diagram analysis tables are not ready yet.'}), 400
 
+            usage_summary = _build_diagram_analysis_usage_summary(cur)
+            selected_count = len(selected_block_ids)
+            rpd_remaining = usage_summary.get("rpd_remaining")
+            if rpd_remaining is not None and selected_count > rpd_remaining:
+                return jsonify({
+                    'error': 'Diagram analysis would exceed the configured per-day limit.',
+                    'usage': usage_summary,
+                }), 429
+
             analyzed_block_ids = run_diagram_analysis_for_document(
                 cur,
                 document_id=document_id,
@@ -2862,6 +2988,13 @@ def api_run_selected_diagram_analysis(document_id):
                 force_analyze=True,
             )
         conn.commit()
+    except DiagramVisionThrottleError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({
+            'error': str(exc),
+            'usage': get_diagram_analysis_usage_summary(),
+        }), 429
     except Exception as exc:
         if conn:
             conn.rollback()
@@ -2880,6 +3013,7 @@ def api_run_selected_diagram_analysis(document_id):
         return jsonify({'error': 'Document not found after analysis.'}), 404
 
     response_payload = _build_parser_review_payload(refreshed_result)
+    response_payload["diagram_analysis_usage"] = get_diagram_analysis_usage_summary()
     response_payload["requested_block_ids"] = selected_block_ids
     response_payload["analyzed_block_ids"] = analyzed_block_ids
     return jsonify(response_payload), 200

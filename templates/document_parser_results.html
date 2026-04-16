@@ -1,51 +1,55 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 md:px-8">
-    <section class="parser-review-shell overflow-hidden rounded-[28px] border border-brand-100 bg-gradient-to-br from-white via-brand-50/60 to-amber-50 px-5 py-6 md:px-8 md:py-8">
-        <div class="parser-review-card rounded-[28px] border border-white/70 bg-white/85 p-6 shadow-sm">
-            <div class="space-y-6">
-                <div class="space-y-4">
-                    <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div class="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-brand-700">Parser Review</div>
-                        <div class="flex flex-wrap items-center gap-3 md:justify-end">
-                            <button id="save-review-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-floppy-disk"></i>Save Reviewed Context</button>
-                            <button id="reset-review-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"><i class="fa-solid fa-rotate-left"></i>Reset Changes</button>
-                            <a href="{{ url_for('chat') }}{% if request.args.get('conversation_id') %}?conversation_id={{ request.args.get('conversation_id') }}{% endif %}" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"><i class="fa-solid fa-arrow-left"></i>Back To Chat</a>
-                        </div>
+<div class="mx-auto flex flex-col gap-6 px-4 py-6 md:px-8">
+    <header class="parser-review-header sticky top-5 z-20 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-md before:pointer-events-none before:absolute before:-top-5 before:left-0 before:right-0 before:h-5 before:rounded-t-2xl before:bg-slate-50/70 before:backdrop-blur-md before:content-['']">
+        <div class="flex flex-col gap-3 px-4 py-4 lg:px-6">
+            <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div class="min-w-0 space-y-2">
+                    <div class="flex flex-wrap items-center gap-2d text-xs text-slate-500">
+                        {% if parser_result_context.conversation_title %}
+                            <a href="{{ url_for('chat', conversation_id=request.args.get('conversation_id')) }}" class="font-medium text-slate-600 transition hover:text-slate-900">
+                                {{ parser_result_context.conversation_title }}
+                            </a>
+                            <span>/</span>
+                        {% endif %}
+                        <span class="truncate">{{ parser_document.original_filename }}</span>
                     </div>
-                    <div class="space-y-2">
-                        <h1 class="text-3xl font-semibold tracking-tight text-slate-900">Review What The Chatbot Will Read</h1>
-                        <p class="max-w-4xl text-sm leading-6 text-slate-600">Edit paragraphs, tables, and diagram descriptions before they become the saved RAG context.</p>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <div class="text-sm font-semibold tracking-tight text-slate-900">InsightHub Parse Review</div>
+                        <span class="rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">single document</span>
+                        <span id="parse-status-value" class="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-emerald-700">{{ parser_document.parser_result.parser_status or "unknown" }}</span>
                     </div>
                 </div>
-
-                <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Document</p><p class="mt-2 text-sm font-medium text-slate-900">{{ parser_document.original_filename }}</p></article>
-                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</p><p id="parse-status-value" class="mt-2 text-sm font-semibold text-emerald-700">{{ parser_document.parser_result.parser_status or "unknown" }}</p></article>
-                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Review Blocks</p><p id="total-block-count" class="mt-2 text-sm font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.total_blocks }} items</p></article>
-                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Last Review</p><p id="last-review-value" class="mt-2 text-sm font-medium text-slate-900">{{ parser_document.parser_result.metadata.review.updated_at or "Not saved yet" }}</p></article>
-                </div>
-
-                <div class="space-y-4 border-t border-slate-100 pt-5">
-                    <div class="grid gap-3 sm:grid-cols-3">
-                        <div class="rounded-2xl bg-slate-50 px-4 py-3"><p class="text-xs uppercase tracking-wide text-slate-500">Text</p><p id="text-block-count" class="mt-1 text-lg font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.text_blocks }}</p></div>
-                        <div class="rounded-2xl bg-slate-50 px-4 py-3"><p class="text-xs uppercase tracking-wide text-slate-500">Tables</p><p id="table-block-count" class="mt-1 text-lg font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.table_blocks }}</p></div>
-                        <div class="rounded-2xl bg-slate-50 px-4 py-3"><p class="text-xs uppercase tracking-wide text-slate-500">Diagrams</p><p id="diagram-block-count" class="mt-1 text-lg font-semibold text-slate-900">{{ parser_document.parser_result.review_summary.diagram_blocks }}</p></div>
-                    </div>
-
-                    <p id="save-status" class="min-h-[20px] text-sm text-slate-500"></p>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="reset-review-btn" type="button" class="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                        Revert
+                    </button>
+                    <button id="save-review-btn" type="button" class="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-60">
+                        Save
+                    </button>
                 </div>
             </div>
+            <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <input id="document-title-input" type="text" value="{{ parser_document.original_filename or 'Research Systems Review.pdf' }}" aria-label="Document title" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100 xl:max-w-2xl">
+                <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                    <span id="total-block-count">{{ parser_document.parser_result.review_summary.total_blocks }} items</span>
+                    <span>Text <span id="text-block-count" class="font-semibold text-slate-700">{{ parser_document.parser_result.review_summary.text_blocks }}</span></span>
+                    <span>Tables <span id="table-block-count" class="font-semibold text-slate-700">{{ parser_document.parser_result.review_summary.table_blocks }}</span></span>
+                    <span>Diagrams <span id="diagram-block-count" class="font-semibold text-slate-700">{{ parser_document.parser_result.review_summary.diagram_blocks }}</span></span>
+                    <span id="last-review-value">{% if parser_document.parser_result.metadata.review.updated_at %}Saved {{ parser_document.parser_result.metadata.review.updated_at }}{% else %}Not saved yet{% endif %}</span>
+                </div>
+            </div>
+            <p id="save-status" class="min-h-[20px] text-sm text-slate-500"></p>
         </div>
-    </section>
+    </header>
 
-    <section class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+<section class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(420px,46%)]">
         <div class="space-y-5">
             <div class="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h2 class="text-lg font-semibold text-slate-900">Top To Bottom Review</h2>
+                        <h2 class="text-lg font-semibold text-slate-900">Document Parsing Results Review</h2>
                         <p class="text-sm text-slate-500">Each block is shown in source order.</p>
                     </div>
                     <div class="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-medium text-slate-600">
@@ -56,7 +60,7 @@
                     </div>
                 </div>
             </div>
-            <div class="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div id="diagram-actions-panel" class="hidden rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                         <h2 class="text-base font-semibold text-slate-900">Diagram Actions</h2>
@@ -76,18 +80,25 @@
             <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="flex items-center justify-between gap-3">
                     <div>
-                        <h2 class="text-base font-semibold text-slate-900">Live Context</h2>
-                        <p class="text-sm text-slate-500">This is what retrieval will use after save.</p>
+                        <h2 class="text-base font-semibold text-slate-900">Document View</h2>
+                        <p class="text-sm text-slate-500">Reference the original file while reviewing parsed blocks.</p>
                     </div>
-                    <button id="copy-context-btn" type="button" class="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><i class="fa-regular fa-copy"></i>Copy</button>
+                    {% if parser_document.upload_url %}
+                        <a href="{{ parser_document.upload_url }}" target="_blank" rel="noopener" class="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><i class="fa-solid fa-arrow-up-right-from-square"></i>Open</a>
+                    {% endif %}
                 </div>
-                <pre id="review-markdown-preview" class="mt-4 max-h-[460px] overflow-auto rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-100 whitespace-pre-wrap"></pre>
+                <div class="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                    {% if parser_document.preview_url %}
+                        <iframe src="{{ parser_document.preview_url }}" title="Document preview" class="h-[620px] w-full bg-white"></iframe>
+                    {% else %}
+                        <div class="flex h-[320px] items-center justify-center px-6 text-center text-sm text-slate-500">Preview is not available for this file type yet.</div>
+                    {% endif %}
+                </div>
             </section>
             <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h2 class="text-base font-semibold text-slate-900">Editing Notes</h2>
                 <ul class="mt-3 space-y-3 text-sm leading-6 text-slate-600">
-                    <li>Text edits replace the paragraph context used for retrieval.</li>
-                    <li>Table edits support direct cell editing, merge-right, and delete-column.</li>
+                    <li>Click the edit icon on a block to switch that segment from reader mode into editing mode.</li>
                     <li>Diagram descriptions should explain meaning, not only appearance.</li>
                 </ul>
             </section>
@@ -95,35 +106,46 @@
     </section>
 </div>
 
-<button id="scroll-to-top-btn" type="button" class="hidden fixed bottom-6 right-6 z-40 h-12 w-12 rounded-full bg-brand-600 text-white shadow-lg transition hover:bg-brand-700" title="Scroll to top"><i class="fa-solid fa-arrow-up"></i></button>
+<button
+    id="parser-scroll-top-btn"
+    type="button"
+    class="hidden fixed bottom-6 right-6 z-40 h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-700 shadow-sm backdrop-blur transition hover:bg-white"
+    title="Scroll to top"
+>
+    <i class="fa-solid fa-arrow-up"></i>
+</button>
 
 <style>
-body.theme-dark .parser-review-shell {
-    background: linear-gradient(135deg, rgba(37, 37, 37, 0.96), rgba(61, 51, 78, 0.9), rgba(70, 52, 27, 0.78)) !important;
-    border-color: rgba(160, 140, 200, 0.22) !important;
+body.theme-dark .parser-review-header {
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    background: rgba(15, 23, 42, 0.78) !important;
 }
 
-body.theme-dark .parser-review-card {
-    background: rgba(31, 31, 31, 0.88) !important;
-    border-color: rgba(255, 255, 255, 0.08) !important;
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.38) !important;
-    backdrop-filter: blur(10px);
+body.theme-dark .parser-review-header::before {
+    background: rgba(15, 23, 42, 0.52) !important;
+}
+
+body.theme-dark #parser-scroll-top-btn {
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    background: rgba(15, 23, 42, 0.86) !important;
+    color: #e2e8f0 !important;
 }
 </style>
 
 <script>
 (() => {
-    let initialParserDocument = {{ parser_document|tojson }};
+let initialParserDocument = {{ parser_document|tojson }};
     let parserDocument = JSON.parse(JSON.stringify(initialParserDocument));
     let activeFilter = "all";
     let hasUnsavedChanges = false;
+    const editingBlockIds = new Set();
     const reviewBlocksContainer = document.getElementById("review-blocks");
     const saveReviewBtn = document.getElementById("save-review-btn");
     const resetReviewBtn = document.getElementById("reset-review-btn");
     const saveStatus = document.getElementById("save-status");
-    const previewPre = document.getElementById("review-markdown-preview");
-    const copyContextBtn = document.getElementById("copy-context-btn");
-    const scrollToTopBtn = document.getElementById("scroll-to-top-btn");
+    const scrollToTopBtn = document.getElementById("parser-scroll-top-btn");
+    const pageScroller = document.querySelector("main");
+    const diagramActionsPanel = document.getElementById("diagram-actions-panel");
     const analyzeSelectedDiagramsBtn = document.getElementById("analyze-selected-diagrams-btn");
     const copySelectedDiagramImageBtn = document.getElementById("copy-selected-diagram-image-btn");
     const copyDiagramPromptBtn = document.getElementById("copy-diagram-prompt-btn");
@@ -151,6 +173,15 @@ body.theme-dark .parser-review-card {
         return String(a?.block_id || "").localeCompare(String(b?.block_id || ""));
     };
     const selectedDiagramBlocks = () => [...blocks()].filter((block) => String(block?.block_type || "").toLowerCase() === "diagram" && selectedDiagramIds.has(String(block.block_id || "")));
+    const getDiagramUsage = () => parserDocument?.diagram_analysis_usage || {};
+    const applyDiagramUsageUi = () => {
+        const usage = getDiagramUsage();
+        const hoverText = usage?.hover_text || "Diagram analysis limits are unavailable.";
+        if (analyzeSelectedDiagramsBtn) {
+            analyzeSelectedDiagramsBtn.title = hoverText;
+            analyzeSelectedDiagramsBtn.setAttribute("aria-label", `Analyze Selected. ${hoverText}`);
+        }
+    };
     const updateDiagramActionState = () => {
         const selectedCount = selectedDiagramBlocks().length;
         const disabled = selectedCount === 0;
@@ -160,10 +191,17 @@ body.theme-dark .parser-review-card {
         if (copyDiagramPromptBtn) copyDiagramPromptBtn.disabled = disabled;
         if (clearDiagramSelectionBtn) clearDiagramSelectionBtn.disabled = disabled;
         if (diagramSelectionStatus) {
+            const usage = getDiagramUsage();
+            const usageText = usage?.hover_text ? ` ${usage.hover_text}.` : "";
             diagramSelectionStatus.textContent = selectedCount
-                ? `${selectedCount} diagram${selectedCount === 1 ? "" : "s"} selected. Analyze them here, copy one exact image, or copy an external AI prompt.`
-                : "Select diagrams to analyze with our backend, copy one exact image, or copy a detailed external AI prompt.";
+                ? `${selectedCount} diagram${selectedCount === 1 ? "" : "s"} selected. Analyze them here, copy one exact image, or copy an external AI prompt.${usageText}`
+                : `Select diagrams to analyze with our backend, copy one exact image, or copy a detailed external AI prompt.${usageText}`;
         }
+    };
+    const updateDiagramActionsVisibility = () => {
+        if (!diagramActionsPanel) return;
+        const show = activeFilter === "diagram";
+        diagramActionsPanel.classList.toggle("hidden", !show);
     };
     const copyDiagramImageToClipboard = async (block) => {
         const imageUrl = String(block?.normalized_content?.image_url || "").trim();
@@ -214,32 +252,6 @@ body.theme-dark .parser-review-card {
             ...sections,
         ].join("\n\n");
     };
-    const buildContextMarkdown = () => {
-        const parts = [];
-        [...blocks()].sort(compareBlocks).forEach((block) => {
-            const n = block?.normalized_content || {};
-            if (block.block_type === "text") {
-                const text = norm(n.text_content || n.normalized_text || block.display_text || "");
-                if (text) parts.push(text);
-            } else if (block.block_type === "table") {
-                const matrix = ensureMatrix(n.matrix || []);
-                const caption = norm(n.caption || block.caption_text || "");
-                if (caption) parts.push(`### ${caption}`);
-                if (matrix.length) {
-                    parts.push(`| ${matrix[0].join(" | ")} |`);
-                    parts.push(`| ${new Array(matrix[0].length).fill("---").join(" | ")} |`);
-                    matrix.slice(1).forEach((row) => parts.push(`| ${row.join(" | ")} |`));
-                }
-            } else if (block.block_type === "diagram") {
-                const caption = norm(block.caption_text || "");
-                const description = norm(n.visual_description || "");
-                if (caption) parts.push(`### ${caption}`);
-                if (description) parts.push(`Description: ${description}`);
-            }
-        });
-        return parts.join("\n\n").trim();
-    };
-    const refreshPreview = () => { previewPre.textContent = buildContextMarkdown() || "No reviewed context yet."; };
     const updateCounts = () => {
         const count = { total: 0, text: 0, table: 0, diagram: 0 };
         blocks().forEach((block) => { const key = String(block?.block_type || "").toLowerCase(); count.total += 1; count[key] = (count[key] || 0) + 1; });
@@ -254,6 +266,7 @@ body.theme-dark .parser-review-card {
         const role = String(n.text_role || "paragraph");
         const path = Array.isArray(n.section_path) ? n.section_path.filter(Boolean).join(" > ") : "";
         const value = n.text_content || n.normalized_text || block.display_text || "";
+        const isEditing = editingBlockIds.has(String(block.block_id || ""));
         return `
             <article data-block-type="text" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
@@ -265,10 +278,15 @@ body.theme-dark .parser-review-card {
                         </div>
                         <div><h3 class="text-lg font-semibold text-slate-900">Paragraph Context</h3><p class="text-sm text-slate-500">${path ? esc(path) : "Edit this text exactly as you want the chatbot to retrieve it."}</p></div>
                     </div>
+                    <button type="button" data-action="${isEditing ? "close-edit" : "toggle-edit"}" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                        <i class="fa-regular ${isEditing ? "fa-circle-check" : "fa-pen-to-square"}"></i>${isEditing ? "Done" : "Edit"}
+                    </button>
                 </div>
-                <div class="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-                    <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Editable Text</span><textarea data-role="text-editor" data-block-id="${esc(block.block_id)}" class="min-h-[220px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(value)}</textarea></label>
-                    <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Reader Preview</p><div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">${esc(value || "No text entered.")}</div></div>
+                <div class="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">${isEditing ? "Editable Text" : "Reader View"}</p>
+                    ${isEditing
+                        ? `<textarea data-role="text-editor" data-block-id="${esc(block.block_id)}" class="mt-3 min-h-[220px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100">${esc(value)}</textarea>`
+                        : `<div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">${esc(value || "No text entered.")}</div>`}
                 </div>
             </article>
         `;
@@ -331,6 +349,7 @@ body.theme-dark .parser-review-card {
         const promptVersion = n.prompt_version || "n/a";
         const analyzedAt = n.last_analyzed_at || "n/a";
         const gateReasons = Array.isArray(n.vision_gate_reasons) ? n.vision_gate_reasons.filter(Boolean) : [];
+        const isEditing = editingBlockIds.has(String(block.block_id || ""));
         return `
             <article data-block-type="diagram" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
@@ -342,10 +361,15 @@ body.theme-dark .parser-review-card {
                         </div>
                         <div><h3 class="text-lg font-semibold text-slate-900">Diagram Interpretation</h3><p class="text-sm text-slate-500">Describe what the diagram means so the chatbot can reason over it.</p></div>
                     </div>
-                    <label class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
-                        <input type="checkbox" data-role="diagram-select" data-block-id="${esc(block.block_id)}" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" ${isSelected ? "checked" : ""}>
-                        Select
-                    </label>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" data-action="${isEditing ? "close-edit" : "toggle-edit"}" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                            <i class="fa-regular ${isEditing ? "fa-circle-check" : "fa-pen-to-square"}"></i>${isEditing ? "Done" : "Edit"}
+                        </button>
+                        <label class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700">
+                            <input type="checkbox" data-role="diagram-select" data-block-id="${esc(block.block_id)}" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" ${isSelected ? "checked" : ""}>
+                            Select
+                        </label>
+                    </div>
                 </div>
                 <div class="mt-5 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
                     <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -365,8 +389,14 @@ body.theme-dark .parser-review-card {
                         ${ocrText ? `<div class="mt-3 rounded-2xl border border-slate-200 bg-white p-3"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">OCR Text</p><p class="mt-2 text-sm leading-6 text-slate-700">${esc(ocrText)}</p></div>` : ""}
                     </div>
                     <div class="space-y-4">
-                        <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Figure Caption</span><input type="text" data-role="diagram-caption" data-block-id="${esc(block.block_id)}" value="${esc(caption)}" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100"></label>
-                        <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Model Description</span><textarea data-role="diagram-description" data-block-id="${esc(block.block_id)}" class="min-h-[220px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(description)}</textarea></label>
+                        ${isEditing
+                            ? `<label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Figure Caption</span><input type="text" data-role="diagram-caption" data-block-id="${esc(block.block_id)}" value="${esc(caption)}" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100"></label>
+                               <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Model Description</span><textarea data-role="diagram-description" data-block-id="${esc(block.block_id)}" class="min-h-[220px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(description)}</textarea></label>`
+                            : `<div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                   <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Reader View</p>
+                                   ${caption ? `<p class="mt-3 text-sm font-medium text-slate-900">${esc(caption)}</p>` : ""}
+                                   <div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">${esc(description || "No description available yet.")}</div>
+                               </div>`}
                     </div>
                 </div>
             </article>
@@ -406,15 +436,6 @@ body.theme-dark .parser-review-card {
             return item;
         }),
     });
-    const copyText = async (text) => {
-        if (!text) return setStatus("No reviewed context available to copy.", true);
-        try {
-            await navigator.clipboard.writeText(text);
-            setStatus("Reviewed context copied to clipboard.");
-        } catch (_error) {
-            setStatus("Unable to copy automatically.", true);
-        }
-    };
     reviewBlocksContainer?.addEventListener("input", (event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) return;
@@ -449,11 +470,23 @@ body.theme-dark .parser-review-card {
         }
         block.normalized_content = n;
         setDirty(true);
-        refreshPreview();
     });
     reviewBlocksContainer?.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-action]");
         if (!button) return;
+        const action = button.dataset.action || "";
+        const blockId = button.dataset.blockId || "";
+        if (action === "toggle-edit") {
+            editingBlockIds.add(blockId);
+            renderBlocks();
+            reviewBlocksContainer.querySelector(`[data-block-id="${CSS.escape(blockId)}"][data-role="text-editor"], [data-block-id="${CSS.escape(blockId)}"][data-role="diagram-description"]`)?.focus();
+            return;
+        }
+        if (action === "close-edit") {
+            editingBlockIds.delete(blockId);
+            renderBlocks();
+            return;
+        }
         const block = findBlock(button.dataset.blockId || "");
         if (!block) return;
         const n = block.normalized_content || {};
@@ -486,7 +519,6 @@ body.theme-dark .parser-review-card {
         block.normalized_content = n;
         setDirty(true);
         renderBlocks();
-        refreshPreview();
     });
     analyzeSelectedDiagramsBtn?.addEventListener("click", async () => {
         const selected = selectedDiagramBlocks().sort(compareBlocks);
@@ -513,7 +545,7 @@ body.theme-dark .parser-review-card {
             setStatus(`Diagram analysis finished. Updated ${Array.isArray(payload?.analyzed_block_ids) ? payload.analyzed_block_ids.length : 0} selected block(s).`);
             updateCounts();
             renderBlocks();
-            refreshPreview();
+            applyDiagramUsageUi();
             updateDiagramActionState();
         } catch (_error) {
             setStatus("Network error while analyzing selected diagrams.", true);
@@ -526,7 +558,16 @@ body.theme-dark .parser-review-card {
         if (selected.length !== 1) return setStatus("Select exactly one diagram to copy its image.", true);
         await copyDiagramImageToClipboard(selected[0]);
     });
-    copyDiagramPromptBtn?.addEventListener("click", async () => copyText(buildExternalDiagramPrompt()));
+    copyDiagramPromptBtn?.addEventListener("click", async () => {
+        const text = buildExternalDiagramPrompt();
+        if (!text) return setStatus("No selected diagrams available for prompt copy.", true);
+        try {
+            await navigator.clipboard.writeText(text);
+            setStatus("Diagram prompt copied to clipboard.");
+        } catch (_error) {
+            setStatus("Unable to copy automatically.", true);
+        }
+    });
     clearDiagramSelectionBtn?.addEventListener("click", () => {
         selectedDiagramIds.clear();
         renderBlocks();
@@ -543,17 +584,17 @@ body.theme-dark .parser-review-card {
                 item.classList.toggle("text-slate-900", on);
                 item.classList.toggle("text-slate-600", !on);
             });
+            updateDiagramActionsVisibility();
             renderBlocks();
         });
     });
-    copyContextBtn?.addEventListener("click", async () => copyText(buildContextMarkdown()));
     resetReviewBtn?.addEventListener("click", () => {
         parserDocument = JSON.parse(JSON.stringify(initialParserDocument));
+        editingBlockIds.clear();
         setDirty(false);
         setStatus("Review changes reset to the last loaded version.");
         updateCounts();
         renderBlocks();
-        refreshPreview();
     });
     saveReviewBtn?.addEventListener("click", async () => {
         saveReviewBtn.disabled = true;
@@ -572,23 +613,37 @@ body.theme-dark .parser-review-card {
             initialParserDocument = payload;
             parserDocument = payload;
             document.getElementById("last-review-value").textContent = parserDocument?.parser_result?.metadata?.review?.updated_at || "Saved";
+            editingBlockIds.clear();
             setDirty(false);
             setStatus("Reviewed context saved. Future retrieval should use this edited version.");
             updateCounts();
             renderBlocks();
-            refreshPreview();
         } catch (_error) {
             setStatus("Network error while saving reviewed context.", true);
         } finally {
             saveReviewBtn.disabled = false;
         }
     });
-    window.addEventListener("scroll", () => { scrollToTopBtn.classList.toggle("hidden", window.scrollY <= 240); }, { passive: true });
-    scrollToTopBtn?.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+    const toggleScrollTopButton = () => {
+        const scrollTop = pageScroller ? pageScroller.scrollTop : window.scrollY;
+        scrollToTopBtn?.classList.toggle("hidden", scrollTop <= 240);
+        scrollToTopBtn?.classList.toggle("flex", scrollTop > 240);
+    };
+    pageScroller?.addEventListener("scroll", toggleScrollTopButton, { passive: true });
+    window.addEventListener("scroll", toggleScrollTopButton, { passive: true });
+    scrollToTopBtn?.addEventListener("click", () => {
+        if (pageScroller) {
+            pageScroller.scrollTo({ top: 0, behavior: "smooth" });
+            return;
+        }
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    toggleScrollTopButton();
     renderBlocks();
     updateCounts();
-    refreshPreview();
+    applyDiagramUsageUi();
     updateDiagramActionState();
+    updateDiagramActionsVisibility();
 })();
 </script>
 {% endblock %}
