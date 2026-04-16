@@ -22,7 +22,7 @@ VISION_GATE_PROMPT_VERSION = "diagram_gate_v1"
 DIAGRAM_VISION_MIN_SCORE = float(os.environ.get("DIAGRAM_VISION_MIN_SCORE", "0.45"))
 GEMINI_VISION_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_VISION_MAX_OUTPUT_TOKENS", "8192"))
 DIAGRAM_ASSETS_BASE_DIR = Path(
-    os.environ.get("DIAGRAM_ASSETS_BASE_DIR", r"C:\Users\Clouddy\Desktop\FYP2\uploads")
+    os.environ.get("DIAGRAM_ASSETS_BASE_DIR", str(Path.cwd() / "uploads"))
 )
 
 _POSITIVE_DIAGRAM_KEYWORDS = {

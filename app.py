@@ -22,6 +22,7 @@ import logging
 import mimetypes
 import time
 
+from werkzeug.middleware.proxy_fix import ProxyFix
 from services.document_parser import parse_document
 from services.diagram_vision_service import run_diagram_analysis_for_document
 from services.extraction_store import (
@@ -38,6 +39,7 @@ from services.extraction_store import (
 # ===========================================================================
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 logger = logging.getLogger(__name__)
 DOCUMENT_PARSE_MAX_WORKERS = max(1, int(os.getenv("DOCUMENT_PARSE_MAX_WORKERS", "2")))
