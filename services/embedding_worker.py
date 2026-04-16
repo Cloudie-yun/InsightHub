@@ -47,6 +47,7 @@ class EmbeddingWorker:
         self.max_attempts = max(1, min(max_attempts, 10))
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.service = service or EmbeddingService()
+        self.service.batch_size = max(1, min(self.service.batch_size, self.batch_size))
         self.model_signature = self._build_model_signature()
         self.model_version_hash = hashlib.sha256(self.model_signature.encode("utf-8")).hexdigest()
         self._embedding_runs_enabled = True
@@ -79,15 +80,17 @@ class EmbeddingWorker:
                     if not to_embed:
                         return stats
 
-                    vectors = self._embed_with_retries(cur, rows=to_embed)
-                    if vectors is None:
-                        stats["failed"] += len(to_embed)
-                        return stats
+                    for start in range(0, len(to_embed), self.batch_size):
+                        chunk = to_embed[start : start + self.batch_size]
+                        vectors = self._embed_with_retries(cur, rows=chunk)
+                        if vectors is None:
+                            stats["failed"] += len(chunk)
+                            continue
 
-                    for row, vector in zip(to_embed, vectors):
-                        self._upsert_embedding(cur, row=row, vector=vector)
-                        self._mark_embedded(cur, row=row, reused_existing=False)
-                        stats["embedded"] += 1
+                        for row, vector in zip(chunk, vectors):
+                            self._upsert_embedding(cur, row=row, vector=vector)
+                            self._mark_embedded(cur, row=row, reused_existing=False)
+                            stats["embedded"] += 1
 
             return stats
         finally:
