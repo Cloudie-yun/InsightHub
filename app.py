@@ -489,12 +489,18 @@ def _resolve_authorized_upload_path(user_id: str | None, requested_path: str) ->
 def serialize_user_row(user_row) -> dict | None:
     if not user_row:
         return None
+    auth_provider = user_row[5] if len(user_row) > 5 else "local"
+    google_sub = user_row[6] if len(user_row) > 6 else None
+    has_password = bool(user_row[7]) if len(user_row) > 7 else auth_provider == "local"
     return {
         "user_id":        str(user_row[0]),
         "username":       user_row[1],
         "email":          user_row[2],
         "created_at":     user_row[3].isoformat() if user_row[3] else None,
         "email_verified": bool(user_row[4]),
+        "auth_provider":  auth_provider,
+        "is_google_linked": bool(google_sub) or auth_provider == "google",
+        "has_password": has_password,
     }
 
 
@@ -591,7 +597,7 @@ def get_current_user() -> dict | None:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT user_id, username, email, created_at, email_verified
+                SELECT user_id, username, email, created_at, email_verified, auth_provider, google_sub, password_hash
                 FROM users
                 WHERE user_id = %s
                 """,
@@ -2227,7 +2233,7 @@ def update_profile():
             cur.execute(
                 """
                 UPDATE users SET username = %s WHERE user_id = %s
-                RETURNING user_id, username, email, created_at, email_verified
+                RETURNING user_id, username, email, created_at, email_verified, auth_provider, google_sub, password_hash
                 """,
                 (username, user_id),
             )
@@ -2294,6 +2300,89 @@ def change_password():
         if conn is not None:
             conn.rollback()
         return jsonify({'error': 'Unable to update password right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/settings', methods=['GET'])
+def auth_settings():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    user_id,
+                    username,
+                    email,
+                    created_at,
+                    email_verified,
+                    auth_provider,
+                    google_sub,
+                    password_hash,
+                    COALESCE(custom_system_prompt, '')
+                FROM users
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                session.pop("user_id", None)
+                return jsonify({'error': 'User not found.'}), 404
+
+        user_payload = serialize_user_row(row[:8]) or {}
+        return jsonify({
+            'user': user_payload,
+            'custom_system_prompt': row[8] or '',
+        }), 200
+    except Exception:
+        return jsonify({'error': 'Unable to load settings right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/system-prompt', methods=['POST'])
+def update_system_prompt():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    data = request.get_json(silent=True) or {}
+    custom_system_prompt = (data.get('custom_system_prompt') or '').strip()
+    if len(custom_system_prompt) > 3000:
+        return jsonify({'error': 'System prompt must be 3000 characters or fewer.'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET custom_system_prompt = %s
+                WHERE user_id = %s
+                RETURNING user_id
+                """,
+                (custom_system_prompt, user_id),
+            )
+            updated = cur.fetchone()
+            if not updated:
+                session.pop("user_id", None)
+                return jsonify({'error': 'User not found.'}), 404
+        conn.commit()
+        return jsonify({'message': 'System prompt updated.', 'custom_system_prompt': custom_system_prompt}), 200
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to update system prompt right now.'}), 500
     finally:
         if conn is not None:
             conn.close()
@@ -2478,6 +2567,60 @@ def google_auth_start():
     oauth_state = secrets.token_urlsafe(32)
     session["google_oauth_state"] = oauth_state
     session["google_oauth_next"]  = next_path
+    session["google_oauth_intent"] = "signin"
+
+    auth_params = {
+        "client_id":     google_client_id,
+        "redirect_uri":  _google_redirect_uri(),
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "state":         oauth_state,
+        "prompt":        "select_account",
+    }
+    return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(auth_params)}")
+
+
+@app.route('/api/auth/google/link/start', methods=['GET'])
+def google_link_start():
+    user_id = session.get("user_id")
+    if not user_id:
+        return redirect(_build_google_return_url("/dashboard", "error"))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT auth_provider, google_sub
+                FROM users
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                session.pop("user_id", None)
+                return redirect(_build_google_return_url("/dashboard", "error"))
+            if row[0] != 'local':
+                return redirect(_build_google_return_url("/dashboard", "error"))
+            if row[1]:
+                return redirect(_build_google_return_url("/dashboard", "linked"))
+    except Exception:
+        return redirect(_build_google_return_url("/dashboard", "error"))
+    finally:
+        if conn is not None:
+            conn.close()
+
+    google_client_id     = (os.getenv("GOOGLE_CLIENT_ID")     or "").strip()
+    google_client_secret = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip()
+    if not google_client_id or not google_client_secret:
+        return redirect(_build_google_return_url("/dashboard", "error"))
+
+    oauth_state = secrets.token_urlsafe(32)
+    session["google_oauth_state"] = oauth_state
+    session["google_oauth_next"] = "/dashboard"
+    session["google_oauth_intent"] = "link"
 
     auth_params = {
         "client_id":     google_client_id,
@@ -2499,6 +2642,7 @@ def google_auth_callback():
 
     expected_state = session.pop("google_oauth_state", None)
     next_path      = _sanitize_next_path(session.pop("google_oauth_next", "/dashboard"))
+    oauth_intent = (session.pop("google_oauth_intent", "signin") or "signin").strip().lower()
 
     if error or not code or not expected_state or returned_state != expected_state:
         logger.error(
@@ -2554,44 +2698,73 @@ def google_auth_callback():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT user_id, username, email, created_at, email_verified, auth_provider
+                SELECT user_id, username, email, created_at, email_verified, auth_provider, google_sub
                 FROM users WHERE email = %s
                 """,
                 (email,),
             )
             user_row = cur.fetchone()
 
-            if user_row and user_row[5] != 'google':
-                return redirect(_build_google_return_url(next_path, "conflict"))
+            if oauth_intent == "link":
+                linking_user_id = session.get("user_id")
+                if not linking_user_id:
+                    return redirect(_build_google_return_url(next_path, "error"))
+                if not user_row or str(user_row[0]) != str(linking_user_id):
+                    return redirect(_build_google_return_url(next_path, "link_mismatch"))
+                if user_row[5] != 'local':
+                    return redirect(_build_google_return_url(next_path, "error"))
+                if user_row[6] and user_row[6] != google_sub:
+                    return redirect(_build_google_return_url(next_path, "error"))
 
-            if not user_row:
-                base_username = _google_username_from_profile(profile_name, email)
-                username      = _pick_unique_username(cur, base_username)
                 cur.execute(
                     """
-                    INSERT INTO users (username, email, auth_provider, google_sub, password_hash, email_verified)
-                    VALUES (%s, %s, 'google', %s, NULL, TRUE)
-                    RETURNING user_id, username, email, created_at, email_verified
+                    UPDATE users
+                    SET google_sub = %s, email_verified = TRUE
+                    WHERE user_id = %s
+                    RETURNING user_id, username, email, created_at, email_verified, auth_provider, google_sub
                     """,
-                    (username, email, google_sub),
+                    (google_sub, linking_user_id),
                 )
                 selected_user = cur.fetchone()
+                if not selected_user:
+                    return redirect(_build_google_return_url(next_path, "error"))
             else:
-                if not bool(user_row[4]):
+                if user_row and user_row[5] != 'google':
+                    if user_row[6] == google_sub:
+                        selected_user = user_row[:5]
+                    else:
+                        return redirect(_build_google_return_url(next_path, "conflict"))
+
+                if not user_row:
+                    base_username = _google_username_from_profile(profile_name, email)
+                    username      = _pick_unique_username(cur, base_username)
                     cur.execute(
                         """
-                        UPDATE users SET email_verified = TRUE WHERE user_id = %s
+                        INSERT INTO users (username, email, auth_provider, google_sub, password_hash, email_verified)
+                        VALUES (%s, %s, 'google', %s, NULL, TRUE)
                         RETURNING user_id, username, email, created_at, email_verified
                         """,
-                        (user_row[0],),
+                        (username, email, google_sub),
                     )
                     selected_user = cur.fetchone()
                 else:
-                    selected_user = user_row[:5]
+                    if not bool(user_row[4]):
+                        cur.execute(
+                            """
+                            UPDATE users SET email_verified = TRUE WHERE user_id = %s
+                            RETURNING user_id, username, email, created_at, email_verified
+                            """,
+                            (user_row[0],),
+                        )
+                        selected_user = cur.fetchone()
+                    else:
+                        selected_user = user_row[:5]
 
         conn.commit()
         session["user_id"] = str(selected_user[0])
         session.pop("password_reset_user_id", None)
+        if oauth_intent == "link":
+            return redirect(_build_google_return_url(next_path, "linked"))
         return redirect(_build_google_return_url(next_path, "success"))
     except Exception:
         logger.exception("Google OAuth callback failed")
