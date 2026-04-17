@@ -625,3 +625,34 @@ body.theme-dark .app-toast-close:hover {
   background-color: #2e2e2e !important;
   color: #c9c9c9 !important;
 }
+
+.profile-settings-tab-btn.is-active {
+  background-color: #e9d5ff;
+  color: #6b21a8;
+}
+
+body.theme-dark #profile-settings-modal .bg-white {
+  background-color: #252525 !important;
+  border-color: #353535 !important;
+}
+body.theme-dark #profile-settings-modal .bg-slate-50 {
+  background-color: #2a2a2a !important;
+}
+body.theme-dark #profile-settings-modal .border-slate-200,
+body.theme-dark #profile-settings-modal .border-slate-300 {
+  border-color: #3a3a3a !important;
+}
+body.theme-dark #profile-settings-modal .text-slate-900,
+body.theme-dark #profile-settings-modal .text-slate-800,
+body.theme-dark #profile-settings-modal .text-slate-700 {
+  color: #d8d8d8 !important;
+}
+body.theme-dark #profile-settings-modal .text-slate-500 {
+  color: #a3a3a3 !important;
+}
+body.theme-dark #profile-settings-modal input,
+body.theme-dark #profile-settings-modal textarea {
+  background-color: #2f2f2f;
+  color: #d8d8d8;
+  border-color: #404040;
+}

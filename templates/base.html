@@ -193,6 +193,76 @@
         </main>
     </div>
 
+    <div id="profile-settings-modal" class="fixed inset-0 z-[60] hidden items-center justify-center p-4">
+        <div class="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" data-profile-settings-close></div>
+        <div class="relative z-10 w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <div class="grid min-h-[560px] grid-cols-1 md:grid-cols-[220px_1fr]">
+                <aside class="border-b border-slate-200 bg-slate-50 p-4 md:border-b-0 md:border-r">
+                    <button type="button" class="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-200" data-profile-settings-close>
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                    <h3 class="px-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Settings</h3>
+                    <nav class="mt-4 space-y-1">
+                        <button type="button" class="profile-settings-tab-btn is-active w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-200" data-profile-tab="profile">Profile</button>
+                        <button type="button" class="profile-settings-tab-btn w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-200" data-profile-tab="prompts">System Prompt</button>
+                        <button type="button" class="profile-settings-tab-btn w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-200" data-profile-tab="security">Password</button>
+                    </nav>
+                </aside>
+                <section class="p-6 sm:p-8">
+                    <div data-profile-tab-panel="profile" class="space-y-7">
+                        <div>
+                            <h4 class="text-2xl font-bold text-slate-900">Profile</h4>
+                            <p class="mt-1 text-sm text-slate-500">Manage your username and linked Google sign-in.</p>
+                        </div>
+                        <form id="profile-username-form" class="space-y-3">
+                            <label for="profile-username-input" class="text-sm font-semibold text-slate-700">Username</label>
+                            <div class="flex flex-col gap-3 sm:flex-row">
+                                <input id="profile-username-input" type="text" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                                <button id="profile-username-save-btn" type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-70">Save</button>
+                            </div>
+                        </form>
+                        <div class="rounded-2xl border border-slate-200 p-4">
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <p class="text-sm font-semibold text-slate-800">Google account</p>
+                                    <p id="profile-google-status" class="mt-1 text-sm text-slate-500">Not linked.</p>
+                                </div>
+                                <a id="profile-google-link-btn" href="/api/auth/google/link/start" class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Link Google</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div data-profile-tab-panel="prompts" class="hidden space-y-7">
+                        <div>
+                            <h4 class="text-2xl font-bold text-slate-900">System Prompt</h4>
+                            <p class="mt-1 text-sm text-slate-500">Reference or customize a personal instruction prompt.</p>
+                        </div>
+                        <form id="profile-system-prompt-form" class="space-y-3">
+                            <label for="profile-system-prompt-input" class="text-sm font-semibold text-slate-700">Your system prompt</label>
+                            <textarea id="profile-system-prompt-input" rows="10" maxlength="3000" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm leading-6 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"></textarea>
+                            <div class="flex items-center justify-between gap-3">
+                                <p class="text-xs text-slate-500">Max 3000 characters.</p>
+                                <button id="profile-system-prompt-save-btn" type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-70">Save Prompt</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div data-profile-tab-panel="security" class="hidden space-y-7">
+                        <div>
+                            <h4 class="text-2xl font-bold text-slate-900">Reset Password</h4>
+                            <p class="mt-1 text-sm text-slate-500">Available for manually created accounts.</p>
+                        </div>
+                        <form id="profile-password-form" class="space-y-3">
+                            <label for="profile-new-password-input" class="text-sm font-semibold text-slate-700">New password</label>
+                            <input id="profile-new-password-input" type="password" autocomplete="new-password" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                            <button id="profile-password-save-btn" type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-70">Update Password</button>
+                        </form>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
     {% include "partials/auth_modal.html" %}
     <div id="email-verify-result-modal" class="fixed inset-0 z-50 hidden items-center justify-center">
         <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" data-email-verify-close></div>
