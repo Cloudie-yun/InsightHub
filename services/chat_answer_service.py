@@ -8,6 +8,10 @@ from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import Json
 
 from db import get_db_connection
+from services.prompt_profile_service import (
+    PROMPT_TYPE_QNA,
+    load_prompt_profiles_for_user,
+)
 from services.retrieval_service import RetrievalService
 from services.text_answer_service import (
     PROMPT_VERSION,
@@ -71,6 +75,7 @@ class ChatAnswerService:
             document_ids=selected_document_ids,
             include_filtered=include_filtered,
         )
+        prompt_profiles = load_prompt_profiles_for_user(user_id)
         answer_payload = self._build_answer_payload(
             query=normalized_query,
             retrieval_payload=retrieval_payload,
@@ -79,6 +84,7 @@ class ChatAnswerService:
                 user_id=user_id,
                 conversation_id=conversation_id,
             ),
+            qna_prompt_override=prompt_profiles.get(PROMPT_TYPE_QNA, ""),
         )
         enriched_retrieval_payload = self._build_persisted_retrieval_payload(
             retrieval_payload=retrieval_payload,
@@ -109,6 +115,7 @@ class ChatAnswerService:
         retrieval_payload: dict[str, Any],
         selected_document_ids: list[str],
         conversation_context: list[dict[str, str]],
+        qna_prompt_override: str = "",
     ) -> dict[str, Any]:
         results = retrieval_payload.get("results") if isinstance(retrieval_payload, dict) else []
         if not isinstance(results, list) or not results:
@@ -120,6 +127,7 @@ class ChatAnswerService:
                 retrieval_payload=retrieval_payload,
                 selected_document_ids=selected_document_ids,
                 conversation_context=conversation_context,
+                user_prompt_override=qna_prompt_override,
             )
         except TextAnswerServiceError as exc:
             raise ChatAnswerServiceError(

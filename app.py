@@ -46,6 +46,14 @@ from services.extraction_store import (
     get_conversation_extractions as fetch_conversation_extractions,
 )
 from services.chat_answer_service import ChatAnswerService, ChatAnswerServiceError
+from services.prompt_profile_service import (
+    get_default_prompt_profiles,
+    PROMPT_PROFILE_MAX_LENGTH,
+    PROMPT_TYPE_QNA,
+    PROMPT_TYPE_VISION,
+    get_prompt_profiles_for_user,
+    save_prompt_profiles_for_user,
+)
 from services.retrieval_service import RetrievalService, RetrievalServiceError
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
@@ -2471,22 +2479,32 @@ def auth_settings():
                     email_verified,
                     auth_provider,
                     google_sub,
-                    password_hash,
-                    COALESCE(custom_system_prompt, '')
+                    password_hash
                 FROM users
                 WHERE user_id = %s
                 """,
                 (user_id,),
             )
             row = cur.fetchone()
+
             if not row:
                 session.pop("user_id", None)
                 return jsonify({'error': 'User not found.'}), 404
 
+            prompt_profiles = get_prompt_profiles_for_user(cur, user_id)
+
+        default_prompt_profiles = get_default_prompt_profiles()
+        effective_prompt_profiles = {
+            prompt_type: prompt_profiles.get(prompt_type) or default_prompt_profiles.get(prompt_type, '')
+            for prompt_type in default_prompt_profiles
+        }
         user_payload = serialize_user_row(row[:8]) or {}
         return jsonify({
             'user': user_payload,
-            'custom_system_prompt': row[8] or '',
+            'custom_system_prompt': prompt_profiles.get(PROMPT_TYPE_QNA, ''),
+            'prompt_profiles': prompt_profiles,
+            'default_prompt_profiles': default_prompt_profiles,
+            'effective_prompt_profiles': effective_prompt_profiles,
         }), 200
     except Exception:
         return jsonify({'error': 'Unable to load settings right now.'}), 500
@@ -2503,32 +2521,96 @@ def update_system_prompt():
 
     data = request.get_json(silent=True) or {}
     custom_system_prompt = (data.get('custom_system_prompt') or '').strip()
-    if len(custom_system_prompt) > 3000:
-        return jsonify({'error': 'System prompt must be 3000 characters or fewer.'}), 400
+    if len(custom_system_prompt) > PROMPT_PROFILE_MAX_LENGTH:
+        return jsonify({'error': f'System prompt must be {PROMPT_PROFILE_MAX_LENGTH} characters or fewer.'}), 400
 
     conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute(
-                """
-                UPDATE users
-                SET custom_system_prompt = %s
-                WHERE user_id = %s
-                RETURNING user_id
-                """,
-                (custom_system_prompt, user_id),
+                "SELECT user_id FROM users WHERE user_id = %s",
+                (user_id,),
             )
             updated = cur.fetchone()
+
             if not updated:
                 session.pop("user_id", None)
                 return jsonify({'error': 'User not found.'}), 404
+            prompt_profiles = save_prompt_profiles_for_user(
+                cur,
+                user_id,
+                {PROMPT_TYPE_QNA: custom_system_prompt},
+            )
         conn.commit()
-        return jsonify({'message': 'System prompt updated.', 'custom_system_prompt': custom_system_prompt}), 200
+        default_prompt_profiles = get_default_prompt_profiles()
+        return jsonify({
+            'message': 'System prompt updated.',
+            'custom_system_prompt': prompt_profiles.get(PROMPT_TYPE_QNA, ''),
+            'prompt_profiles': prompt_profiles,
+            'default_prompt_profiles': default_prompt_profiles,
+            'effective_prompt_profiles': {
+                prompt_type: prompt_profiles.get(prompt_type) or default_prompt_profiles.get(prompt_type, '')
+                for prompt_type in default_prompt_profiles
+            },
+        }), 200
     except Exception:
         if conn is not None:
             conn.rollback()
         return jsonify({'error': 'Unable to update system prompt right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/prompt-profiles', methods=['POST'])
+def update_prompt_profiles():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    data = request.get_json(silent=True) or {}
+    submitted_profiles = data.get('prompt_profiles') if isinstance(data.get('prompt_profiles'), dict) else {}
+    prompt_profiles = {
+        PROMPT_TYPE_QNA: str(submitted_profiles.get(PROMPT_TYPE_QNA) or '').strip(),
+        PROMPT_TYPE_VISION: str(submitted_profiles.get(PROMPT_TYPE_VISION) or '').strip(),
+    }
+
+    for prompt_type, prompt_text in prompt_profiles.items():
+        if len(prompt_text) > PROMPT_PROFILE_MAX_LENGTH:
+            return jsonify({
+                'error': f'{prompt_type.upper()} prompt must be {PROMPT_PROFILE_MAX_LENGTH} characters or fewer.',
+            }), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT user_id FROM users WHERE user_id = %s",
+                (user_id,),
+            )
+            existing = cur.fetchone()
+            if not existing:
+                session.pop("user_id", None)
+                return jsonify({'error': 'User not found.'}), 404
+            saved_profiles = save_prompt_profiles_for_user(cur, user_id, prompt_profiles)
+        conn.commit()
+        default_prompt_profiles = get_default_prompt_profiles()
+        return jsonify({
+            'message': 'Prompt profiles updated.',
+            'custom_system_prompt': saved_profiles.get(PROMPT_TYPE_QNA, ''),
+            'prompt_profiles': saved_profiles,
+            'default_prompt_profiles': default_prompt_profiles,
+            'effective_prompt_profiles': {
+                prompt_type: saved_profiles.get(prompt_type) or default_prompt_profiles.get(prompt_type, '')
+                for prompt_type in default_prompt_profiles
+            },
+        }), 200
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to update prompt profiles right now.'}), 500
     finally:
         if conn is not None:
             conn.close()
@@ -4010,11 +4092,13 @@ def api_run_selected_diagram_analysis(document_id):
             if not _diagram_vision_schema_ready(cur):
                 return jsonify({'error': 'Diagram analysis tables are not ready yet.'}), 400
 
+            prompt_profiles = get_prompt_profiles_for_user(cur, user_id)
             analysis_result = run_diagram_analysis_for_document(
                 cur,
                 document_id=document_id,
                 block_ids=selected_block_ids,
                 force_analyze=True,
+                prompt_override=prompt_profiles.get(PROMPT_TYPE_VISION, ''),
             )
             analyzed_block_ids = analysis_result.get("analyzed_block_ids") or []
             failed_block_ids = analysis_result.get("failed_block_ids") or []

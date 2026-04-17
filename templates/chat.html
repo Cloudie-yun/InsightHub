@@ -212,7 +212,7 @@
             <div id="chat-conversation-panel" class="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
                 <div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto px-4 pt-4">
                     <div class="mx-auto flex min-h-full w-full max-w-5xl items-start gap-4">
-                        <div id="chat-message-list" class="min-w-0 flex-1 space-y-6">
+                        <div id="chat-message-list" class="min-w-0 flex-1 space-y-2">
                     {% if demo_messages %}
                         {% for message in demo_messages %}
                         <article class="flex {% if message.role == 'user' %}justify-end{% else %}justify-center{% endif %}" {% if message.role == 'user' %}data-prompt-id="demo-{{ loop.index }}"{% endif %} data-message-role="{{ message.role }}">
@@ -222,10 +222,10 @@
                                     <div data-copy-content="message" class="whitespace-pre-wrap">{{ message.text }}</div>
                                 </div>
                                 <div class="absolute bottom-0 right-1 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
-                                    <button type="button" data-copy-message="true" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
+                                    <button type="button" data-copy-message="true" class="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
                                         <i class="fa-solid fa-clone"></i>
                                     </button>
-                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-brand-50 hover:text-brand-600" title="Edit">
+                                    <button type="button" class="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-brand-50 hover:text-brand-600" title="Edit">
                                         <i class="fa-solid fa-pen"></i>
                                     </button>
                                 </div>

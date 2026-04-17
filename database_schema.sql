@@ -18,7 +18,6 @@ CREATE TABLE users (
 
     google_sub VARCHAR(255) UNIQUE,
     password_hash TEXT,
-    custom_system_prompt TEXT NOT NULL DEFAULT '',
 
     email_verified BOOLEAN NOT NULL DEFAULT false,
 
@@ -30,6 +29,17 @@ CREATE TABLE users (
         OR
         (auth_provider = 'google' AND google_sub IS NOT NULL AND password_hash IS NULL)
     )
+);
+
+CREATE TABLE user_prompt_profiles (
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    prompt_type VARCHAR(32) NOT NULL
+        CHECK (prompt_type IN ('qna', 'vision')),
+    prompt_text TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (user_id, prompt_type)
 );
 
 -- ====================

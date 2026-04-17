@@ -376,12 +376,7 @@ VISION_QUEUE = ThrottledVisionQueue(
     daily_limit=_read_limit_env("GEMINI_VISION_RPD_LIMIT"),
 )
 
-
-def build_diagram_prompt(*, caption: str | None, nearby_text: str | None) -> str:
-    caption = (caption or "").strip()
-    nearby_text = (nearby_text or "").strip()
-    return f"""
-You are analyzing a diagram extracted from an academic or technical document.
+DEFAULT_DIAGRAM_VISION_PROMPT_TEMPLATE = """You are analyzing a diagram extracted from an academic or technical document.
 
 Goal:
 Produce structured information that helps a document-grounded chatbot answer questions about this figure accurately.
@@ -402,11 +397,35 @@ Instructions:
 9. Return JSON only.
 
 Caption:
-{caption if caption else "null"}
+{caption}
 
 Nearby document context:
-{nearby_text if nearby_text else "null"}
-""".strip()
+{nearby_text}"""
+
+
+def get_default_diagram_vision_prompt_template() -> str:
+    return DEFAULT_DIAGRAM_VISION_PROMPT_TEMPLATE
+
+
+def build_diagram_prompt(
+    *,
+    caption: str | None,
+    nearby_text: str | None,
+    user_prompt_override: str | None = None,
+) -> str:
+    caption = (caption or "").strip()
+    nearby_text = (nearby_text or "").strip()
+    template = (user_prompt_override or "").strip() or DEFAULT_DIAGRAM_VISION_PROMPT_TEMPLATE
+    try:
+        return template.format(
+            caption=caption if caption else "null",
+            nearby_text=nearby_text if nearby_text else "null",
+        ).strip()
+    except KeyError:
+        return DEFAULT_DIAGRAM_VISION_PROMPT_TEMPLATE.format(
+            caption=caption if caption else "null",
+            nearby_text=nearby_text if nearby_text else "null",
+        ).strip()
 
 
 def score_diagram_for_vision(item: DiagramVisionInput) -> DiagramVisionDecision:
@@ -699,11 +718,13 @@ class GeminiDiagramVisionService:
         model: str | None = None,
         timeout_seconds: int = 60,
         provider_name: str | None = None,
+        prompt_override: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model or _get_default_gemini_model()
         self.timeout_seconds = timeout_seconds
         self.provider_name = str(provider_name or _get_diagram_vision_provider_name()).strip() or "gemini"
+        self.prompt_override = str(prompt_override or "").strip()
 
     def request_analysis(self, item: DiagramVisionInput) -> dict[str, Any]:
         VISION_QUEUE.wait_if_needed()
@@ -715,7 +736,13 @@ class GeminiDiagramVisionService:
                 {
                     "role": "user",
                     "parts": [
-                        {"text": build_diagram_prompt(caption=item.caption_text, nearby_text=item.nearby_text)},
+                        {
+                            "text": build_diagram_prompt(
+                                caption=item.caption_text,
+                                nearby_text=item.nearby_text,
+                                user_prompt_override=self.prompt_override,
+                            )
+                        },
                         {
                             "inlineData": {
                                 "mimeType": _guess_mime_type(str(image_path)),
@@ -809,12 +836,14 @@ class VertexDiagramVisionService:
         model: str | None = None,
         timeout_seconds: int = 60,
         provider_name: str = "vertex_ai",
+        prompt_override: str | None = None,
     ) -> None:
         self.model = model or _get_default_vertex_model()
         self.timeout_seconds = timeout_seconds
         self.provider_name = provider_name
         self.project = _get_vertex_ai_project()
         self.location = _get_vertex_ai_location()
+        self.prompt_override = str(prompt_override or "").strip()
 
     def _build_client(self):
         if genai is None or HttpOptions is None:
@@ -833,7 +862,11 @@ class VertexDiagramVisionService:
         image_path = Path(resolved_image_path)
         mime_type = _guess_mime_type(str(image_path))
         image_bytes = image_path.read_bytes()
-        prompt_text = build_diagram_prompt(caption=item.caption_text, nearby_text=item.nearby_text)
+        prompt_text = build_diagram_prompt(
+            caption=item.caption_text,
+            nearby_text=item.nearby_text,
+            user_prompt_override=self.prompt_override,
+        )
 
         request_payload = {
             "contents": [
@@ -936,13 +969,24 @@ class VertexDiagramVisionService:
         return self.parse_analysis_result(captured_result)
 
 
-def _build_diagram_vision_service(provider_name: str, *, api_key: str | None, model: str):
+def _build_diagram_vision_service(
+    provider_name: str,
+    *,
+    api_key: str | None,
+    model: str,
+    prompt_override: str = "",
+):
     if provider_name == "vertex_ai":
-        return VertexDiagramVisionService(model=model)
+        return VertexDiagramVisionService(model=model, prompt_override=prompt_override)
     if provider_name == "gemini":
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY is required for Gemini diagram analysis")
-        return GeminiDiagramVisionService(api_key=api_key, model=model, provider_name="gemini")
+        return GeminiDiagramVisionService(
+            api_key=api_key,
+            model=model,
+            provider_name="gemini",
+            prompt_override=prompt_override,
+        )
     raise RuntimeError(f"Unsupported diagram vision provider: {provider_name}")
 
 
@@ -1308,6 +1352,7 @@ def run_diagram_analysis_for_document(
     api_key: str | None = None,
     block_ids: list[str] | None = None,
     force_analyze: bool = False,
+    prompt_override: str = "",
 ) -> dict[str, Any]:
     api_key = api_key or os.environ.get("GEMINI_API_KEY")
     provider_order = get_diagram_vision_provider_order(has_gemini_api_key=bool(str(api_key or "").strip()))
@@ -1381,6 +1426,7 @@ def run_diagram_analysis_for_document(
                             provider_name,
                             api_key=api_key,
                             model=selected_model,
+                            prompt_override=prompt_override,
                         )
                         result = service.request_analysis(item)
                         result = service.parse_analysis_result(result)

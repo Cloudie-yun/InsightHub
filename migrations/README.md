@@ -25,9 +25,12 @@ For an existing database that already applied older files, keep using the histor
 10. `008_quota_state.sql`
 11. `009_quota_limits.sql`
 12. `010_conversation_messages.sql`
+13. `012_user_profile_settings.sql`
+14. `013_user_prompt_profiles.sql`
 
 ## Notes
 
 - `000_document_extraction_unified.sql` represents the current final schema for fresh installs.
 - The numbered files remain as the historical upgrade path for databases created before the unified bootstrap existed.
 - Do not apply `000_document_extraction_unified.sql` and then re-apply the numbered files on the same fresh database.
+- `012_user_profile_settings.sql` is legacy compatibility for `users.custom_system_prompt`. Prompt customization now lives in `user_prompt_profiles`.

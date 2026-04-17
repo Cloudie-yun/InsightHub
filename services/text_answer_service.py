@@ -56,6 +56,47 @@ ANSWER_RESPONSE_SCHEMA = {
     "required": ["answer_text", "citation_block_ids", "confidence"],
 }
 
+DEFAULT_GROUNDED_ANSWER_PROMPT_TEMPLATE = """You are a grounded answer engine. You do not add pleasantries,
+filler phrases, or background knowledge. You answer only from
+the evidence chunks provided.
+
+Answer style profile: {prompt_profile_label}
+Answer goal: {prompt_profile_goal}
+Preferred response shape: {prompt_profile_shape}
+Hard length limit: {prompt_profile_max_sentences} sentences maximum.
+
+{conversation_context_block}User query: {query}
+
+Evidence chunks:
+{evidence_chunks}
+
+Rules:
+1. Ground every claim in the evidence. Do not infer,
+   extrapolate, or add background knowledge.
+2. Use conversation context only to interpret follow-up intent
+   such as 'simpler', 'more detail', or references to the
+   previous answer -- never as factual evidence.
+3. Prefer paraphrase over direct quotes. If you quote,
+   use fewer than 15 words and mark with '...' if trimmed.
+4. If chunks conflict, surface the conflict explicitly in
+   answer_text rather than silently picking one.
+5. Follow the answer style profile unless doing so would force
+   unsupported detail -- in that case, fall back to 'default'.
+6. If evidence is insufficient, set confidence to 'insufficient',
+   set citation_block_ids to [], and explain the gap in
+   answer_text with a suggested refinement.
+
+Return JSON only -- no markdown fences, no preamble:
+{{
+  "answer_text": "...",
+  "citation_block_ids": ["block_id_1", ...],
+  "confidence": "high" | "partial" | "insufficient"
+}}"""
+
+
+def get_default_grounded_answer_prompt_template() -> str:
+    return DEFAULT_GROUNDED_ANSWER_PROMPT_TEMPLATE
+
 PROMPT_PROFILES = {
     "summary": {
         "label": "summary",
@@ -442,6 +483,7 @@ class TextAnswerService:
         retrieval_payload: dict[str, Any],
         selected_document_ids: list[str],
         conversation_context: list[dict[str, str]] | None = None,
+        user_prompt_override: str | None = None,
     ) -> dict[str, Any]:
         provider_order = _get_text_provider_order(has_gemini_api_key=bool(self.api_key))
         if not provider_order:
@@ -496,6 +538,7 @@ class TextAnswerService:
                 retrieval_payload=retrieval_payload,
                 selected_document_ids=selected_document_ids,
                 conversation_context=conversation_context or [],
+                prompt_template=user_prompt_override or "",
             )
             prompt_profile = self._select_prompt_profile(
                 query=query,
@@ -590,6 +633,7 @@ class TextAnswerService:
         retrieval_payload: dict[str, Any],
         selected_document_ids: list[str],
         conversation_context: list[dict[str, str]],
+        prompt_template: str,
     ) -> dict[str, Any]:
         evidence_lines: list[str] = []
         for result in retrieval_payload.get("results") or []:
@@ -609,58 +653,33 @@ class TextAnswerService:
         )
         context_lines = self._format_conversation_context(conversation_context)
         context_block = (
-            "Recent conversation context:\n"
-            f"{chr(10).join(context_lines)}\n\n"
+            "Recent conversation context (for resolving follow-up intent only):\n"
+            f"{chr(10).join(context_lines)}\n"
+            "Do not treat the above as factual evidence.\n\n"
             if context_lines
             else ""
         )
-
-        prompt_text = (
-            "You are a grounded answer engine. You do not add pleasantries,\n"
-            "filler phrases, or background knowledge. You answer only from\n"
-            "the evidence chunks provided.\n\n"
-
-            f"Answer style profile: {prompt_profile['label']}\n"
-            f"Answer goal: {prompt_profile['goal']}\n"
-            f"Preferred response shape: {prompt_profile['shape']}\n"
-            f"Hard length limit: {prompt_profile['max_sentences']} sentences maximum.\n\n"
-
-            # Only include this block if context exists
-            + (
-                "Recent conversation context (for resolving follow-up intent only):\n"
-                f"{context_block}\n"
-                "Do not treat the above as factual evidence.\n\n"
-                if context_block else ""
-            ) +
-
-            f"User query: {query.strip()}\n\n"
-
-            "Evidence chunks:\n"
-            f"{chr(10).join(evidence_lines)}\n\n"
-
-            "Rules:\n"
-            "1. Ground every claim in the evidence. Do not infer,\n"
-            "   extrapolate, or add background knowledge.\n"
-            "2. Use conversation context only to interpret follow-up intent\n"
-            "   such as 'simpler', 'more detail', or references to the\n"
-            "   previous answer — never as factual evidence.\n"
-            "3. Prefer paraphrase over direct quotes. If you quote,\n"
-            "   use fewer than 15 words and mark with '...' if trimmed.\n"
-            "4. If chunks conflict, surface the conflict explicitly in\n"
-            "   answer_text rather than silently picking one.\n"
-            "5. Follow the answer style profile unless doing so would force\n"
-            "   unsupported detail — in that case, fall back to 'default'.\n"
-            "6. If evidence is insufficient, set confidence to 'insufficient',\n"
-            "   set citation_block_ids to [], and explain the gap in\n"
-            "   answer_text with a suggested refinement.\n\n"
-
-            "Return JSON only — no markdown fences, no preamble:\n"
-            "{\n"
-            '  "answer_text": "...",\n'
-            '  "citation_block_ids": ["block_id_1", ...],\n'
-            '  "confidence": "high" | "partial" | "insufficient"\n'
-            "}"
-        )
+        template = str(prompt_template or "").strip() or DEFAULT_GROUNDED_ANSWER_PROMPT_TEMPLATE
+        try:
+            prompt_text = template.format(
+                prompt_profile_label=prompt_profile["label"],
+                prompt_profile_goal=prompt_profile["goal"],
+                prompt_profile_shape=prompt_profile["shape"],
+                prompt_profile_max_sentences=prompt_profile["max_sentences"],
+                conversation_context_block=context_block,
+                query=query.strip(),
+                evidence_chunks=chr(10).join(evidence_lines),
+            )
+        except KeyError:
+            prompt_text = DEFAULT_GROUNDED_ANSWER_PROMPT_TEMPLATE.format(
+                prompt_profile_label=prompt_profile["label"],
+                prompt_profile_goal=prompt_profile["goal"],
+                prompt_profile_shape=prompt_profile["shape"],
+                prompt_profile_max_sentences=prompt_profile["max_sentences"],
+                conversation_context_block=context_block,
+                query=query.strip(),
+                evidence_chunks=chr(10).join(evidence_lines),
+            )
         return {
             "contents": [
                 {

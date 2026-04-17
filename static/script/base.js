@@ -24,7 +24,10 @@ const profileGoogleStatus = document.getElementById("profile-google-status");
 const profileGoogleLinkBtn = document.getElementById("profile-google-link-btn");
 const profileSystemPromptForm = document.getElementById("profile-system-prompt-form");
 const profileSystemPromptInput = document.getElementById("profile-system-prompt-input");
+const profileVisionPromptInput = document.getElementById("profile-vision-prompt-input");
 const profileSystemPromptSaveBtn = document.getElementById("profile-system-prompt-save-btn");
+const profilePromptViewButtons = Array.from(document.querySelectorAll(".profile-prompt-view-btn"));
+const profilePromptViewPanels = Array.from(document.querySelectorAll("[data-prompt-view-panel]"));
 const profilePasswordForm = document.getElementById("profile-password-form");
 const profileNewPasswordInput = document.getElementById("profile-new-password-input");
 const profilePasswordSaveBtn = document.getElementById("profile-password-save-btn");
@@ -547,6 +550,18 @@ const setProfileTab = (tabName = "profile") => {
     });
 };
 
+const setPromptView = (viewName = "qna") => {
+    profilePromptViewButtons.forEach((button) => {
+        const isActive = button.dataset.promptView === viewName;
+        button.dataset.active = isActive ? "true" : "false";
+    });
+    profilePromptViewPanels.forEach((panel) => {
+        const isActive = panel.dataset.promptViewPanel === viewName;
+        panel.classList.toggle("hidden", !isActive);
+        panel.classList.toggle("flex", isActive);
+    });
+};
+
 const closeProfileSettingsModal = () => {
     if (!profileSettingsModal) return;
     profileSettingsModal.classList.add("hidden");
@@ -558,9 +573,12 @@ const syncProfileSettingsUi = (payload) => {
     const authProvider = String(settingsUser.auth_provider || "").toLowerCase();
     const isGoogleLinked = Boolean(settingsUser.is_google_linked) || authProvider === "google";
     const canChangePassword = authProvider === "local";
+    const promptProfiles = payload?.prompt_profiles || {};
+    const effectivePromptProfiles = payload?.effective_prompt_profiles || {};
 
     if (profileUsernameInput) profileUsernameInput.value = settingsUser.username || "";
-    if (profileSystemPromptInput) profileSystemPromptInput.value = payload?.custom_system_prompt || "";
+    if (profileSystemPromptInput) profileSystemPromptInput.value = promptProfiles.qna || effectivePromptProfiles.qna || payload?.custom_system_prompt || "";
+    if (profileVisionPromptInput) profileVisionPromptInput.value = promptProfiles.vision || effectivePromptProfiles.vision || "";
 
     if (profileGoogleStatus) {
         profileGoogleStatus.textContent = isGoogleLinked ? "Linked and ready for Google sign-in." : "Not linked yet.";
@@ -576,6 +594,7 @@ const syncProfileSettingsUi = (payload) => {
 const openProfileSettingsModal = async () => {
     if (!profileSettingsModal || !currentAuthUser) return;
     setProfileTab("profile");
+    setPromptView("qna");
     profileSettingsModal.classList.remove("hidden");
     profileSettingsModal.classList.add("flex");
     setUserMenuOpen(false);
@@ -597,6 +616,12 @@ const openProfileSettingsModal = async () => {
 profileTabButtons.forEach((button) => {
     button.addEventListener("click", () => {
         setProfileTab(button.dataset.profileTab);
+    });
+});
+
+profilePromptViewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+        setPromptView(button.dataset.promptView || "qna");
     });
 });
 
@@ -637,16 +662,21 @@ if (profileSystemPromptForm) {
     profileSystemPromptForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         const customSystemPrompt = (profileSystemPromptInput?.value || "").trim();
+        const customVisionPrompt = (profileVisionPromptInput?.value || "").trim();
         profileSystemPromptSaveBtn.disabled = true;
         try {
-            const { response, payload } = await postJson("/api/auth/system-prompt", {
-                custom_system_prompt: customSystemPrompt,
+            const { response, payload } = await postJson("/api/auth/prompt-profiles", {
+                prompt_profiles: {
+                    qna: customSystemPrompt,
+                    vision: customVisionPrompt,
+                },
             });
             if (!response.ok) {
                 notifyUser({ type: "error", message: payload.error || "Unable to save prompt right now." });
                 return;
             }
-            notifyUser({ type: "success", message: "System prompt saved." });
+            syncProfileSettingsUi(payload);
+            notifyUser({ type: "success", message: "Prompt profiles saved." });
         } catch (error) {
             notifyUser({ type: "error", message: "Network error. Please try again." });
         } finally {
