@@ -23,6 +23,7 @@ DEFAULT_GEMINI_EMBED_MODELS = ["gemini-embedding-001", "gemini-embedding-002"]
 DEFAULT_GEMINI_VISION_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
 DEFAULT_GEMINI_TEXT_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
 DEFAULT_RPD_RESET_TIMEZONE = "America/Los_Angeles"
+DEFAULT_QUOTA_DISPLAY_TIMEZONE = "America/Los_Angeles"
 DEFAULT_MODEL_LIMITS = {
     "gemini-2.5-flash": {"provider": "gemini", "rpm_limit": 5, "tpm_limit": 250_000, "rpd_limit": 20},
     "gemini-embedding-001": {"provider": "gemini", "rpm_limit": 100, "tpm_limit": 30_000, "rpd_limit": 1_000},
@@ -82,6 +83,22 @@ def get_rpd_reset_timezone() -> ZoneInfo:
         return ZoneInfo(raw_name)
     except Exception:
         return ZoneInfo(DEFAULT_RPD_RESET_TIMEZONE)
+
+
+def get_quota_display_timezone() -> ZoneInfo:
+    raw_name = (os.environ.get("QUOTA_DISPLAY_TIMEZONE") or DEFAULT_QUOTA_DISPLAY_TIMEZONE).strip()
+    try:
+        return ZoneInfo(raw_name)
+    except Exception:
+        return ZoneInfo(DEFAULT_QUOTA_DISPLAY_TIMEZONE)
+
+
+def format_quota_timestamp(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(get_quota_display_timezone()).isoformat()
 
 
 def get_task_models(task_type: str, *, fallback_model: str | None = None) -> list[str]:
@@ -479,13 +496,16 @@ def summarize_usage_state(project_id: str | None = None) -> dict[str, Any]:
 
     return {
         "project_id": project_id,
+        "display_timezone": str(get_quota_display_timezone()),
         "rows": [
             {
                 "model_name": row[0],
                 "window_type": row[1],
                 "used_count": int(row[2] or 0),
                 "reset_at": row[3].isoformat() if row[3] else None,
+                "reset_at_display": format_quota_timestamp(row[3]),
                 "last_error_at": row[4].isoformat() if row[4] else None,
+                "last_error_at_display": format_quota_timestamp(row[4]),
                 "last_error_code": row[5],
             }
             for row in rows

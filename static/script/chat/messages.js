@@ -60,6 +60,7 @@
 
         const content = document.createElement("div");
         content.className = "whitespace-pre-wrap";
+        content.dataset.copyContent = "message";
         content.textContent = messagePayload.message_text || "";
 
         bubble.appendChild(content);
@@ -83,11 +84,13 @@
     ns.createUserActionRow = () => {
         const actions = document.createElement("div");
         actions.className = "absolute bottom-0 right-1 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto";
-        actions.appendChild(ns.createIconButton({
+        const copyButton = ns.createIconButton({
             title: "Copy",
             iconClass: "fa-solid fa-clone",
             extraClass: "hover:bg-gray-100 hover:text-gray-600",
-        }));
+        });
+        copyButton.dataset.copyMessage = "true";
+        actions.appendChild(copyButton);
         actions.appendChild(ns.createIconButton({
             title: "Edit",
             iconClass: "fa-solid fa-pen",
@@ -99,11 +102,13 @@
     ns.createAssistantActionRow = () => {
         const actions = document.createElement("div");
         actions.className = "mt-1.5 flex items-center gap-1";
-        actions.appendChild(ns.createIconButton({
+        const copyButton = ns.createIconButton({
             title: "Copy",
             iconClass: "fa-solid fa-clone",
             extraClass: "hover:bg-gray-100 hover:text-gray-600",
-        }));
+        });
+        copyButton.dataset.copyMessage = "true";
+        actions.appendChild(copyButton);
         actions.appendChild(ns.createIconButton({
             title: "Helpful",
             iconClass: "fa-regular fa-thumbs-up",
@@ -149,6 +154,78 @@
         badge.className = className;
         badge.textContent = text;
         return badge;
+    };
+
+    ns.createCitationChip = (citation) => {
+        const chip = document.createElement("span");
+        chip.className = "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm";
+
+        const name = document.createElement("span");
+        name.className = "text-brand-700";
+        name.textContent = citation?.document_name || citation?.document_id || "Source";
+        chip.appendChild(name);
+
+        if (citation?.page_label) {
+            const page = document.createElement("span");
+            page.className = "text-slate-400";
+            page.textContent = citation.page_label;
+            chip.appendChild(page);
+        }
+
+        if (citation?.snippet) {
+            chip.title = citation.snippet;
+        }
+        return chip;
+    };
+
+    ns.createLoadingDocumentChip = (documentLabel) => {
+        const chip = document.createElement("span");
+        chip.className = "inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 shadow-sm";
+
+        const spinner = document.createElement("i");
+        spinner.className = "fa-solid fa-spinner animate-spin text-[10px]";
+        chip.appendChild(spinner);
+
+        const text = document.createElement("span");
+        text.textContent = documentLabel;
+        chip.appendChild(text);
+        return chip;
+    };
+
+    ns.getSelectedSourceDocumentLabels = () => {
+        return Array.from(document.querySelectorAll('#sources-detailed-list [data-doc-id]'))
+            .filter((node) => {
+                const button = node.querySelector('[data-source-select-btn="true"]');
+                return button?.dataset.selected === "true";
+            })
+            .map((node) => String(node.dataset.docTitle || node.dataset.docId || "Document").trim())
+            .filter(Boolean);
+    };
+
+    ns.createAssistantLoadingNode = (documentLabels) => {
+        const article = document.createElement("article");
+        article.className = "flex justify-center";
+        article.dataset.messageRole = "assistant-loading";
+
+        const container = document.createElement("div");
+        container.className = "w-full max-w-4xl";
+
+        const text = document.createElement("div");
+        text.className = "px-1 py-0.5 text-[14px] leading-6 text-gray-700";
+        text.textContent = "Synthesizing a grounded answer from the selected documents...";
+        container.appendChild(text);
+
+        if (documentLabels.length) {
+            const chipsWrap = document.createElement("div");
+            chipsWrap.className = "mt-3 flex flex-wrap gap-2";
+            documentLabels.forEach((label) => {
+                chipsWrap.appendChild(ns.createLoadingDocumentChip(label));
+            });
+            container.appendChild(chipsWrap);
+        }
+
+        article.appendChild(container);
+        return article;
     };
 
     ns.getResultPageHint = (result) => {
@@ -231,6 +308,14 @@
         const retrievalPayload = messagePayload.retrieval_payload || {};
         const filterSummary = retrievalPayload.filter_summary || {};
         const results = Array.isArray(retrievalPayload.results) ? retrievalPayload.results : [];
+        const citations = Array.isArray(messagePayload.citations)
+            ? messagePayload.citations
+            : (Array.isArray(retrievalPayload.citations) ? retrievalPayload.citations : []);
+        const confidence = String(
+            messagePayload.confidence
+            || retrievalPayload?.grounded_answer?.confidence
+            || "",
+        ).trim().toLowerCase();
 
         const container = document.createElement("div");
         container.className = "w-full max-w-4xl";
@@ -240,13 +325,35 @@
 
         const content = document.createElement("div");
         content.className = "whitespace-pre-wrap";
+        content.dataset.copyContent = "message";
         content.textContent = messagePayload.message_text || "Retrieval completed.";
 
         summary.appendChild(content);
         container.appendChild(summary);
 
+        if (citations.length) {
+            const citationsWrap = document.createElement("div");
+            citationsWrap.className = "mt-3 flex flex-wrap gap-2";
+            citations.forEach((citation) => {
+                citationsWrap.appendChild(ns.createCitationChip(citation));
+            });
+            container.appendChild(citationsWrap);
+        }
+
+        if (confidence) {
+            const confidenceWrap = document.createElement("div");
+            confidenceWrap.className = "mt-3";
+            const confidenceChip = document.createElement("span");
+            confidenceChip.className = "inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500";
+            confidenceChip.textContent = `Confidence ${confidence}`;
+            confidenceWrap.appendChild(confidenceChip);
+            container.appendChild(confidenceWrap);
+        }
+
         const diagnostics = document.createElement("div");
-        diagnostics.className = "mt-3 rounded-3xl border border-slate-200/80 bg-white/90 px-4 py-3 shadow-sm";
+        diagnostics.className = "chat-retrieval-diagnostics mt-3 rounded-3xl border border-slate-200/80 bg-white/90 px-4 py-3 shadow-sm";
+        diagnostics.dataset.troubleshootPanel = "retrieval";
+        diagnostics.classList.toggle("hidden", !ns.isTroubleshootModeEnabled?.());
 
         const diagnosticsHeader = document.createElement("div");
         diagnosticsHeader.className = "flex flex-wrap items-center justify-between gap-3";
@@ -283,7 +390,6 @@
         diagnosticsHeader.appendChild(diagnosticsLabelWrap);
         diagnosticsHeader.appendChild(diagnosticsGrid);
         diagnostics.appendChild(diagnosticsHeader);
-        container.appendChild(diagnostics);
 
         const resultsWrap = document.createElement("div");
         resultsWrap.className = "mt-4";
@@ -302,7 +408,8 @@
             resultsWrap.appendChild(emptyState);
         }
 
-        container.appendChild(resultsWrap);
+        diagnostics.appendChild(resultsWrap);
+        container.appendChild(diagnostics);
         container.appendChild(ns.createAssistantActionRow());
         article.appendChild(container);
         return article;
@@ -319,6 +426,7 @@
 
         const content = document.createElement("div");
         content.className = "whitespace-pre-wrap px-1 py-0.5 text-[14px] leading-6 text-gray-800";
+        content.dataset.copyContent = "message";
         content.textContent = messagePayload?.message_text || "Retrieval completed.";
 
         container.appendChild(content);
@@ -369,7 +477,8 @@
         ns.setMessageSendingState(true);
 
         const optimisticUserNode = ns.createUserMessageNode({ message_text: query });
-        ns.appendMessageNodes([optimisticUserNode]);
+        const assistantLoadingNode = ns.createAssistantLoadingNode(ns.getSelectedSourceDocumentLabels());
+        ns.appendMessageNodes([optimisticUserNode, assistantLoadingNode]);
         if (promptInput) {
             promptInput.value = "";
         }
@@ -403,12 +512,14 @@
                     assistantNode = ns.createAssistantFallbackNode(payload.messages.assistant);
                 }
                 if (assistantNode) {
+                    assistantLoadingNode.remove();
                     ns.appendMessageNodes([assistantNode]);
                 }
             }
             ns.setChatSendStatus("");
         } catch (error) {
             optimisticUserNode.remove();
+            assistantLoadingNode.remove();
             ns.setChatSendStatus(error.message || "Unable to send your message right now.", true);
             ns.notify("error", error.message || "Unable to send your message right now.");
         } finally {

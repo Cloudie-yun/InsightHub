@@ -9,10 +9,12 @@ from psycopg2.extras import Json
 
 from db import get_db_connection
 from services.retrieval_service import RetrievalService
-
-
-PROMPT_VERSION = "retrieval_inspection_v1"
-
+from services.text_answer_service import (
+    PROMPT_VERSION,
+    TextAnswerService,
+    TextAnswerServiceError,
+    build_no_evidence_payload,
+)
 
 @dataclass
 class ChatAnswerServiceError(Exception):
@@ -33,6 +35,7 @@ class ChatAnswerServiceError(Exception):
 class ChatAnswerService:
     def __init__(self) -> None:
         self.retrieval_service = RetrievalService()
+        self.text_answer_service = TextAnswerService()
 
     def answer_conversation_query(
         self,
@@ -68,21 +71,174 @@ class ChatAnswerService:
             document_ids=selected_document_ids,
             include_filtered=include_filtered,
         )
-        summary_text = self._build_retrieval_summary(retrieval_payload)
+        answer_payload = self._build_answer_payload(
+            query=normalized_query,
+            retrieval_payload=retrieval_payload,
+            selected_document_ids=selected_document_ids,
+            conversation_context=self._load_recent_conversation_context(
+                user_id=user_id,
+                conversation_id=conversation_id,
+            ),
+        )
+        enriched_retrieval_payload = self._build_persisted_retrieval_payload(
+            retrieval_payload=retrieval_payload,
+            answer_payload=answer_payload,
+        )
         persisted_payload = self._persist_messages(
             user_id=user_id,
             conversation_id=conversation_id,
             query=normalized_query,
-            summary_text=summary_text,
+            answer_text=answer_payload["answer_text"],
             selected_document_ids=selected_document_ids,
-            retrieval_payload=retrieval_payload,
+            retrieval_payload=enriched_retrieval_payload,
+            model_provider=answer_payload["model_provider"],
+            model_name=answer_payload["model_name"],
+            prompt_version=answer_payload["prompt_version"],
         )
 
         return {
             "query": normalized_query,
-            "retrieval": retrieval_payload,
+            "retrieval": enriched_retrieval_payload,
             "messages": persisted_payload,
         }
+
+    def _build_answer_payload(
+        self,
+        *,
+        query: str,
+        retrieval_payload: dict[str, Any],
+        selected_document_ids: list[str],
+        conversation_context: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        results = retrieval_payload.get("results") if isinstance(retrieval_payload, dict) else []
+        if not isinstance(results, list) or not results:
+            return build_no_evidence_payload(retrieval_payload=retrieval_payload)
+
+        try:
+            return self.text_answer_service.generate_grounded_answer(
+                query=query,
+                retrieval_payload=retrieval_payload,
+                selected_document_ids=selected_document_ids,
+                conversation_context=conversation_context,
+            )
+        except TextAnswerServiceError as exc:
+            raise ChatAnswerServiceError(
+                code=exc.code,
+                message=exc.message,
+                status_code=exc.status_code,
+                details=exc.to_dict(),
+            ) from exc
+
+    @staticmethod
+    def _build_citations(
+        *,
+        retrieval_payload: dict[str, Any],
+        answer_payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        results = retrieval_payload.get("results") if isinstance(retrieval_payload, dict) else []
+        results = results if isinstance(results, list) else []
+        result_map = {
+            str(result.get("block_id") or "").strip(): result
+            for result in results
+            if str(result.get("block_id") or "").strip()
+        }
+
+        citation_block_ids = [
+            str(item).strip()
+            for item in (answer_payload.get("citation_block_ids") or [])
+            if str(item).strip()
+        ]
+
+        if not citation_block_ids and results:
+            citation_block_ids = [
+                str(result.get("block_id") or "").strip()
+                for result in results[:2]
+                if str(result.get("block_id") or "").strip()
+            ]
+
+        citations: list[dict[str, Any]] = []
+        for block_id in citation_block_ids:
+            result = result_map.get(block_id)
+            if not result:
+                continue
+            source_metadata = result.get("source_metadata") if isinstance(result.get("source_metadata"), dict) else {}
+            page_value = source_metadata.get("page") or source_metadata.get("page_number") or source_metadata.get("page_index")
+            page_label = f"p. {page_value}" if page_value not in (None, "") else ""
+            citations.append(
+                {
+                    "block_id": block_id,
+                    "document_id": str(result.get("document_id") or ""),
+                    "document_name": str(result.get("document_name") or result.get("document_id") or "Source"),
+                    "snippet": str(result.get("snippet") or ""),
+                    "page_label": page_label,
+                    "score": float(result.get("score") or 0.0),
+                },
+            )
+        return citations
+
+    def _build_persisted_retrieval_payload(
+        self,
+        *,
+        retrieval_payload: dict[str, Any],
+        answer_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        citations = self._build_citations(
+            retrieval_payload=retrieval_payload,
+            answer_payload=answer_payload,
+        )
+        enriched_payload = dict(retrieval_payload or {})
+        enriched_payload["citations"] = citations
+        enriched_payload["grounded_answer"] = {
+            "prompt_version": answer_payload.get("prompt_version") or PROMPT_VERSION,
+            "prompt_profile": answer_payload.get("prompt_profile") or "default",
+            "model_provider": answer_payload.get("model_provider") or "",
+            "model_name": answer_payload.get("model_name") or "",
+            "confidence": answer_payload.get("confidence") or "insufficient",
+            "grounding_status": "grounded" if citations else "insufficient_evidence",
+        }
+        return enriched_payload
+
+    def _load_recent_conversation_context(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        limit: int = 4,
+    ) -> list[dict[str, str]]:
+        conn = get_db_connection()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT cm.role, cm.message_text
+                    FROM conversation_messages cm
+                    JOIN conversations c ON c.conversation_id = cm.conversation_id
+                    WHERE cm.conversation_id = %s
+                      AND c.user_id = %s
+                    ORDER BY cm.created_at DESC, cm.message_id DESC
+                    LIMIT %s
+                    """,
+                    (conversation_id, user_id, max(0, int(limit))),
+                )
+                rows = cur.fetchall()
+        except psycopg_errors.UndefinedTable:
+            return []
+        finally:
+            conn.close()
+
+        context: list[dict[str, str]] = []
+        for row in reversed(rows):
+            role = str(row[0] or "").strip().lower()
+            content = str(row[1] or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            context.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+        return context
 
     def _persist_messages(
         self,
@@ -90,9 +246,12 @@ class ChatAnswerService:
         user_id: str,
         conversation_id: str,
         query: str,
-        summary_text: str,
+        answer_text: str,
         selected_document_ids: list[str],
         retrieval_payload: dict[str, Any],
+        model_provider: str,
+        model_name: str,
+        prompt_version: str,
     ) -> dict[str, dict[str, Any]]:
         conn = get_db_connection()
         try:
@@ -155,7 +314,7 @@ class ChatAnswerService:
                         prompt_version,
                         reply_to_message_id
                     )
-                    VALUES (%s, %s, %s, 'assistant', %s, %s::jsonb, %s::jsonb, NULL, NULL, %s, %s)
+                    VALUES (%s, %s, %s, 'assistant', %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s)
                     RETURNING
                         message_id,
                         conversation_id,
@@ -174,10 +333,12 @@ class ChatAnswerService:
                         assistant_message_id,
                         conversation_id,
                         user_id,
-                        summary_text,
+                        answer_text,
                         Json(selected_document_ids),
                         Json(retrieval_payload),
-                        PROMPT_VERSION,
+                        model_provider,
+                        model_name,
+                        prompt_version,
                         user_message_id,
                     ),
                 )
@@ -210,19 +371,6 @@ class ChatAnswerService:
             conn.close()
 
     @staticmethod
-    def _build_retrieval_summary(retrieval_payload: dict[str, Any]) -> str:
-        returned_count = int(retrieval_payload.get("returned_count") or 0)
-        strategy = str(retrieval_payload.get("strategy") or "vector").replace("_", " ")
-        filter_summary = retrieval_payload.get("filter_summary") or {}
-        excluded_count = int(filter_summary.get("excluded_candidate_count") or 0)
-        if returned_count <= 0:
-            return f"No useful retrieval results found ({strategy}). {excluded_count} chunk(s) were filtered out."
-        return (
-            f"Top {returned_count} retrieval result(s) returned via {strategy}. "
-            f"{excluded_count} chunk(s) were filtered out by default."
-        )
-
-    @staticmethod
     def _normalize_document_ids(raw_document_ids: list[str] | None) -> list[str]:
         if raw_document_ids is None:
             return []
@@ -247,6 +395,8 @@ class ChatAnswerService:
     def _serialize_message_row(row) -> dict[str, Any]:
         selected_document_ids = row[5] if isinstance(row[5], list) else []
         retrieval_payload = row[6] if isinstance(row[6], dict) else None
+        citations = retrieval_payload.get("citations") if isinstance(retrieval_payload, dict) else []
+        citations = citations if isinstance(citations, list) else []
         return {
             "message_id": str(row[0]),
             "conversation_id": str(row[1]),
@@ -255,6 +405,7 @@ class ChatAnswerService:
             "message_text": row[4] or "",
             "selected_document_ids": [str(item) for item in selected_document_ids],
             "retrieval_payload": retrieval_payload,
+            "citations": citations,
             "model_provider": row[7] or "",
             "model_name": row[8] or "",
             "prompt_version": row[9] or "",

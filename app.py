@@ -49,8 +49,10 @@ from services.chat_answer_service import ChatAnswerService, ChatAnswerServiceErr
 from services.retrieval_service import RetrievalService, RetrievalServiceError
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
+    format_quota_timestamp,
     get_quota_project_id,
     get_task_models,
+    get_quota_display_timezone,
     load_usage_state,
 )
 
@@ -245,6 +247,7 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
     primary_provider = get_primary_diagram_vision_provider()
     usage_state = load_usage_state(project_id=project_id, model_names=ordered_models)
     now_utc = datetime.now(timezone.utc)
+    display_timezone = str(get_quota_display_timezone())
 
     model_statuses = []
     earliest_reset_at: datetime | None = None
@@ -257,7 +260,9 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
                 "window_type": window.window_type,
                 "used_count": window.used_count,
                 "reset_at": window.reset_at.isoformat() if window.reset_at else None,
+                "reset_at_display": format_quota_timestamp(window.reset_at),
                 "last_error_at": window.last_error_at.isoformat() if window.last_error_at else None,
+                "last_error_at_display": format_quota_timestamp(window.last_error_at),
                 "last_error_code": window.last_error_code,
             }
             for window in windows.values()
@@ -289,6 +294,9 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
                     [window.reset_at for window in windows.values() if window.reset_at > now_utc],
                     default=None,
                 ).isoformat() if windows else None,
+                "last_reset_at_display": format_quota_timestamp(
+                    max([window.reset_at for window in windows.values() if window.reset_at > now_utc], default=None) if windows else None
+                ),
             }
         )
 
@@ -298,15 +306,17 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
     if provider_order:
         hover_parts.insert(0, f"Providers: {' -> '.join(provider_order)}")
     if earliest_reset_at is not None:
-        hover_parts.append(f"Earliest reset: {earliest_reset_at.isoformat()}")
+        hover_parts.append(f"Earliest reset ({display_timezone}): {format_quota_timestamp(earliest_reset_at)}")
 
     return {
         "provider": primary_provider,
         "project_id": project_id,
+        "display_timezone": display_timezone,
         "preferred_model": preferred_model,
         "active_model": active_model,
         "all_models_exhausted": not bool(available_models),
         "earliest_reset_at": earliest_reset_at.isoformat() if earliest_reset_at else None,
+        "earliest_reset_at_display": format_quota_timestamp(earliest_reset_at),
         "model_statuses": model_statuses,
         "hover_text": " | ".join(hover_parts) if hover_parts else "No vision providers configured.",
     }
@@ -323,10 +333,12 @@ def get_diagram_analysis_usage_summary() -> dict:
         return {
             "provider": get_primary_diagram_vision_provider(),
             "project_id": get_quota_project_id(),
+            "display_timezone": str(get_quota_display_timezone()),
             "preferred_model": os.getenv("GEMINI_VISION_MODEL", "gemini-3-flash"),
             "active_model": None,
             "all_models_exhausted": False,
             "earliest_reset_at": None,
+            "earliest_reset_at_display": None,
             "model_statuses": [],
             "hover_text": "Usage information is unavailable right now.",
         }
@@ -544,6 +556,8 @@ def _serialize_conversation_document(row) -> dict:
 def _serialize_conversation_message(row) -> dict:
     selected_document_ids = row[5] if isinstance(row[5], list) else []
     retrieval_payload = row[6] if isinstance(row[6], dict) else None
+    citations = retrieval_payload.get("citations") if isinstance(retrieval_payload, dict) else []
+    citations = citations if isinstance(citations, list) else []
     return {
         "message_id":          str(row[0]),
         "conversation_id":     str(row[1]),
@@ -552,6 +566,8 @@ def _serialize_conversation_message(row) -> dict:
         "message_text":        row[4] or "",
         "selected_document_ids": [str(item) for item in selected_document_ids],
         "retrieval_payload":   retrieval_payload,
+        "citations":           citations,
+        "confidence":          ((retrieval_payload or {}).get("grounded_answer") or {}).get("confidence", ""),
         "model_provider":      row[7] or "",
         "model_name":          row[8] or "",
         "prompt_version":      row[9] or "",

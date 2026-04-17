@@ -38,6 +38,12 @@
         toolsDocumentContent: document.getElementById("floating-tools-document-content"),
         sendButton: document.getElementById("chat-send-button"),
         scrollBottomButton: document.getElementById("chat-scroll-bottom-button"),
+        actionsToggle: document.getElementById("chat-actions-toggle"),
+        actionsMenu: document.getElementById("chat-actions-menu"),
+        troubleshootToggle: document.getElementById("chat-troubleshoot-toggle"),
+        troubleshootMenuState: document.getElementById("chat-troubleshoot-menu-state"),
+        troubleshootBadge: document.getElementById("chat-troubleshoot-badge"),
+        shareConversationButton: document.getElementById("chat-share-conversation"),
         promptInput: document.getElementById("chat-prompt-input"),
         sendStatus: document.getElementById("chat-send-status"),
         toolboxDocFrame: document.getElementById("toolbox-doc-frame"),
@@ -91,6 +97,7 @@
         promptRailResizeBound: false,
         promptRailPointerBound: false,
         promptRailPointerInside: false,
+        troubleshootMode: false,
     };
 
     ns.constants = {
@@ -102,6 +109,7 @@
         PANEL_MIN_WIDTH: 260,
         PANEL_MAX_WIDTH: 620,
         DEFAULT_SOURCE_SORT_MODE: "upload_desc",
+        TROUBLESHOOT_MODE_STORAGE_KEY: "chat.troubleshootMode",
         ALLOWED_CONVERSATION_UPLOAD_EXTENSIONS: new Set([
             ".pdf",
             ".doc",
@@ -146,6 +154,67 @@
         if (message) {
             window.alert(message);
         }
+    };
+
+    ns.copyTextToClipboard = async (text) => {
+        const value = String(text || "").trim();
+        if (!value) {
+            throw new Error("Nothing to copy.");
+        }
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+            return;
+        }
+        const fallback = document.createElement("textarea");
+        fallback.value = value;
+        fallback.setAttribute("readonly", "readonly");
+        fallback.style.position = "fixed";
+        fallback.style.opacity = "0";
+        document.body.appendChild(fallback);
+        fallback.focus();
+        fallback.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(fallback);
+        if (!copied) {
+            throw new Error("Clipboard unavailable.");
+        }
+    };
+
+    ns.getMessageCopyText = (trigger) => {
+        const article = trigger?.closest?.("[data-message-role]");
+        if (!article) return "";
+        const content = article.querySelector("[data-copy-content='message']");
+        return String(content?.textContent || "").trim();
+    };
+
+    ns.showCopyButtonSuccess = (button) => {
+        if (!(button instanceof HTMLElement)) return;
+        const icon = button.querySelector("i");
+        if (!(icon instanceof HTMLElement)) return;
+
+        if (button.dataset.copySuccessTimeoutId) {
+            window.clearTimeout(Number(button.dataset.copySuccessTimeoutId));
+        }
+
+        if (!button.dataset.originalIconClass) {
+            button.dataset.originalIconClass = icon.className;
+        }
+        if (!button.dataset.originalTitle) {
+            button.dataset.originalTitle = button.title || "Copy";
+        }
+
+        icon.className = "fa-solid fa-check";
+        button.title = "Copied";
+        button.classList.add("text-emerald-600", "bg-emerald-50");
+
+        const timeoutId = window.setTimeout(() => {
+            icon.className = button.dataset.originalIconClass || "fa-solid fa-clone";
+            button.title = button.dataset.originalTitle || "Copy";
+            button.classList.remove("text-emerald-600", "bg-emerald-50");
+            delete button.dataset.copySuccessTimeoutId;
+        }, 1200);
+
+        button.dataset.copySuccessTimeoutId = String(timeoutId);
     };
 
     ns.hasDraggedFiles = (event) => {
@@ -255,4 +324,135 @@
         sendStatus.textContent = message || "";
         sendStatus.className = `mt-2 min-h-[20px] text-center text-[13px] ${isError ? "text-red-600" : "text-slate-500"}`;
     };
+
+    ns.isTroubleshootModeEnabled = () => Boolean(ns.state.troubleshootMode);
+
+    ns.setChatActionsMenuOpen = (open) => {
+        const { actionsMenu, actionsToggle } = ns.elements;
+        if (!actionsMenu || !actionsToggle) return;
+        const isOpen = Boolean(open);
+        actionsMenu.classList.toggle("hidden", !isOpen);
+        actionsToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    };
+
+    ns.applyTroubleshootModeToPage = () => {
+        const enabled = ns.isTroubleshootModeEnabled();
+        document.querySelectorAll("[data-troubleshoot-panel]").forEach((panel) => {
+            panel.classList.toggle("hidden", !enabled);
+        });
+        if (ns.elements.troubleshootBadge) {
+            ns.elements.troubleshootBadge.classList.toggle("hidden", !enabled);
+            ns.elements.troubleshootBadge.classList.toggle("inline-flex", enabled);
+        }
+        if (ns.elements.troubleshootToggle) {
+            ns.elements.troubleshootToggle.className = enabled
+                ? "flex w-full items-center justify-between rounded-xl bg-amber-50 px-3 py-2 text-left text-sm font-medium text-amber-700 transition-colors"
+                : "flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-600 transition-colors hover:bg-amber-50 hover:text-amber-700";
+            ns.elements.troubleshootToggle.setAttribute(
+                "aria-pressed",
+                enabled ? "true" : "false",
+            );
+        }
+        if (ns.elements.troubleshootMenuState) {
+            ns.elements.troubleshootMenuState.textContent = enabled ? "On" : "Off";
+            ns.elements.troubleshootMenuState.className = enabled
+                ? "text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700"
+                : "text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400";
+        }
+    };
+
+    ns.setTroubleshootMode = (enabled, { persist = true } = {}) => {
+        ns.state.troubleshootMode = Boolean(enabled);
+        if (persist) {
+            try {
+                window.localStorage.setItem(
+                    ns.constants.TROUBLESHOOT_MODE_STORAGE_KEY,
+                    ns.state.troubleshootMode ? "1" : "0",
+                );
+            } catch (error) {
+                void error;
+            }
+        }
+        ns.applyTroubleshootModeToPage();
+    };
+
+    ns.initializeTroubleshootMode = () => {
+        let enabled = false;
+        try {
+            enabled = window.localStorage.getItem(ns.constants.TROUBLESHOOT_MODE_STORAGE_KEY) === "1";
+        } catch (error) {
+            void error;
+        }
+
+        const queryValue = new URLSearchParams(window.location.search).get("troubleshoot");
+        if (queryValue === "1" || queryValue === "true") {
+            enabled = true;
+        } else if (queryValue === "0" || queryValue === "false") {
+            enabled = false;
+        }
+
+        ns.setTroubleshootMode(enabled, { persist: true });
+
+        if (ns.elements.troubleshootToggle && !ns.elements.troubleshootToggle.dataset.bound) {
+            ns.elements.troubleshootToggle.dataset.bound = "true";
+            ns.elements.troubleshootToggle.addEventListener("click", () => {
+                ns.setTroubleshootMode(!ns.isTroubleshootModeEnabled());
+                ns.setChatActionsMenuOpen(false);
+            });
+        }
+
+        if (ns.elements.actionsToggle && !ns.elements.actionsToggle.dataset.bound) {
+            ns.elements.actionsToggle.dataset.bound = "true";
+            ns.elements.actionsToggle.addEventListener("click", (event) => {
+                event.stopPropagation();
+                const isHidden = ns.elements.actionsMenu?.classList.contains("hidden");
+                ns.setChatActionsMenuOpen(isHidden);
+            });
+        }
+
+        if (ns.elements.actionsMenu && !ns.elements.actionsMenu.dataset.bound) {
+            ns.elements.actionsMenu.dataset.bound = "true";
+            ns.elements.actionsMenu.addEventListener("click", (event) => {
+                event.stopPropagation();
+            });
+        }
+
+        if (ns.elements.shareConversationButton && !ns.elements.shareConversationButton.dataset.bound) {
+            ns.elements.shareConversationButton.dataset.bound = "true";
+            ns.elements.shareConversationButton.addEventListener("click", async () => {
+                const shareUrl = window.location.href;
+                try {
+                    await ns.copyTextToClipboard(shareUrl);
+                    ns.notify("success", "Conversation link copied.");
+                } catch (error) {
+                    ns.notify("warning", `Copy this conversation link: ${shareUrl}`);
+                }
+                ns.setChatActionsMenuOpen(false);
+            });
+        }
+
+        if (!document.body.dataset.chatActionsDismissBound) {
+            document.body.dataset.chatActionsDismissBound = "true";
+            document.addEventListener("click", () => {
+                ns.setChatActionsMenuOpen(false);
+            });
+        }
+
+        if (ns.elements.chatMessageList && !ns.elements.chatMessageList.dataset.copyBound) {
+            ns.elements.chatMessageList.dataset.copyBound = "true";
+            ns.elements.chatMessageList.addEventListener("click", async (event) => {
+                const copyButton = event.target.closest("[data-copy-message='true']");
+                if (!copyButton) return;
+                const messageText = ns.getMessageCopyText(copyButton);
+                try {
+                    await ns.copyTextToClipboard(messageText);
+                    ns.showCopyButtonSuccess(copyButton);
+                } catch (error) {
+                    ns.notify("warning", error?.message || "Unable to copy message.");
+                }
+            });
+        }
+    };
+
+    ns.initializeTroubleshootMode();
 }());

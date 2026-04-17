@@ -4,10 +4,20 @@ from dotenv import load_dotenv
 
 load_dotenv()  # loads .env into environment variables
 
+
+def _apply_session_timezone(conn):
+    timezone_name = (os.getenv("DB_TIMEZONE") or "").strip()
+    if not timezone_name:
+        return conn
+    with conn.cursor() as cur:
+        cur.execute("SET TIME ZONE %s", (timezone_name,))
+    return conn
+
+
 def get_db_connection():
     database_url = (os.getenv("DATABASE_URL") or "").strip()
     if database_url:
-        return psycopg2.connect(database_url)
+        return _apply_session_timezone(psycopg2.connect(database_url))
 
     connection_kwargs = {
         "host": os.getenv("DB_HOST", "localhost"),
@@ -21,4 +31,4 @@ def get_db_connection():
     if sslmode:
         connection_kwargs["sslmode"] = sslmode
 
-    return psycopg2.connect(**connection_kwargs)
+    return _apply_session_timezone(psycopg2.connect(**connection_kwargs))

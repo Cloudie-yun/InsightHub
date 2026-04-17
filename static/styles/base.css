@@ -426,17 +426,29 @@ body.theme-dark .chat-input-container:focus-within { box-shadow: 0 0 0 2px rgba(
 .prompt-rail-shell {
   position: relative;
   height: 100%;
-  width: 100%;
+  width: 72px;
   display: flex;
   justify-content: center;
   overflow: visible;
   border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(14px);
+}
+.prompt-rail-floating {
+  position: absolute;
+  top: 1rem;
+  bottom: 8.5rem;
+  z-index: 25;
+  width: 72px;
+  height: 510px;
 }
 .prompt-rail-left {
-  margin-right: 0.25rem;
+  left: 1rem;
 }
 .prompt-rail-right {
-  margin-left: 0.25rem;
+  right: 1.5rem;
 }
 .prompt-rail-track {
   position: absolute;
@@ -456,18 +468,13 @@ body.theme-dark .chat-input-container:focus-within { box-shadow: 0 0 0 2px rgba(
   overflow-x: visible;
   overscroll-behavior: contain;
   padding: 12px 0;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.7) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 .prompt-rail-nodes::-webkit-scrollbar {
-  width: 6px;
-}
-.prompt-rail-nodes::-webkit-scrollbar-track {
-  background: transparent;
-}
-.prompt-rail-nodes::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.7);
-  border-radius: 999px;
+  width: 0;
+  height: 0;
+  display: none;
 }
 .prompt-rail-node {
   position: relative;
@@ -553,6 +560,11 @@ body.theme-dark .chat-input-container:focus-within { box-shadow: 0 0 0 2px rgba(
 body.theme-dark .prompt-rail-track {
   background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.24), rgba(148, 163, 184, 0.06));
 }
+body.theme-dark .prompt-rail-shell {
+  background: rgba(37, 37, 37, 0.88);
+  border-color: #353535;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+}
 body.theme-dark .prompt-rail-node {
   background: transparent;
 }
@@ -585,6 +597,11 @@ body.theme-dark .prompt-rail-tooltip-index {
 }
 body.theme-dark .prompt-rail-tooltip-preview {
   color: #b6b6b6;
+}
+@media (max-width: 1279px) {
+  .prompt-rail-floating {
+    display: none !important;
+  }
 }
 body.theme-dark .app-toast {
   background-color: rgba(37, 37, 37, 0.96) !important;
