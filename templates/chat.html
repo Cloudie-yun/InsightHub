@@ -193,16 +193,47 @@
         <!-- Main Conversation -->
         <section id="chat-main" class="relative h-full min-h-0 min-w-0 flex flex-col bg-slate-50 transition-[padding] duration-200 ease-out">
             <div id="chat-conversation-panel" class="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
-                <div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto p-5 pb-36 space-y-5 max-w-5xl w-full mx-auto">
+                <div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto px-4 pt-4">
+                    <div class="mx-auto flex min-h-full w-full max-w-5xl items-start gap-4">
+                        <div id="chat-message-list" class="min-w-0 flex-1 space-y-6">
                     {% if demo_messages %}
                         {% for message in demo_messages %}
-                        <article class="flex {% if message.role == 'user' %}justify-end{% else %}justify-start{% endif %}" {% if message.role == 'user' %}data-prompt-id="demo-{{ loop.index }}"{% endif %}>
-                            <div class="max-w-3xl rounded-3xl px-5 py-4 shadow-sm {% if message.role == 'user' %}bg-brand-600 text-white rounded-tr-none{% else %}border border-gray-200 bg-white text-slate-800{% endif %}">
-                                <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] {% if message.role == 'user' %}text-brand-100{% else %}text-slate-400{% endif %}">
-                                    <span>{{ "You" if message.role == "user" else "Assistant" }}</span>
+                        <article class="flex {% if message.role == 'user' %}justify-end{% else %}justify-center{% endif %}" {% if message.role == 'user' %}data-prompt-id="demo-{{ loop.index }}"{% endif %}>
+                            {% if message.role == "user" %}
+                            <div class="relative group max-w-xl pb-7">
+                                <div class="rounded-2xl rounded-tr-none bg-brand-100 px-4 py-2.5 text-[14px] font-normal leading-6 text-gray-800 shadow-sm">
+                                    {{ message.text }}
                                 </div>
-                                <div class="whitespace-pre-wrap text-sm leading-7 {% if message.role == 'user' %}text-white{% else %}text-slate-700{% endif %}">{{ message.text }}</div>
+                                <div class="absolute bottom-0 right-1 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
+                                        <i class="fa-solid fa-clone"></i>
+                                    </button>
+                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-brand-50 hover:text-brand-600" title="Edit">
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                </div>
                             </div>
+                            {% else %}
+                            <div class="w-full max-w-4xl">
+                                <div class="px-1 py-1 text-[16px] leading-7 text-gray-800">
+                                    <div class="whitespace-pre-wrap">{{ message.text }}</div>
+                                </div>
+                                <div class="mt-1.5 flex items-center gap-1">
+                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
+                                        <i class="fa-solid fa-clone"></i>
+                                    </button>
+                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-green-50 hover:text-green-600" title="Helpful">
+                                        <i class="fa-regular fa-thumbs-up"></i>
+                                    </button>
+                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600" title="Not helpful">
+                                        <i class="fa-regular fa-thumbs-down"></i>
+                                    </button>
+                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Regenerate">
+                                        <i class="fa-solid fa-rotate-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            {% endif %}
                         </article>
                         {% endfor %}
                     {% else %}
@@ -213,62 +244,56 @@
                                 {% set prompt_counter.value = prompt_counter.value + 1 %}
                             {% endif %}
                             <article
-                                class="flex {% if message.role == 'user' %}justify-end{% else %}justify-start{% endif %}"
+                                class="flex {% if message.role == 'user' %}justify-end{% else %}justify-center{% endif %}"
                                 {% if message.role == 'user' %}data-prompt-id="prompt-{{ prompt_counter.value }}"{% endif %}
                                 data-message-id="{{ message.message_id }}"
                                 data-message-role="{{ message.role }}"
                             >
                                 {% if message.role == "user" %}
-                                <div class="max-w-3xl rounded-3xl rounded-tr-none bg-brand-600 px-5 py-4 text-white shadow-sm">
-                                    <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-100">
-                                        <span>You</span>
+                                <div class="relative group max-w-xl pb-7">
+                                    <div class="rounded-2xl rounded-tr-none bg-brand-100 px-4 py-2.5 text-[14px] font-normal leading-6 text-gray-800 shadow-sm">
+                                        {{ message.message_text }}
                                     </div>
-                                    <div class="whitespace-pre-wrap text-sm leading-7 text-white">{{ message.message_text }}</div>
+                                    <div class="absolute bottom-0 right-1 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
+                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
+                                            <i class="fa-solid fa-clone"></i>
+                                        </button>
+                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-brand-50 hover:text-brand-600" title="Edit">
+                                            <i class="fa-solid fa-pen"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 {% else %}
                                 <div class="w-full max-w-4xl">
                                     {% set retrieval = message.retrieval_payload or {} %}
                                     {% set results = retrieval.get('results') or [] %}
                                     {% set filter_summary = retrieval.get('filter_summary') or {} %}
-                                    <div class="rounded-3xl border border-gray-200 bg-white px-5 py-4 shadow-sm">
-                                        <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                                            <span>Retrieval Inspection</span>
-                                        </div>
-                                        <div class="text-sm leading-6 text-slate-700">{{ message.message_text }}</div>
+                                    <div class="px-1 py-0.5 text-[14px] leading-6 text-gray-800">
+                                        <div class="whitespace-pre-wrap">{{ message.message_text }}</div>
                                     </div>
                                     {% if retrieval %}
-                                    <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                        <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Diagnostics</p>
-                                        <div class="mt-2 grid gap-2 sm:grid-cols-4">
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Top K</p>
-                                                <p class="mt-1 text-sm font-semibold text-slate-700">{{ retrieval.get('k') or 0 }}</p>
+                                    <div class="mt-3 rounded-3xl border border-slate-200/80 bg-white/90 px-4 py-3 shadow-sm">
+                                        <div class="flex flex-wrap items-center justify-between gap-3">
+                                            <div>
+                                                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Sources</p>
+                                                <p class="mt-1 text-[13px] text-slate-500">Top ranked chunks from the selected documents.</p>
                                             </div>
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Returned</p>
-                                                <p class="mt-1 text-sm font-semibold text-slate-700">{{ retrieval.get('returned_count') or (results|length) }}</p>
-                                            </div>
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Filtered Out</p>
-                                                <p class="mt-1 text-sm font-semibold text-slate-700">{{ filter_summary.get('excluded_candidate_count') or 0 }}</p>
-                                            </div>
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
-                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Strategy</p>
-                                                <p class="mt-1 text-sm font-semibold capitalize text-slate-700">{{ (retrieval.get('strategy') or 'vector')|replace('_', ' ') }}</p>
+                                            <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 font-medium">Top K {{ retrieval.get('k') or 0 }}</span>
+                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 font-medium">Returned {{ retrieval.get('returned_count') or (results|length) }}</span>
+                                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 font-medium">Filtered {{ filter_summary.get('excluded_candidate_count') or 0 }}</span>
+                                                <span class="inline-flex items-center rounded-full bg-brand-50 px-2.5 py-0.5 font-medium text-brand-700 capitalize">{{ (retrieval.get('strategy') or 'vector')|replace('_', ' ') }}</span>
                                             </div>
                                         </div>
-                                    </div>
-                                    <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                        <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Top Chunks</p>
                                         {% if results %}
-                                        <div class="mt-2 space-y-2">
+                                        <div class="mt-3 space-y-2.5">
                                             {% for result in results %}
-                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                            <div class="rounded-2xl border border-slate-200 bg-slate-50/85 px-3.5 py-3">
                                                 <div class="flex flex-wrap items-center justify-between gap-3">
                                                     <p class="truncate text-sm font-medium text-slate-700">#{{ loop.index }} {{ result.document_name or result.document_id }}</p>
                                                     <span class="text-xs font-semibold text-slate-500">Score {{ "%.3f"|format(result.score or 0) }}</span>
                                                 </div>
-                                                <div class="mt-2 flex flex-wrap gap-2">
+                                                <div class="mt-1.5 flex flex-wrap gap-1.5">
                                                     <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{{ result.block_type or 'block' }}</span>
                                                     {% if result.text_role %}
                                                     <span class="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">{{ result.text_role }}</span>
@@ -280,18 +305,35 @@
                                                     <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{{ result.filter_reason|replace('_', ' ') }}</span>
                                                     {% endif %}
                                                 </div>
-                                                <p class="mt-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-400">{{ result.relevance_reason }}</p>
+                                                <p class="mt-1.5 text-xs font-medium uppercase tracking-[0.14em] text-slate-400">{{ result.relevance_reason }}</p>
                                                 <p class="mt-1 text-xs leading-5 text-slate-500">{{ result.snippet }}</p>
                                             </div>
                                             {% endfor %}
                                         </div>
                                         {% else %}
-                                        <div class="mt-2 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">
+                                        <div class="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/85 px-4 py-4 text-sm text-slate-500">
                                             No useful chunks were found for this query after filtering.
                                         </div>
                                         {% endif %}
                                     </div>
                                     {% endif %}
+                                    <div class="mt-1.5 flex items-center gap-1">
+                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
+                                            <i class="fa-solid fa-clone"></i>
+                                        </button>
+                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-green-50 hover:text-green-600" title="Helpful">
+                                            <i class="fa-regular fa-thumbs-up"></i>
+                                        </button>
+                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600" title="Not helpful">
+                                            <i class="fa-regular fa-thumbs-down"></i>
+                                        </button>
+                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Regenerate">
+                                            <i class="fa-solid fa-rotate-right"></i>
+                                        </button>
+                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-amber-50 hover:text-amber-600" title="Create study aid">
+                                            <i class="fa-solid fa-lightbulb"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 {% endif %}
                             </article>
@@ -306,6 +348,25 @@
                         </div>
                         {% endif %}
                     {% endif %}
+                        </div>
+                        <div id="prompt-rail" class="hidden max-md:hidden md:flex sticky top-5 z-20 h-[calc(100vh-10rem)] w-20 shrink-0 self-start pointer-events-none">
+                            <div class="prompt-rail-shell pointer-events-auto">
+                                <div class="prompt-rail-track"></div>
+                                <div id="prompt-rail-nodes" class="prompt-rail-nodes"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="pointer-events-none absolute inset-x-0 bottom-28 z-20 flex justify-center px-6">
+                    <button
+                        id="chat-scroll-bottom-button"
+                        type="button"
+                        class="pointer-events-auto hidden items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-4 py-2 text-sm font-medium text-slate-700 shadow-lg backdrop-blur-sm transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
+                        title="Scroll to latest message"
+                    >
+                        <i class="fa-solid fa-arrow-down"></i>
+                        <span>Latest</span>
+                    </button>
                 </div>
                 <div id="chat-input-area" class="sticky bottom-0 z-10 px-6 pb-3 pt-5 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
                     <div class="max-w-4xl mx-auto">

@@ -418,26 +418,52 @@ let initialParserDocument = {{ parser_document|tojson }};
         return [...new Set([...getDirectLinkedBlockIds(block), ...getReverseLinkedBlockIds(blockId)])]
             .filter((candidateId) => candidateId && candidateId !== blockId);
     };
+    const MINERU_DEFAULT_PAGE_WIDTH = 996;
+    const MINERU_DEFAULT_PAGE_HEIGHT = 1403;
     const getPreviewAnchor = (block) => {
         const anchor = block?.preview_anchor || {};
-        const bbox = anchor?.bbox || {};
         const pageIndex = Number(anchor?.page_index || block?.source_unit_index || 0);
-        const x0 = Number(bbox?.x0);
-        const y0 = Number(bbox?.y0);
-        const x1 = Number(bbox?.x1);
-        const y1 = Number(bbox?.y1);
         if (!Number.isFinite(pageIndex) || pageIndex <= 0) return null;
-        if (![x0, y0, x1, y1].every(Number.isFinite)) return null;
-        if (x1 <= x0 || y1 <= y0) return null;
-        return {
-            pageIndex,
-            bbox: {
+        const rawRects = Array.isArray(anchor?.rects) && anchor.rects.length
+            ? anchor.rects
+            : (anchor?.bbox ? [anchor.bbox] : []);
+        const rects = rawRects.map((rect) => {
+            const coordinateSpace = String(rect?.coordinate_space || "normalized_0_1");
+            const origin = String(rect?.origin || "top_left");
+            let x0 = Number(rect?.x0);
+            let y0 = Number(rect?.y0);
+            let x1 = Number(rect?.x1);
+            let y1 = Number(rect?.y1);
+            if (![x0, y0, x1, y1].every(Number.isFinite)) return null;
+            if (coordinateSpace !== "normalized_0_1") {
+                let pageWidth = Number(rect?.page_width);
+                let pageHeight = Number(rect?.page_height);
+                if (!Number.isFinite(pageWidth) || pageWidth <= 0 || !Number.isFinite(pageHeight) || pageHeight <= 0) {
+                    pageWidth = MINERU_DEFAULT_PAGE_WIDTH;
+                    pageHeight = MINERU_DEFAULT_PAGE_HEIGHT;
+                }
+                x0 /= pageWidth;
+                x1 /= pageWidth;
+                if (origin === "bottom_left") {
+                    const flippedY0 = 1 - (y1 / pageHeight);
+                    const flippedY1 = 1 - (y0 / pageHeight);
+                    y0 = flippedY0;
+                    y1 = flippedY1;
+                } else {
+                    y0 /= pageHeight;
+                    y1 /= pageHeight;
+                }
+            }
+            if (x1 <= x0 || y1 <= y0) return null;
+            return {
                 x0: Math.max(0, Math.min(1, x0)),
                 y0: Math.max(0, Math.min(1, y0)),
                 x1: Math.max(0, Math.min(1, x1)),
                 y1: Math.max(0, Math.min(1, y1)),
-            },
-        };
+            };
+        }).filter(Boolean);
+        if (!rects.length) return null;
+        return { pageIndex, rects, bbox: rects[0] };
     };
     const buildPreviewableBlocks = () => (
         blocks()
@@ -808,18 +834,16 @@ let initialParserDocument = {{ parser_document|tojson }};
         firstHotspot.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
         highlightPreviewBlock(normalizedBlockId);
     };
-    const buildPreviewHotspot = (item, pageViewport) => {
-        const { block, anchor } = item;
-        const bbox = anchor?.bbox || {};
+    const buildPreviewHotspot = (block, rect, pageViewport) => {
         const hotspot = document.createElement("button");
         hotspot.type = "button";
         hotspot.className = "document-preview-hotspot";
         hotspot.dataset.blockId = String(block.block_id || "");
         hotspot.title = `${blockTypeLabel(block)} • Source ${String(block.source_unit_index || "") || "?"}`;
-        hotspot.style.left = `${bbox.x0 * pageViewport.width}px`;
-        hotspot.style.top = `${bbox.y0 * pageViewport.height}px`;
-        hotspot.style.width = `${Math.max(12, (bbox.x1 - bbox.x0) * pageViewport.width)}px`;
-        hotspot.style.height = `${Math.max(12, (bbox.y1 - bbox.y0) * pageViewport.height)}px`;
+        hotspot.style.left = `${rect.x0 * pageViewport.width}px`;
+        hotspot.style.top = `${rect.y0 * pageViewport.height}px`;
+        hotspot.style.width = `${Math.max(12, (rect.x1 - rect.x0) * pageViewport.width)}px`;
+        hotspot.style.height = `${Math.max(12, (rect.y1 - rect.y0) * pageViewport.height)}px`;
         hotspot.addEventListener("click", () => {
             focusReviewBlock(block.block_id);
             highlightPreviewBlock(block.block_id);
@@ -840,13 +864,15 @@ let initialParserDocument = {{ parser_document|tojson }};
             previewableBlocks
                 .filter((item) => item.anchor?.pageIndex === pageIndex)
                 .forEach((item) => {
-                    const hotspot = buildPreviewHotspot(item, { width: viewportWidth, height: viewportHeight });
-                    overlay.appendChild(hotspot);
                     const blockId = String(item.block.block_id || "").trim();
-                    if (!previewState.hotspotsByBlockId.has(blockId)) {
-                        previewState.hotspotsByBlockId.set(blockId, []);
-                    }
-                    previewState.hotspotsByBlockId.get(blockId).push(hotspot);
+                    (item.anchor?.rects || []).forEach((rect) => {
+                        const hotspot = buildPreviewHotspot(item.block, rect, { width: viewportWidth, height: viewportHeight });
+                        overlay.appendChild(hotspot);
+                        if (!previewState.hotspotsByBlockId.has(blockId)) {
+                            previewState.hotspotsByBlockId.set(blockId, []);
+                        }
+                        previewState.hotspotsByBlockId.get(blockId).push(hotspot);
+                    });
                 });
         });
         if (previewState.pendingFocusBlockId) {

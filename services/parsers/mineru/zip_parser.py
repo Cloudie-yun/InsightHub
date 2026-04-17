@@ -96,6 +96,7 @@ def discover_zip_artifacts(zf: zipfile.ZipFile) -> dict:
         None,
     )
     model_json = next((name for name in names if name.endswith("_model.json")), None)
+    layout_json = next((name for name in names if Path(name).name.lower() == "layout.json"), None)
     markdown = next((name for name in names if Path(name).name.lower() == "full.md"), None)
     if not markdown:
         markdown = next((name for name in names if name.lower().endswith(".md")), None)
@@ -110,6 +111,7 @@ def discover_zip_artifacts(zf: zipfile.ZipFile) -> dict:
         "content_list_v2": content_list_v2,
         "content_list": flat_content_list,
         "model_json": model_json,
+        "layout_json": layout_json,
         "markdown": markdown,
         "image_files": sorted(image_files),
         "all_names": names,
@@ -122,6 +124,7 @@ def load_raw_artifacts(zf: zipfile.ZipFile, manifest: dict) -> dict:
         "content_list_v2": None,
         "content_list": None,
         "model_json": None,
+        "layout_json": None,
         "markdown": "",
         "images": {},
     }
@@ -132,6 +135,8 @@ def load_raw_artifacts(zf: zipfile.ZipFile, manifest: dict) -> dict:
         raw["content_list"] = json.loads(zf.read(manifest["content_list"]).decode("utf-8", errors="replace"))
     if manifest.get("model_json"):
         raw["model_json"] = json.loads(zf.read(manifest["model_json"]).decode("utf-8", errors="replace"))
+    if manifest.get("layout_json"):
+        raw["layout_json"] = json.loads(zf.read(manifest["layout_json"]).decode("utf-8", errors="replace"))
     if manifest.get("markdown"):
         raw["markdown"] = zf.read(manifest["markdown"]).decode("utf-8", errors="replace")
 
@@ -148,6 +153,7 @@ def _build_raw_artifact_debug_preview(raw_artifacts: dict) -> dict:
     content_list_v2 = raw_artifacts.get("content_list_v2")
     flat_content_list = raw_artifacts.get("content_list")
     model_json = raw_artifacts.get("model_json")
+    layout_json = raw_artifacts.get("layout_json")
     markdown = raw_artifacts.get("markdown") or ""
     manifest = raw_artifacts.get("manifest") or {}
 
@@ -171,6 +177,7 @@ def _build_raw_artifact_debug_preview(raw_artifacts: dict) -> dict:
             "content_list_v2": manifest.get("content_list_v2"),
             "content_list": manifest.get("content_list"),
             "model_json": manifest.get("model_json"),
+            "layout_json": manifest.get("layout_json"),
             "markdown": manifest.get("markdown"),
             "image_count": len(manifest.get("image_files") or []),
         },
@@ -178,6 +185,7 @@ def _build_raw_artifact_debug_preview(raw_artifacts: dict) -> dict:
             "content_list_v2_pages": len(content_list_v2) if isinstance(content_list_v2, list) else 0,
             "content_list_items": len(flat_content_list) if isinstance(flat_content_list, list) else 0,
             "model_json_pages": len(model_json) if isinstance(model_json, list) else 0,
+            "layout_pages": len((layout_json or {}).get("pdf_info") or []) if isinstance(layout_json, dict) else 0,
             "markdown_chars": len(markdown),
         },
         "first_v2_block": _compact_debug_value(first_v2_block),
@@ -219,6 +227,7 @@ def _build_raw_artifact_payload(raw_artifacts: dict) -> dict:
             "content_list_v2": manifest.get("content_list_v2"),
             "content_list": manifest.get("content_list"),
             "model_json": manifest.get("model_json"),
+            "layout_json": manifest.get("layout_json"),
             "markdown": manifest.get("markdown"),
             "image_files": manifest.get("image_files") or [],
             "all_names": manifest.get("all_names") or [],
@@ -226,8 +235,255 @@ def _build_raw_artifact_payload(raw_artifacts: dict) -> dict:
         "content_list_v2": raw_artifacts.get("content_list_v2"),
         "content_list": raw_artifacts.get("content_list"),
         "model_json": raw_artifacts.get("model_json"),
+        "layout_json": raw_artifacts.get("layout_json"),
         "markdown": raw_artifacts.get("markdown") or "",
     }
+
+
+def _source_anchor_key(source_file: str, page_index: int, block_index: int) -> str:
+    stem = Path(str(source_file or "")).stem or str(source_file or "")
+    return f"{stem}:page:{page_index}:block:{block_index}"
+
+
+def _rect_payload_from_bbox(
+    bbox,
+    page_dimensions: tuple[float, float] | None,
+    *,
+    coordinate_space: str | None = None,
+    origin: str = "top_left",
+) -> dict[str, float | str] | None:
+    if not bbox or len(bbox) != 4:
+        return None
+    x0, y0, x1, y1 = [float(value) for value in bbox]
+    inferred_coordinate_space = coordinate_space
+    if not inferred_coordinate_space:
+        inferred_coordinate_space = "normalized_0_1" if x1 <= 1.5 and y1 <= 1.5 else "mineru_page_units"
+    payload: dict[str, float | str] = {
+        "x0": x0,
+        "y0": y0,
+        "x1": x1,
+        "y1": y1,
+        "coordinate_space": inferred_coordinate_space,
+        "origin": origin,
+    }
+    if inferred_coordinate_space != "normalized_0_1" and page_dimensions:
+        page_width, page_height = page_dimensions
+        if page_width > 0:
+            payload["page_width"] = float(page_width)
+        if page_height > 0:
+            payload["page_height"] = float(page_height)
+    return payload
+
+
+def _bbox_payload(bbox, page_dimensions: tuple[float, float] | None) -> dict[str, float | str] | list[float]:
+    rect = _rect_payload_from_bbox(bbox, page_dimensions)
+    return rect or []
+
+
+def _percentile_95(values: list[float]) -> float | None:
+    clean_values = sorted(value for value in values if value > 1.5)
+    if not clean_values:
+        return None
+    percentile_index = min(len(clean_values) - 1, int(len(clean_values) * 0.95))
+    return clean_values[percentile_index]
+
+
+def _infer_page_dimensions_robust(pages: list) -> dict[int, tuple[float, float]]:
+    page_dimensions: dict[int, tuple[float, float]] = {}
+    for page_index, page_blocks in enumerate(pages, start=1):
+        if not isinstance(page_blocks, list):
+            continue
+        xs: list[float] = []
+        ys: list[float] = []
+        for block in page_blocks:
+            if not isinstance(block, dict):
+                continue
+            bbox = block.get("bbox") or []
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                continue
+            try:
+                _, _, x1, y1 = [float(value) for value in bbox]
+            except (TypeError, ValueError):
+                continue
+            if x1 > 1.5:
+                xs.append(x1)
+            if y1 > 1.5:
+                ys.append(y1)
+        page_width = _percentile_95(xs)
+        page_height = _percentile_95(ys)
+        if page_width and page_height:
+            page_dimensions[page_index] = (page_width, page_height)
+    return page_dimensions
+
+
+def _infer_layout_page_dimensions(page_layout: dict) -> tuple[float, float] | None:
+    max_x = 0.0
+    max_y = 0.0
+
+    def consume_bbox(candidate):
+        nonlocal max_x, max_y
+        if not isinstance(candidate, (list, tuple)) or len(candidate) != 4:
+            return
+        try:
+            _, _, x1, y1 = [float(value) for value in candidate]
+        except (TypeError, ValueError):
+            return
+        max_x = max(max_x, x1)
+        max_y = max(max_y, y1)
+
+    for block in page_layout.get("para_blocks") or []:
+        if not isinstance(block, dict):
+            continue
+        consume_bbox(block.get("bbox"))
+        for line in block.get("lines") or []:
+            if not isinstance(line, dict):
+                continue
+            consume_bbox(line.get("bbox"))
+            for span in line.get("spans") or []:
+                if isinstance(span, dict):
+                    consume_bbox(span.get("bbox"))
+
+    if max_x > 0 and max_y > 0:
+        return (max_x, max_y)
+    return None
+
+
+def _build_anchor_entry(
+    *,
+    source_key: str,
+    source_file: str,
+    source_locator: str,
+    page_index: int,
+    block_type: str,
+    rects: list[dict[str, float | str]],
+    resolved_from: str | None = None,
+) -> dict | None:
+    clean_rects = [rect for rect in rects if isinstance(rect, dict) and rect]
+    if not clean_rects:
+        return None
+    first_rect = clean_rects[0]
+    return {
+        "source_key": source_key,
+        "source_file": source_file,
+        "source_locator": source_locator,
+        "page_index": page_index,
+        "block_type": block_type,
+        "coordinate_space": first_rect.get("coordinate_space") or "normalized_0_1",
+        "origin": first_rect.get("origin") or "top_left",
+        "page_width": first_rect.get("page_width"),
+        "page_height": first_rect.get("page_height"),
+        "rects": clean_rects,
+        "resolved_from": resolved_from or source_key,
+    }
+
+
+def build_anchor_registry(raw_artifacts: dict, normalized_artifacts: dict) -> dict[str, dict]:
+    registry: dict[str, dict] = {}
+    layout_registry: dict[tuple[int, int], dict] = {}
+    layout_json = raw_artifacts.get("layout_json") or {}
+    content_list_v2 = normalized_artifacts.get("content_list_v2")
+    flat_content_list = normalized_artifacts.get("content_list")
+    page_dimensions = normalized_artifacts.get("page_dimensions") or {}
+
+    if isinstance(layout_json, dict):
+        for page_index, page_layout in enumerate(layout_json.get("pdf_info") or [], start=1):
+            if not isinstance(page_layout, dict):
+                continue
+            layout_page_dimensions = _infer_layout_page_dimensions(page_layout)
+            for fallback_order, block in enumerate(page_layout.get("para_blocks") or [], start=1):
+                if not isinstance(block, dict):
+                    continue
+                block_index = safe_int(block.get("index"), fallback_order - 1) + 1
+                block_type = str(block.get("type") or "").strip().lower()
+                line_rects = []
+                if block_type in {"text", "title"}:
+                    for line in block.get("lines") or []:
+                        if not isinstance(line, dict):
+                            continue
+                        rect = _rect_payload_from_bbox(line.get("bbox"), layout_page_dimensions)
+                        if rect:
+                            line_rects.append(rect)
+                if not line_rects:
+                    rect = _rect_payload_from_bbox(block.get("bbox"), layout_page_dimensions)
+                    if rect:
+                        line_rects.append(rect)
+                source_file = "layout.json"
+                source_locator = f"page:{page_index}:block:{block_index}"
+                source_key = _source_anchor_key(source_file, page_index, block_index)
+                entry = _build_anchor_entry(
+                    source_key=source_key,
+                    source_file=source_file,
+                    source_locator=source_locator,
+                    page_index=page_index,
+                    block_type=block_type,
+                    rects=line_rects,
+                )
+                if not entry:
+                    continue
+                registry[source_key] = entry
+                layout_registry[(page_index, block_index)] = entry
+
+    if isinstance(content_list_v2, list):
+        for page_index, page_blocks in enumerate(content_list_v2, start=1):
+            if not isinstance(page_blocks, list):
+                continue
+            for block_index, block in enumerate(page_blocks, start=1):
+                if not isinstance(block, dict):
+                    continue
+                source_file = "content_list_v2.json"
+                source_locator = f"page:{page_index}:block:{block_index}"
+                source_key = _source_anchor_key(source_file, page_index, block_index)
+                block_type = str(block.get("type") or "").strip().lower()
+                primary_rect = _rect_payload_from_bbox(block.get("bbox"), block.get("page_dimensions") or page_dimensions.get(page_index))
+                rects = [primary_rect] if primary_rect else []
+                resolved_from = source_key
+                if block_type in {"title", "paragraph"}:
+                    layout_entry = layout_registry.get((page_index, block_index))
+                    logger.debug(
+                        "MinerU anchor match page=%s content_block_index=%s layout_block_index=%s block_type=%s layout_found=%s",
+                        page_index,
+                        block_index,
+                        block_index,
+                        block_type,
+                        bool(layout_entry),
+                    )
+                    if layout_entry:
+                        rects = layout_entry.get("rects") or rects
+                        resolved_from = str(layout_entry.get("source_key") or resolved_from)
+                entry = _build_anchor_entry(
+                    source_key=source_key,
+                    source_file=source_file,
+                    source_locator=source_locator,
+                    page_index=page_index,
+                    block_type=block_type,
+                    rects=rects,
+                    resolved_from=resolved_from,
+                )
+                if entry:
+                    registry[source_key] = entry
+
+    if isinstance(flat_content_list, list):
+        for item_index, item in enumerate(flat_content_list, start=1):
+            if not isinstance(item, dict):
+                continue
+            page_index = item.get("page_index") or (safe_int(item.get("page_idx"), 0) + 1)
+            source_file = "content_list.json"
+            source_locator = f"page:{page_index}:block:{item_index}"
+            source_key = _source_anchor_key(source_file, page_index, item_index)
+            block_type = str(item.get("type") or "").strip().lower()
+            rect = _rect_payload_from_bbox(item.get("bbox"), item.get("page_dimensions") or page_dimensions.get(page_index))
+            entry = _build_anchor_entry(
+                source_key=source_key,
+                source_file=source_file,
+                source_locator=source_locator,
+                page_index=page_index,
+                block_type=block_type,
+                rects=[rect] if rect else [],
+            )
+            if entry:
+                registry[source_key] = entry
+
+    return registry
 
 
 def normalize_coordinates(raw_artifacts: dict) -> dict:
@@ -262,21 +518,9 @@ def normalize_coordinates(raw_artifacts: dict) -> dict:
                 page_dimensions[page_index] = (max_x, max_y)
 
     if isinstance(content_list_v2, list):
-        for page_index, page_blocks in enumerate(content_list_v2, start=1):
-            if page_index in page_dimensions or not isinstance(page_blocks, list):
-                continue
-            max_x = 0.0
-            max_y = 0.0
-            for block in page_blocks:
-                if not isinstance(block, dict):
-                    continue
-                bbox = block.get("bbox") or []
-                if len(bbox) == 4:
-                    _, _, x1, y1 = [float(value) for value in bbox]
-                    max_x = max(max_x, x1)
-                    max_y = max(max_y, y1)
-            if max_x > 0 and max_y > 0:
-                page_dimensions[page_index] = (max_x, max_y)
+        inferred_page_dimensions = _infer_page_dimensions_robust(content_list_v2)
+        for page_index, dimensions in inferred_page_dimensions.items():
+            page_dimensions.setdefault(page_index, dimensions)
 
     if isinstance(flat_content_list, list):
         for item in flat_content_list:
@@ -299,6 +543,7 @@ def normalize_coordinates(raw_artifacts: dict) -> dict:
                 if not isinstance(block, dict):
                     continue
                 block["normalized_bbox"] = _normalize_bbox(block.get("bbox"), page_dimensions.get(page_index))
+                block["page_dimensions"] = page_dimensions.get(page_index)
                 block["page_index"] = page_index
 
     if isinstance(flat_content_list, list):
@@ -307,6 +552,7 @@ def normalize_coordinates(raw_artifacts: dict) -> dict:
                 continue
             page_index = safe_int(item.get("page_idx"), 0) + 1
             item["normalized_bbox"] = _normalize_bbox(item.get("bbox"), page_dimensions.get(page_index))
+            item["page_dimensions"] = page_dimensions.get(page_index)
             item["page_index"] = page_index
 
     if isinstance(model_json, list):
@@ -319,9 +565,18 @@ def normalize_coordinates(raw_artifacts: dict) -> dict:
                 block["normalized_bbox"] = _normalize_model_bbox(block.get("bbox"))
                 block["page_index"] = page_index
 
+    anchor_registry = build_anchor_registry(raw_artifacts, {
+        **raw_artifacts,
+        "content_list_v2": content_list_v2,
+        "content_list": flat_content_list,
+        "model_json": model_json,
+        "page_dimensions": page_dimensions,
+    })
+
     return {
         **raw_artifacts,
         "page_dimensions": page_dimensions,
+        "anchor_registry": anchor_registry,
     }
 
 
@@ -388,6 +643,7 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                     "reading_order": order_index,
                     "source_locator": block.get("source_locator") or "",
                     "source_file": source_file,
+                    "source_anchor_key": block.get("source_anchor_key") or "",
                     "mineru_type": "title",
                     "layout_role": "heading",
                     "can_merge_text": False,
@@ -412,6 +668,7 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                     "reading_order": order_index,
                     "source_locator": block.get("source_locator") or "",
                     "source_file": source_file,
+                    "source_anchor_key": block.get("source_anchor_key") or "",
                     "mineru_type": block.get("original_type") or "paragraph",
                     "layout_role": "body_text",
                     "can_merge_text": True,
@@ -437,6 +694,7 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                         "reading_order": order_index,
                         "source_locator": block.get("source_locator") or "",
                         "source_file": source_file,
+                        "source_anchor_key": block.get("source_anchor_key") or "",
                         "mineru_type": "list",
                         "list_type": block.get("list_type") or "list",
                         "layout_role": "body_text",
@@ -463,6 +721,7 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                         "reading_order": order_index,
                         "source_locator": block.get("source_locator") or "",
                         "source_file": source_file,
+                        "source_anchor_key": block.get("source_anchor_key") or "",
                         "mineru_type": "reference_list",
                         "layout_role": "body_text",
                         "can_merge_text": True,
@@ -480,6 +739,7 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                 "reading_order": order_index,
                 "source_locator": block.get("source_locator") or "",
                 "source_file": source_file,
+                "source_anchor_key": block.get("source_anchor_key") or "",
                 "mineru_type": "table",
                 "layout_role": "table",
                 "can_merge_text": False,
@@ -523,6 +783,7 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
                 "reading_order": order_index,
                 "source_locator": block.get("source_locator") or "",
                 "source_file": source_file,
+                "source_anchor_key": block.get("source_anchor_key") or "",
                 "mineru_type": "image",
                 "layout_role": "figure_caption",
                 "can_merge_text": False,
@@ -550,7 +811,31 @@ def build_segments_from_blocks(intermediate_blocks: list[dict]) -> tuple[list[di
 
 def _segment_bbox(segment: dict) -> list[float]:
     bbox = segment.get("metadata", {}).get("bbox") or []
-    return bbox if isinstance(bbox, list) and len(bbox) == 4 else []
+    if isinstance(bbox, list) and len(bbox) == 4:
+        return bbox
+    if isinstance(bbox, dict):
+        values = [bbox.get("x0"), bbox.get("y0"), bbox.get("x1"), bbox.get("y1")]
+        if all(value is not None for value in values):
+            try:
+                x0, y0, x1, y1 = [float(value) for value in values]
+            except (TypeError, ValueError):
+                return []
+            page_width = bbox.get("page_width")
+            page_height = bbox.get("page_height")
+            if (
+                bbox.get("coordinate_space") != "normalized_0_1"
+                and page_width not in (None, 0)
+                and page_height not in (None, 0)
+            ):
+                try:
+                    page_width = float(page_width)
+                    page_height = float(page_height)
+                except (TypeError, ValueError):
+                    return [x0, y0, x1, y1]
+                if page_width > 0 and page_height > 0:
+                    return [x0 / page_width, y0 / page_height, x1 / page_width, y1 / page_height]
+            return [x0, y0, x1, y1]
+    return []
 
 
 def _segment_reading_order(segment: dict) -> int:
@@ -934,6 +1219,8 @@ def extract_assets(
             "caption_segment_id": None,
             "metadata": {
                 "source_file": block.get("source_file"),
+                "source_locator": block.get("source_locator"),
+                "source_anchor_key": block.get("source_anchor_key"),
                 "reading_order": block.get("order_index"),
                 "caption_text": block.get("caption_text") or "",
                 "footnote_text": block.get("footnote_text") or "",
@@ -1059,10 +1346,12 @@ def build_metadata(
             "content_list_v2": manifest.get("content_list_v2"),
             "content_list": manifest.get("content_list"),
             "model_json": manifest.get("model_json"),
+            "layout_json": manifest.get("layout_json"),
             "markdown": manifest.get("markdown"),
             "image_count": len(manifest.get("image_files") or []),
         },
         "mineru_raw_artifacts": _build_raw_artifact_payload(raw_artifacts),
+        "mineru_anchor_registry": normalized_artifacts.get("anchor_registry") or {},
         "normalization_warnings": warnings,
         "asset_count": len(assets),
         "reference_count": len(references),
@@ -1092,13 +1381,16 @@ def build_v2_intermediate_block(item: dict, page_index: int, order_index: int, f
 
     item_type = str(item.get("type") or "").strip().lower()
     content = item.get("content") or {}
-    bbox = item.get("normalized_bbox") or []
+    normalized_bbox = item.get("normalized_bbox") or []
+    bbox = _bbox_payload(item.get("bbox"), item.get("page_dimensions"))
     base_block = {
         "page_index": page_index,
         "order_index": order_index,
         "bbox": bbox,
+        "normalized_bbox": normalized_bbox,
         "source_file": "content_list_v2.json",
         "source_locator": f"page:{page_index}:block:{order_index}",
+        "source_anchor_key": _source_anchor_key("content_list_v2.json", page_index, order_index),
         "original_type": item_type,
     }
 
@@ -1114,7 +1406,7 @@ def build_v2_intermediate_block(item: dict, page_index: int, order_index: int, f
     if item_type == "paragraph":
         text = flatten_mineru_content(content.get("paragraph_content"))
         if not text:
-            text = fallback_flat_text(flat_lookup.get(page_index), bbox, preferred_type={"text"})
+            text = fallback_flat_text(flat_lookup.get(page_index), normalized_bbox, preferred_type={"text"})
         return {
             **base_block,
             "block_type": "paragraph",
@@ -1181,13 +1473,16 @@ def build_flat_intermediate_block(item: dict, order_index: int) -> dict | None:
     item_type = str(item.get("type") or "").strip().lower()
     page_index = item.get("page_index") or (safe_int(item.get("page_idx"), 0) + 1)
     text = clean_extracted_text(item.get("text") or "")
-    bbox = item.get("normalized_bbox") or []
+    normalized_bbox = item.get("normalized_bbox") or []
+    bbox = _bbox_payload(item.get("bbox"), item.get("page_dimensions"))
     base_block = {
         "page_index": page_index,
         "order_index": order_index,
         "bbox": bbox,
+        "normalized_bbox": normalized_bbox,
         "source_file": "content_list.json",
         "source_locator": f"page:{page_index}:block:{order_index}",
+        "source_anchor_key": _source_anchor_key("content_list.json", page_index, order_index),
         "original_type": item_type,
     }
 

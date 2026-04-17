@@ -423,6 +423,169 @@ body.theme-dark .suggestion-chip { background-color: #2c2c2c !important; border-
 body.theme-dark .suggestion-chip:hover { background-color: rgba(160, 140, 200, 0.1) !important; border-color: rgba(160, 140, 200, 0.22) !important; color: #bfb0d8 !important; }
 body.theme-dark .chat-input-container { background-color: #252525 !important; border-color: #353535 !important; }
 body.theme-dark .chat-input-container:focus-within { box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2) !important; }
+.prompt-rail-shell {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  overflow: visible;
+  border-radius: 999px;
+}
+.prompt-rail-left {
+  margin-right: 0.25rem;
+}
+.prompt-rail-right {
+  margin-left: 0.25rem;
+}
+.prompt-rail-track {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.1), rgba(148, 163, 184, 0.45), rgba(148, 163, 184, 0.1));
+  border-radius: 999px;
+}
+.prompt-rail-nodes {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: visible;
+  overscroll-behavior: contain;
+  padding: 12px 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.7) transparent;
+}
+.prompt-rail-nodes::-webkit-scrollbar {
+  width: 6px;
+}
+.prompt-rail-nodes::-webkit-scrollbar-track {
+  background: transparent;
+}
+.prompt-rail-nodes::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.7);
+  border-radius: 999px;
+}
+.prompt-rail-node {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 56px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  transition: transform 150ms ease;
+}
+.prompt-rail-node::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 2px solid rgba(148, 163, 184, 0.65);
+  background-color: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+.prompt-rail-node:hover,
+.prompt-rail-node:focus-visible {
+  outline: none;
+  z-index: 4;
+}
+.prompt-rail-node:hover::before,
+.prompt-rail-node:focus-visible::before {
+  transform: translate(-50%, -50%) scale(1.15);
+  border-color: rgba(99, 102, 241, 0.65);
+  background-color: rgba(224, 231, 255, 0.98);
+  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.18);
+}
+.prompt-rail-node.active {
+  z-index: 3;
+}
+.prompt-rail-node.active::before {
+  transform: translate(-50%, -50%) scale(1.25);
+  border-color: rgb(79, 70, 229);
+  background-color: rgb(99, 102, 241);
+  box-shadow: 0 10px 26px rgba(79, 70, 229, 0.28);
+}
+.prompt-rail-tooltip {
+  position: absolute;
+  top: 50%;
+  min-width: 180px;
+  max-width: 280px;
+  transform: translateY(-50%);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 10px 12px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+  pointer-events: none;
+  z-index: 20;
+}
+.prompt-rail-tooltip-left {
+  right: calc(100% + 12px);
+}
+.prompt-rail-tooltip-right {
+  left: calc(100% + 12px);
+}
+.prompt-rail-tooltip-index {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #6366f1;
+}
+.prompt-rail-tooltip-preview {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #475569;
+}
+body.theme-dark .prompt-rail-track {
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.24), rgba(148, 163, 184, 0.06));
+}
+body.theme-dark .prompt-rail-node {
+  background: transparent;
+}
+body.theme-dark .prompt-rail-node::before {
+  border-color: rgba(148, 163, 184, 0.38);
+  background-color: #2f2f2f;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+body.theme-dark .prompt-rail-node:hover,
+body.theme-dark .prompt-rail-node:focus-visible {
+  outline: none;
+}
+body.theme-dark .prompt-rail-node:hover::before,
+body.theme-dark .prompt-rail-node:focus-visible::before {
+  border-color: rgba(176, 160, 204, 0.72);
+  background-color: rgba(90, 74, 114, 0.95);
+}
+body.theme-dark .prompt-rail-node.active::before {
+  border-color: #b0a0cc;
+  background-color: #7c6a99;
+  box-shadow: 0 10px 24px rgba(90, 74, 114, 0.32);
+}
+body.theme-dark .prompt-rail-tooltip {
+  border-color: #353535;
+  background: rgba(37, 37, 37, 0.98);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
+}
+body.theme-dark .prompt-rail-tooltip-index {
+  color: #bfb0d8;
+}
+body.theme-dark .prompt-rail-tooltip-preview {
+  color: #b6b6b6;
+}
 body.theme-dark .app-toast {
   background-color: rgba(37, 37, 37, 0.96) !important;
   border-color: #353535 !important;

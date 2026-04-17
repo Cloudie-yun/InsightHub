@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from psycopg2 import errors as psycopg_errors
 from psycopg2.extras import Json
 
 from db import get_db_connection
@@ -196,6 +197,15 @@ class ChatAnswerService:
                     "user": self._serialize_message_row(user_row),
                     "assistant": self._serialize_message_row(assistant_row),
                 }
+        except psycopg_errors.UndefinedTable as exc:
+            raise ChatAnswerServiceError(
+                code="conversation_messages_table_missing",
+                message="Conversation message storage is not available. Apply migration 010_conversation_messages.sql.",
+                status_code=503,
+                details={
+                    "migration": "migrations/010_conversation_messages.sql",
+                },
+            ) from exc
         finally:
             conn.close()
 

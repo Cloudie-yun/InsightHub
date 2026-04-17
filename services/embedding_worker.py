@@ -21,6 +21,7 @@ from services.extracted_content import (
     EMBEDDING_STATUS_READY,
     EMBEDDING_STATUS_RETRYING,
 )
+from services.qdrant_index_service import QdrantIndexService, QdrantServiceError, build_qdrant_payload
 
 def _read_int_env(name: str, default: int) -> int:
     raw_value = str(os.environ.get(name, "") or "").strip()
@@ -87,6 +88,7 @@ class EmbeddingWorker:
         self.service = service or EmbeddingService()
         self.service.batch_size = max(1, min(self.service.batch_size, self.batch_size))
         self._embedding_runs_enabled = True
+        self.qdrant_service = QdrantIndexService()
 
     def run_once(self, *, limit: int = DEFAULT_LIMIT) -> dict[str, int]:
         stats = {
@@ -108,6 +110,7 @@ class EmbeddingWorker:
                     to_embed: list[PendingBlock] = []
                     for row in rows:
                         if self._is_idempotent_match(row):
+                            self._sync_existing_qdrant_point(cur, row=row)
                             self._mark_embedded(cur, row=row, reused_existing=True)
                             stats["skipped_idempotent"] += 1
                         else:
@@ -125,6 +128,7 @@ class EmbeddingWorker:
 
                         for row, vector in zip(chunk, vectors):
                             self._upsert_embedding(cur, row=row, vector=vector)
+                            self._sync_qdrant_point(cur, row=row, vector=vector)
                             self._mark_embedded(
                                 cur,
                                 row=row,
@@ -469,6 +473,85 @@ class EmbeddingWorker:
             self._embedding_runs_enabled = False
             logger.warning("embedding_runs table not found; run tracking is disabled until migration is applied.")
 
+    def _sync_qdrant_point(self, cur, *, row: PendingBlock, vector: list[float]) -> None:
+        if not self.qdrant_service.enabled:
+            return
+
+        cur.execute(
+            """
+            SELECT
+                db.block_id::text,
+                db.document_id::text,
+                d.original_filename,
+                db.block_type,
+                db.subtype,
+                db.normalized_content,
+                COALESCE(db.source_metadata, '{}'::jsonb) AS source_metadata,
+                db.normalized_content->>'retrieval_text' AS retrieval_text
+            FROM document_blocks db
+            JOIN documents d ON d.document_id = db.document_id
+            WHERE db.block_id = %s
+              AND d.is_deleted = FALSE
+            """,
+            (row.block_id,),
+        )
+        point_row = cur.fetchone()
+        if not point_row:
+            return
+
+        (
+            block_id,
+            document_id,
+            document_name,
+            block_type,
+            subtype,
+            normalized_content,
+            source_metadata,
+            retrieval_text,
+        ) = point_row
+        payload = build_qdrant_payload(
+            block_id=str(block_id or ""),
+            document_id=str(document_id or ""),
+            document_name=document_name or "",
+            block_type=str(block_type or "").strip().lower(),
+            subtype=str(subtype or "").strip().lower(),
+            normalized_content=normalized_content if isinstance(normalized_content, dict) else {},
+            source_metadata=source_metadata if isinstance(source_metadata, dict) else {},
+            retrieval_text=retrieval_text or "",
+        )
+        try:
+            self.qdrant_service.ensure_collection(vector_size=self.storage_dimension)
+            self.qdrant_service.upsert_points(
+                points=[
+                    {
+                        "id": str(block_id or ""),
+                        "vector": self._normalize_vector_for_storage(vector),
+                        "payload": payload,
+                    }
+                ]
+            )
+        except QdrantServiceError as exc:
+            logger.warning("qdrant sync skipped for block_id=%s code=%s", row.block_id, exc.code)
+
+    def _sync_existing_qdrant_point(self, cur, *, row: PendingBlock) -> None:
+        if not self.qdrant_service.enabled:
+            return
+        cur.execute(
+            """
+            SELECT embedding::text
+            FROM document_block_embeddings
+            WHERE block_id = %s
+            """,
+            (row.block_id,),
+        )
+        embedding_row = cur.fetchone()
+        if not embedding_row or not embedding_row[0]:
+            return
+        vector = self._parse_vector_literal(embedding_row[0])
+        if not vector:
+            return
+        self._sync_qdrant_point(cur, row=row, vector=vector)
+
     def _build_model_signature(self) -> str:
         expected_dimension = self.service.expected_dimension or "auto"
         return f"{self.service.provider}:{self._current_model_name()}:{expected_dimension}:{WORKER_VERSION}"
@@ -486,6 +569,15 @@ class EmbeddingWorker:
     @staticmethod
     def _vector_literal(vector: list[float]) -> str:
         return "[" + ",".join(str(float(value)) for value in vector) + "]"
+
+    @staticmethod
+    def _parse_vector_literal(value: str) -> list[float]:
+        raw = str(value or "").strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            raw = raw[1:-1]
+        if not raw:
+            return []
+        return [float(part) for part in raw.split(",") if str(part).strip()]
 
     def _normalize_vector_for_storage(self, vector: list[float]) -> list[float]:
         current_dimension = len(vector)

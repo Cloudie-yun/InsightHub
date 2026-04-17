@@ -13,42 +13,48 @@
    - Canonical normalization converts parser output into structured `document_blocks`.
 5. **Retrieval Preparation (pre-embedding)**
    - `EmbeddingPreparationService` builds `retrieval_text` and marks blocks as `embedding_status=ready`.
-6. **Metadata DB**
-   - PostgreSQL persistence exists for `document_blocks`, extraction metadata, and diagram analysis tables.
+6. **Embedding Model Execution**
+   - `EmbeddingWorker` reads ready blocks, generates embeddings, persists vectors, and marks blocks `embedded` or `failed`.
+7. **Vector DB Indexing / Search**
+   - `document_block_embeddings` stores pgvector embeddings and retrieval queries rank blocks by vector similarity.
+8. **Query Embedding + Semantic Retrieval + Top-k Selection**
+   - `RetrievalService` embeds the user query, scopes by conversation and selected documents, and returns ranked chunks.
+9. **Metadata DB**
+   - PostgreSQL persistence exists for `document_blocks`, extraction metadata, diagram analysis tables, embedding rows, and embedding run logs.
+10. **Retrieval Diagnostics**
+   - CLI diagnostics exist for both embedding status and retrieval troubleshooting.
+11. **Inspection-Only Chat Persistence**
+   - Conversation messages can persist retrieval inspection output, but this is not yet grounded LLM answer generation.
 
 ### Not Yet Implemented End-to-End
-1. **Embedding Model execution**
-   - Blocks are marked ready for embedding, but no embedding generation job is wired.
-2. **Vector DB indexing/search**
-   - No vector index table/service and no similarity query path.
-3. **Query Embedding + Semantic Retrieval + Top-k selection**
-   - No API route that embeds user queries and retrieves nearest chunks.
-4. **Prompt Builder + LLM API answer generation**
-   - Chat UI exists, but backend API routes are currently upload/parser-focused.
-5. **Answer + Citations grounding flow**
-   - No retrieval-grounded answer/citation assembly endpoint yet.
+1. **Prompt Builder + LLM API answer generation**
+   - There is no grounded LLM answer generation step yet; the current message flow stores a retrieval summary rather than model-generated answers.
+2. **Answer + Citations grounding flow**
+   - Retrieval results include chunk metadata, but there is no finalized answer-plus-citations UX or grounding policy yet.
+3. **Frontend chat UX wired to true RAG answers**
+   - The backend can retrieve evidence, but the full user-facing ask-answer flow is not yet complete.
 
 ## Practical Stage Summary
 
-The system is currently at **late ingestion / normalization / retrieval-prep stage**:
+The system is currently at **Milestone 2 retrieval stage**:
+
 - You are **past parsing and cleaning**.
-- You are **at retrieval-ready text construction**.
-- You are **not yet running embeddings or retrieval-time RAG answering**.
+- You are **running embeddings and storing vectors**.
+- You are **retrieving top related chunks for a user query across selected conversation documents**.
+- You are **not yet producing grounded LLM answers with final citations/UI polish**.
 
 ## Recommended Next Steps
 
-1. **Add embedding persistence schema**
-   - Introduce a table for block embeddings (or add vector column using pgvector) keyed by `block_id`.
-2. **Build embedding worker**
-   - Background task to read `embedding_status=ready`, call embedding model, persist vectors, then mark `embedded`.
-3. **Add retrieval service**
-   - Given `conversation_id` + selected docs + user query, produce query embedding and top-k blocks.
-4. **Add chat answer API route**
-   - New route (e.g. `POST /api/conversations/<id>/chat`) for retrieval + prompt assembly + LLM call.
-5. **Return citation payloads**
-   - Include block IDs, source unit index/page, snippet text, and confidence/similarity for UI rendering.
-6. **Wire frontend send action**
-   - Hook chat send button/input to the new chat API and render assistant answers with source chips.
+1. **Add grounded LLM answer generation**
+   - Build the prompt assembly + model call step on top of retrieved evidence.
+2. **Stabilize the chat answer API contract**
+   - Decide whether `/api/conversations/<id>/messages` remains the answer route or if a dedicated answer endpoint is preferred.
+3. **Return finalized citation payloads**
+   - Standardize citation fields for block IDs, snippet text, page/unit metadata, and UI rendering.
+4. **Wire frontend send action to true answers**
+   - Replace retrieval-summary responses with grounded assistant answers.
+5. **Close the doc/code contract gap**
+   - Keep this document aligned with the actual route name, default `k`, and response schema used by the implementation.
 
 ## Suggested Milestone Order
 
@@ -56,9 +62,15 @@ The system is currently at **late ingestion / normalization / retrieval-prep sta
 - **Milestone 2**: Retrieval API returning top-k evidence only.
 - **Milestone 3**: LLM answer route using retrieved evidence.
 - **Milestone 4**: Citation UI + quality checks (empty retrieval fallback, hallucination guardrails).
+
+## Current Milestone
+
+- **Current repo state**: Milestone 2 implemented.
+- **Next target**: Milestone 3.
+
 # RAG Pipeline Status (Milestone 1)
 
-This document is a practical runbook for confirming that **Milestone 1 embedding ingestion** is working in a production-like environment.
+This section is a practical runbook for confirming that **Milestone 1 embedding ingestion** is working in a production-like environment.
 
 > If you are not comfortable inspecting raw database tables, that is okay.
 > Use the copy/paste checks below and compare the outputs to the expected results.
@@ -263,12 +275,20 @@ Pass condition:
 
 # Milestone 2 Retrieval API Contract
 
-This section defines the **Milestone 2 evidence retrieval API** (no LLM generation yet). The endpoint returns top-k ranked blocks to support later grounded answer generation.
+This section defines the **Milestone 2 evidence retrieval API**. Milestone 2 means:
+
+- take a user query,
+- restrict search to the conversation's documents,
+- optionally narrow further to the user-selected `document_ids`,
+- return the top related chunks only,
+- do **not** generate a final LLM answer yet.
+
+That is the correct practical definition of Milestone 2 in this repository.
 
 ## Endpoint
 
 - **Method**: `POST`
-- **Path**: `/api/conversations/<conversation_id>/retrieval`
+- **Path**: `/api/conversations/<conversation_id>/retrieve`
 - **Auth**: same authenticated user/session requirements as existing conversation APIs.
 
 ## Request schema
@@ -276,7 +296,7 @@ This section defines the **Milestone 2 evidence retrieval API** (no LLM generati
 ```json
 {
   "query": "What does the contract say about renewal?",
-  "k": 8,
+  "k": 5,
   "document_ids": ["doc_123", "doc_456"]
 }
 ```
@@ -285,9 +305,8 @@ This section defines the **Milestone 2 evidence retrieval API** (no LLM generati
 
 - `query` (string, required)
   - Must be non-empty after trimming whitespace.
-  - Recommended max length: 4000 chars (reject larger payloads as invalid input).
 - `k` (integer, optional)
-  - Defaults to **8** when omitted.
+  - Defaults to **5** when omitted.
   - Maximum allowed: **20**.
   - Minimum allowed: **1**.
 - `document_ids` (array[string], optional)
@@ -298,24 +317,36 @@ This section defines the **Milestone 2 evidence retrieval API** (no LLM generati
 
 ```json
 {
-  "conversation_id": "conv_001",
   "query": "What does the contract say about renewal?",
-  "k_requested": 8,
-  "k_returned": 3,
-  "metric": "cosine_distance",
+  "k": 5,
+  "strategy": "vector",
+  "returned_count": 3,
+  "include_filtered": false,
+  "filter_summary": {
+    "total_candidate_count": 42,
+    "included_candidate_count": 36,
+    "excluded_candidate_count": 6,
+    "visible_candidate_count": 36,
+    "include_filtered": false
+  },
   "results": [
     {
-      "rank": 1,
       "block_id": "b_101",
       "document_id": "doc_123",
-      "distance": 0.1123,
-      "similarity": 0.8877,
-      "retrieval_text": "The agreement renews automatically every 12 months...",
-      "source": {
-        "unit_index": 42,
+      "document_name": "contract.pdf",
+      "score": 0.8877,
+      "snippet": "The agreement renews automatically every 12 months...",
+      "block_type": "text",
+      "subtype": "paragraph",
+      "text_role": "",
+      "section_path": ["Renewal"],
+      "source_metadata": {
         "page": 7,
-        "block_type": "paragraph"
-      }
+        "unit_index": 42
+      },
+      "is_filtered": false,
+      "filter_reason": "",
+      "relevance_reason": "matched body paragraph within section"
     }
   ]
 }
@@ -323,18 +354,18 @@ This section defines the **Milestone 2 evidence retrieval API** (no LLM generati
 
 ### Notes
 
-- `distance` is the raw ranking metric.
-- `similarity` is a convenience field (`1 - distance` for cosine distance) for UI display.
-- `k_returned` may be lower than requested when eligible blocks are fewer than `k`.
+- `strategy` is currently `vector` for normal semantic retrieval.
+- `strategy` may become `keyword_fallback` if query embedding is unavailable but fallback retrieval succeeds.
+- `returned_count` may be lower than requested `k` when eligible blocks are fewer than `k`.
+- `score` is a normalized similarity-style value derived from vector distance for display and ranking feedback.
 
 ## Ranking behavior (required)
 
 1. **Distance metric**: `cosine_distance` over query embedding vs. `document_block_embeddings.embedding`.
 2. **Primary sort**: ascending `distance` (smaller is more similar).
-3. **Tie-breaker #1**: ascending `document_blocks.id` (stable deterministic order).
-4. **Tie-breaker #2**: ascending `document_blocks.unit_index` when present.
-5. **Default `k`**: `8`.
-6. **Max `k`**: `20` (reject larger values with `400`).
+3. **Current API response**: exposes normalized `score` rather than raw `distance`.
+4. **Default `k`**: `5`.
+5. **Max `k`**: `20` (reject larger values with `400`).
 
 ## Filtering rules (required)
 
@@ -342,9 +373,9 @@ Retrieval candidates MUST satisfy all rules:
 
 1. `document_blocks.retrievable = TRUE`.
 2. `document_blocks.embedding_status = 'embedded'`.
-3. Block has an embedded vector row (`document_block_embeddings.block_id = document_blocks.id`).
+3. Block has an embedded vector row (`document_block_embeddings.block_id = document_blocks.block_id`).
 4. Block belongs to the requested `conversation_id` through its parent document.
-5. If `document_ids` is supplied, block’s `document_id` must be in that supplied set.
+5. If `document_ids` is supplied, the block's `document_id` must be in that supplied set.
 
 Practical implication:
 
@@ -371,15 +402,15 @@ Use for malformed payloads:
 }
 ```
 
-### 403 Forbidden (scope violation)
+### Scope violation
 
-Use when user requests documents/conversation they do not own or cannot access.
+Current implementation returns a validation-style error when requested `document_ids` are outside the conversation scope.
 
 ```json
 {
-  "error": {
-    "code": "forbidden",
-    "message": "You do not have access to one or more requested documents."
+  "error": "One or more document_ids are not part of this conversation.",
+  "details": {
+    "code": "invalid_document_scope"
   }
 }
 ```
@@ -390,24 +421,20 @@ Use when the target conversation does not exist for the current user.
 
 ```json
 {
-  "error": {
-    "code": "conversation_not_found",
-    "message": "Conversation not found."
-  }
+  "error": "Conversation not found."
 }
 ```
 
 ### 200 OK with empty retrieval outcome
 
-Milestone 2 treats “no eligible matches” as a successful retrieval call with zero results.
+Milestone 2 treats "no eligible matches" as a successful retrieval call with zero results.
 
 ```json
 {
-  "conversation_id": "conv_001",
   "query": "Explain the cancellation terms",
-  "k_requested": 8,
-  "k_returned": 0,
-  "metric": "cosine_distance",
+  "k": 5,
+  "strategy": "vector",
+  "returned_count": 0,
   "results": []
 }
 ```
@@ -417,12 +444,12 @@ Milestone 2 treats “no eligible matches” as a successful retrieval call with
 Use these checks to mark Milestone 2 complete.
 
 1. **API contract available and implemented**
-   - `POST /api/conversations/<conversation_id>/retrieval` accepts `query`, optional `k`, optional `document_ids`.
-2. **Ranking is deterministic**
-   - Repeated calls with same inputs return same ordering when distances tie.
+   - `POST /api/conversations/<conversation_id>/retrieve` accepts `query`, optional `k`, optional `document_ids`.
+2. **Semantic retrieval is live**
+   - The service embeds the query and returns top related chunks from the selected scope.
 3. **`k` behavior enforced**
-   - Omitted `k` resolves to `8`.
-   - `k > 20` returns `400 invalid_request`.
+   - Omitted `k` resolves to `5`.
+   - `k > 20` returns `400`.
 4. **Filtering rules enforced**
    - Non-embedded blocks never appear.
    - Out-of-scope conversation/doc IDs are not retrievable.
@@ -435,15 +462,15 @@ Run SQL (example diagnostic query):
 
 ```sql
 SELECT
-  db.id AS block_id,
+  db.block_id,
   db.document_id,
   db.embedding_status,
   db.retrievable,
   dbe.block_id IS NOT NULL AS has_vector
 FROM document_blocks db
-LEFT JOIN document_block_embeddings dbe ON dbe.block_id = db.id
+LEFT JOIN document_block_embeddings dbe ON dbe.block_id = db.block_id
 WHERE db.document_id = '<DOC_ID>'
-ORDER BY db.id
+ORDER BY db.block_id
 LIMIT 50;
 ```
 
@@ -455,20 +482,20 @@ API checks (example):
 
 ```bash
 # 1) Default k check
-curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
+curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieve" \
   -H "Content-Type: application/json" \
   -b "<SESSION_COOKIE>" \
   -d '{"query":"renewal clause"}'
 
 # 2) k upper bound check (expect 400)
 curl -s -o /tmp/m2_err.json -w "%{http_code}\n" \
-  -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
+  -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieve" \
   -H "Content-Type: application/json" \
   -b "<SESSION_COOKIE>" \
   -d '{"query":"renewal clause","k":21}'
 
 # 3) Empty retrieval check (expect 200 and results: [])
-curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
+curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieve" \
   -H "Content-Type: application/json" \
   -b "<SESSION_COOKIE>" \
   -d '{"query":"nonexistent token sequence zyxwvu"}'
@@ -477,7 +504,7 @@ curl -s -X POST "$APP_BASE_URL/api/conversations/<CONV_ID>/retrieval" \
 python -m services.retrieval_diagnostics \
   --conversation-id "<CONV_ID>" \
   --document-ids "<DOC_ID_1>,<DOC_ID_2>" \
-  -k 8 \
+  -k 5 \
   "renewal clause"
 
 # 5) Retrieval diagnostics CLI (HTML troubleshooting report)
@@ -520,14 +547,14 @@ Then re-run worker + diagnostics.
 Pass condition:
 
 - failures are listed with readable reasons,
-- previously failed blocks can transition from `failed` → `ready` → `embedded`.
+- previously failed blocks can transition from `failed` -> `ready` -> `embedded`.
 
 ### D) Explicit Milestone boundary check
 
-Confirm no Milestone 2 dependency was introduced:
+Confirm the Milestone 2 boundary remains intact:
 
-- no requirement for a chat retrieval endpoint in this validation,
-- acceptance is strictly ingestion, persistence, visibility, and retry.
+- retrieval returns evidence only,
+- final grounded answer generation is deferred to Milestone 3.
 
 ---
 

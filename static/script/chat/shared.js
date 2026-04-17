@@ -37,6 +37,7 @@
         toolsDefaultContent: document.getElementById("floating-tools-default-content"),
         toolsDocumentContent: document.getElementById("floating-tools-document-content"),
         sendButton: document.getElementById("chat-send-button"),
+        scrollBottomButton: document.getElementById("chat-scroll-bottom-button"),
         promptInput: document.getElementById("chat-prompt-input"),
         sendStatus: document.getElementById("chat-send-status"),
         toolboxDocFrame: document.getElementById("toolbox-doc-frame"),
@@ -45,6 +46,7 @@
         toolboxDocOpen: document.getElementById("toolbox-doc-open"),
         toolboxDocBack: document.getElementById("toolbox-doc-back"),
         chatMessages: document.getElementById("chat-messages"),
+        chatMessageList: document.getElementById("chat-message-list"),
         promptRail: document.getElementById("prompt-rail"),
         promptRailNodes: document.getElementById("prompt-rail-nodes"),
         conversationPanel: document.getElementById("chat-conversation-panel"),
@@ -86,6 +88,9 @@
         isSendingMessage: false,
         nextPromptIndex: 0,
         promptRailBound: false,
+        promptRailResizeBound: false,
+        promptRailPointerBound: false,
+        promptRailPointerInside: false,
     };
 
     ns.constants = {

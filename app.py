@@ -4,7 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from threading import Lock, Thread
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlencode, quote
+from urllib.parse import urljoin, urlencode, quote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import subprocess
@@ -352,11 +352,31 @@ def _sanitize_next_path(next_path: str) -> str:
     return next_path
 
 
+def _is_local_host(hostname: str | None) -> bool:
+    host = (hostname or "").strip().lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _request_base_url() -> str:
+    return request.url_root.rstrip("/")
+
+
+def _preferred_external_base_url(configured_url: str) -> str:
+    configured = (configured_url or "").strip()
+    request_base = _request_base_url()
+    request_host = urlparse(request_base).hostname
+
+    if _is_local_host(request_host):
+        configured_host = urlparse(configured).hostname if configured else ""
+        if not configured or not _is_local_host(configured_host):
+            return request_base
+
+    return configured.rstrip("/") if configured else request_base
+
+
 def build_external_url(path: str) -> str:
-    app_base_url = os.getenv("APP_BASE_URL", "").strip()
-    if app_base_url:
-        return urljoin(app_base_url.rstrip("/") + "/", path.lstrip("/"))
-    return urljoin(request.url_root, path.lstrip("/"))
+    app_base_url = _preferred_external_base_url(os.getenv("APP_BASE_URL", ""))
+    return urljoin(app_base_url.rstrip("/") + "/", path.lstrip("/"))
 
 
 def _compose_upload_conversation_title(file_names: list[str]) -> str:
@@ -772,7 +792,11 @@ def get_conversation_messages(user_id, conversation_id) -> list:
                 JOIN conversations c ON c.conversation_id = cm.conversation_id
                 WHERE cm.conversation_id = %s
                   AND c.user_id = %s
-                ORDER BY cm.created_at ASC, cm.message_id ASC
+                ORDER BY
+                    cm.created_at ASC,
+                    COALESCE(cm.reply_to_message_id, cm.message_id) ASC,
+                    CASE WHEN cm.role = 'user' THEN 0 ELSE 1 END ASC,
+                    cm.message_id ASC
                 """,
                 (conversation_id, user_id),
             )
@@ -1267,12 +1291,149 @@ def _collect_segment_ids_from_block(block: dict) -> list[str]:
     return list(dict.fromkeys(segment_ids))
 
 
+def _source_anchor_key_from_locator(source_file: str, source_locator: str) -> str:
+    source_file = str(source_file or "").strip()
+    source_locator = str(source_locator or "").strip()
+    if not source_file or not source_locator:
+        return ""
+    match = re.search(r"page:(\d+):block:(\d+)", source_locator)
+    if not match:
+        return ""
+    stem = Path(source_file).stem or source_file
+    return f"{stem}:page:{match.group(1)}:block:{match.group(2)}"
+
+
+def _coerce_rect_payload(rect: dict | list | tuple | None) -> dict:
+    if isinstance(rect, dict):
+        x0 = rect.get("x0")
+        y0 = rect.get("y0")
+        x1 = rect.get("x1")
+        y1 = rect.get("y1")
+        if all(value is not None for value in (x0, y0, x1, y1)):
+            return {
+                "x0": x0,
+                "y0": y0,
+                "x1": x1,
+                "y1": y1,
+                "coordinate_space": rect.get("coordinate_space") or "normalized_0_1",
+                "page_width": rect.get("page_width"),
+                "page_height": rect.get("page_height"),
+                "origin": rect.get("origin") or "top_left",
+            }
+        return {}
+    if isinstance(rect, (list, tuple)) and len(rect) == 4:
+        return {
+            "x0": rect[0],
+            "y0": rect[1],
+            "x1": rect[2],
+            "y1": rect[3],
+            "coordinate_space": "normalized_0_1",
+            "page_width": None,
+            "page_height": None,
+            "origin": "top_left",
+        }
+    return {}
+
+
+def _rects_union_bbox(rects: list[dict]) -> dict:
+    valid_rects = []
+    for rect in rects:
+        payload = _coerce_rect_payload(rect)
+        if payload:
+            valid_rects.append(payload)
+    if not valid_rects:
+        return {}
+    x0 = min(float(rect["x0"]) for rect in valid_rects)
+    y0 = min(float(rect["y0"]) for rect in valid_rects)
+    x1 = max(float(rect["x1"]) for rect in valid_rects)
+    y1 = max(float(rect["y1"]) for rect in valid_rects)
+    first = valid_rects[0]
+    return {
+        "x0": x0,
+        "y0": y0,
+        "x1": x1,
+        "y1": y1,
+        "coordinate_space": first.get("coordinate_space") or "normalized_0_1",
+        "page_width": first.get("page_width"),
+        "page_height": first.get("page_height"),
+        "origin": first.get("origin") or "top_left",
+    }
+
+
+def _extract_block_source_anchor_key(block: dict) -> str:
+    source_metadata = block.get("source_metadata") or {}
+    for candidate in (
+        source_metadata.get("source_anchor_key"),
+        (source_metadata.get("segment_metadata") or {}).get("source_anchor_key"),
+        (source_metadata.get("asset_metadata") or {}).get("source_anchor_key"),
+    ):
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    for metadata_key in ("segment_metadata", "asset_metadata"):
+        metadata = source_metadata.get(metadata_key) or {}
+        source_key = _source_anchor_key_from_locator(
+            str(metadata.get("source_file") or ""),
+            str(metadata.get("source_locator") or ""),
+        )
+        if source_key:
+            return source_key
+    return ""
+
+
+def _build_preview_anchor_from_rects(page_index: int, rects: list[dict], source_anchor_key: str = "") -> dict:
+    clean_rects = []
+    for rect in rects:
+        payload = _coerce_rect_payload(rect)
+        if payload:
+            clean_rects.append(payload)
+    bbox = _rects_union_bbox(clean_rects)
+    if not clean_rects or not bbox:
+        return {}
+    return {
+        "page_index": page_index,
+        "source_anchor_key": source_anchor_key,
+        "rects": clean_rects,
+        "bbox": bbox,
+    }
+
+
+def _fallback_preview_anchor(page_index: int, *bbox_candidates: dict | list | tuple | None, source_anchor_key: str = "") -> dict:
+    for candidate in bbox_candidates:
+        payload = _coerce_rect_payload(candidate)
+        if payload:
+            return _build_preview_anchor_from_rects(page_index, [payload], source_anchor_key=source_anchor_key)
+    return {}
+
+
+def _resolve_preview_anchor(block: dict, anchor_registry: dict[str, dict], *bbox_candidates: dict | list | tuple | None) -> dict:
+    page_index = _coerce_int(block.get("source_unit_index"), 0)
+    source_anchor_key = _extract_block_source_anchor_key(block)
+    if source_anchor_key:
+        entry = anchor_registry.get(source_anchor_key) or {}
+        rects = entry.get("rects") or []
+        if rects:
+            return _build_preview_anchor_from_rects(
+                _coerce_int(entry.get("page_index"), page_index) or page_index,
+                rects,
+                source_anchor_key=source_anchor_key,
+            )
+    return _fallback_preview_anchor(page_index, *bbox_candidates, source_anchor_key=source_anchor_key)
+
+
+def _build_layout_preview_anchor_map(_parser_result: dict) -> dict:
+    # Compatibility shim for any stale call sites during Flask reload.
+    return {}
+
+
 def _build_parser_review_payload(document_result: dict) -> dict:
     document_result = deepcopy(document_result or {})
     parser_result = document_result.get("parser_result") or {}
     blocks = sorted(parser_result.get("document_blocks") or [], key=_review_block_sort_key)
     block_assets = parser_result.get("block_assets") or []
     diagram_details = parser_result.get("diagram_block_details") or []
+    metadata = parser_result.get("metadata") or {}
+    anchor_registry = (metadata.get("mineru_anchor_registry") or {}) if isinstance(metadata, dict) else {}
 
     assets_by_block = {}
     for asset in block_assets:
@@ -1295,6 +1456,7 @@ def _build_parser_review_payload(document_result: dict) -> dict:
         normalized = block.get("normalized_content") or {}
         block_bbox = block.get("bbox") or {}
         source_location = block.get("source_location") or {}
+        source_anchor_key = _extract_block_source_anchor_key(block)
         counts[block_type] = counts.get(block_type, 0) + 1
 
         item = {
@@ -1311,10 +1473,13 @@ def _build_parser_review_payload(document_result: dict) -> dict:
             "embedding_status": block.get("embedding_status"),
             "processing_status": block.get("processing_status"),
             "linked_context": block.get("linked_context") or {},
-            "preview_anchor": {
-                "page_index": block.get("source_unit_index"),
-                "bbox": block_bbox or source_location.get("bbox") or {},
-            },
+            "source_anchor_key": source_anchor_key,
+            "preview_anchor": _resolve_preview_anchor(
+                block,
+                anchor_registry,
+                block_bbox,
+                source_location.get("bbox"),
+            ),
             "normalized_content": {},
         }
 
@@ -1365,18 +1530,17 @@ def _build_parser_review_payload(document_result: dict) -> dict:
                 "retrieval_text": normalized.get("retrieval_text") or "",
             }
             item["preview_anchor"] = {
-                "page_index": block.get("source_unit_index"),
-                "bbox": (
-                    block_bbox
-                    or ((detail.get("image_region") or {}).get("bbox") or {})
-                    or source_location.get("bbox")
-                    or {}
+                **_resolve_preview_anchor(
+                    block,
+                    anchor_registry,
+                    block_bbox,
+                    ((detail.get("image_region") or {}).get("bbox") or {}),
+                    source_location.get("bbox"),
                 ),
             }
 
         review_blocks.append(item)
 
-    metadata = parser_result.get("metadata") or {}
     upload_path = str(document_result.get("upload_path") or "").strip()
     preview_url = f"/uploads/preview/{quote(upload_path, safe='/')}" if upload_path else ""
     upload_url = f"/uploads/{quote(upload_path, safe='/')}" if upload_path else ""
@@ -1487,7 +1651,9 @@ def get_conversation_extracted_results(user_id, conversation_id) -> list:
 def _google_redirect_uri() -> str:
     configured = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip()
     if configured:
-        return configured
+        configured_base = configured.rsplit("/api/auth/google/callback", 1)[0]
+        preferred_base = _preferred_external_base_url(configured_base)
+        return urljoin(preferred_base.rstrip("/") + "/", "api/auth/google/callback")
     return build_external_url("/api/auth/google/callback")
 
 
@@ -2928,9 +3094,15 @@ def api_conversation_retrieve(conversation_id):
             'error': 'Could not embed retrieval query.',
             'details': exc.to_dict(),
         }), 503
-    except Exception:
+    except Exception as exc:
         logger.exception("Conversation retrieval failed conversation_id=%s", conversation_id)
-        return jsonify({'error': 'Unable to retrieve context right now.'}), 500
+        error_payload = {'error': 'Unable to retrieve context right now.'}
+        if app.debug:
+            error_payload['details'] = {
+                'exception_type': type(exc).__name__,
+                'message': str(exc),
+            }
+        return jsonify(error_payload), 500
 
 
 @app.route('/api/conversations/<conversation_id>/messages', methods=['POST'])
@@ -2975,9 +3147,15 @@ def api_conversation_messages(conversation_id):
             'error': 'Could not embed the query for retrieval.',
             'details': exc.to_dict(),
         }), 503
-    except Exception:
+    except Exception as exc:
         logger.exception("Conversation message generation failed conversation_id=%s", conversation_id)
-        return jsonify({'error': 'Unable to send your message right now.'}), 500
+        error_payload = {'error': 'Unable to send your message right now.'}
+        if app.debug:
+            error_payload['details'] = {
+                'exception_type': type(exc).__name__,
+                'message': str(exc),
+            }
+        return jsonify(error_payload), 500
 
 
 @app.route('/api/documents/<document_id>/parser-results', methods=['GET'])

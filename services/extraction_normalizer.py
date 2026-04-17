@@ -264,6 +264,7 @@ class BlockNormalizationService:
             linked_context=LinkedContext(),
             source_metadata={
                 **parser_metadata,
+                "source_anchor_key": metadata.get("source_anchor_key"),
                 "segment_metadata": metadata,
                 "raw_segment_id": segment.get("segment_id"),
             },
@@ -416,6 +417,7 @@ class TableNormalizationService:
             linked_context=LinkedContext(),
             source_metadata={
                 **parser_metadata,
+                "source_anchor_key": metadata.get("source_anchor_key"),
                 "segment_metadata": metadata,
                 "raw_segment_id": segment.get("segment_id"),
             },
@@ -501,6 +503,7 @@ class TableNormalizationService:
             linked_context=LinkedContext(),
             source_metadata={
                 **parser_metadata,
+                "source_anchor_key": metadata.get("source_anchor_key"),
                 "segment_metadata": metadata,
                 "raw_segment_ids": [segment.get("segment_id") for segment in ordered_segments],
             },
@@ -623,6 +626,7 @@ class DiagramPreparationService:
             linked_context=LinkedContext(),
             source_metadata={
                 **parser_metadata,
+                "source_anchor_key": metadata.get("source_anchor_key"),
                 "asset_metadata": metadata,
                 "raw_asset_id": asset.get("asset_id"),
                 "asset_storage_path": storage_path,
@@ -693,6 +697,7 @@ class DiagramPreparationService:
             linked_context=LinkedContext(),
             source_metadata={
                 **parser_metadata,
+                "source_anchor_key": metadata.get("source_anchor_key"),
                 "segment_metadata": metadata,
                 "data_uri_present": True,
             },
@@ -1287,6 +1292,9 @@ def _bbox_from_value(value: Any) -> BoundingBox | None:
             x1=_safe_float(value.get("x1")),
             y1=_safe_float(value.get("y1")),
             coordinate_space=str(value.get("coordinate_space") or "normalized_0_1"),
+            page_width=_safe_float(value.get("page_width")),
+            page_height=_safe_float(value.get("page_height")),
+            origin=str(value.get("origin") or "top_left"),
         )
     if isinstance(value, (list, tuple)) and len(value) == 4:
         return BoundingBox(

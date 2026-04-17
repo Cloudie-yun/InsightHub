@@ -36,6 +36,9 @@ class BoundingBox:
     x1: float | None = None
     y1: float | None = None
     coordinate_space: str = "normalized_0_1"
+    page_width: float | None = None
+    page_height: float | None = None
+    origin: str = "top_left"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

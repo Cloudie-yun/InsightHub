@@ -7,22 +7,75 @@
     const ns = window.ChatPage;
     if (!ns) return;
 
-    const { chatMessages, promptRail, promptRailNodes } = ns.elements;
+    const {
+        chatMessages,
+        chatMessageList,
+        promptRail,
+        promptRailNodes,
+    } = ns.elements;
     const state = ns.state;
     const constants = ns.constants;
+    let railTooltip = null;
+
+    const ensurePromptRailTooltip = () => {
+        if (!promptRail || railTooltip) return railTooltip;
+        railTooltip = document.createElement("div");
+        railTooltip.className = "prompt-rail-tooltip hidden";
+        promptRail.appendChild(railTooltip);
+        return railTooltip;
+    };
+
+    ns.hidePromptRailTooltip = () => {
+        if (!railTooltip) return;
+        railTooltip.classList.add("hidden");
+        railTooltip.innerHTML = "";
+    };
+
+    ns.showPromptRailTooltip = (button) => {
+        if (!promptRail || !button) return;
+        const tooltip = ensurePromptRailTooltip();
+        if (!tooltip) return;
+
+        const promptIndex = button.dataset.promptIndex || "";
+        const promptText = button.dataset.promptPreview || button.title || "";
+        tooltip.innerHTML = `
+            <span class="prompt-rail-tooltip-index">Prompt ${ns.escapeHtml(promptIndex)}</span>
+            <span class="prompt-rail-tooltip-preview">${ns.escapeHtml(promptText)}</span>
+        `;
+        tooltip.classList.remove("hidden", "prompt-rail-tooltip-left", "prompt-rail-tooltip-right");
+        tooltip.classList.add(state.dockSide === "right" ? "prompt-rail-tooltip-right" : "prompt-rail-tooltip-left");
+
+        const railRect = promptRail.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        const topPx = Math.max(8, Math.min(railRect.height - 8, (buttonRect.top - railRect.top) + (buttonRect.height / 2)));
+        tooltip.style.top = `${topPx}px`;
+    };
 
     ns.updatePromptRailDockSide = () => {
         if (!promptRail) return;
-        promptRail.classList.remove("left-3", "right-3");
-        promptRail.classList.add(state.dockSide === "right" ? "left-3" : "right-3");
+        promptRail.classList.remove("order-first", "order-last", "prompt-rail-left", "prompt-rail-right");
+        if (state.dockSide === "right") {
+            promptRail.classList.add("order-first", "prompt-rail-left");
+            return;
+        }
+        promptRail.classList.add("order-last", "prompt-rail-right");
     };
 
     ns.setActivePromptNode = (promptId) => {
         state.promptNodeButtons.forEach((button, id) => {
             const isActive = id === promptId;
             button.classList.toggle("active", isActive);
-            if (isActive) {
-                button.scrollIntoView({ block: "nearest" });
+            if (isActive && !state.promptRailPointerInside && promptRailNodes) {
+                const nodeTop = button.offsetTop;
+                const nodeBottom = nodeTop + button.offsetHeight;
+                const viewTop = promptRailNodes.scrollTop;
+                const viewBottom = viewTop + promptRailNodes.clientHeight;
+
+                if (nodeTop < viewTop) {
+                    promptRailNodes.scrollTop = nodeTop;
+                } else if (nodeBottom > viewBottom) {
+                    promptRailNodes.scrollTop = nodeBottom - promptRailNodes.clientHeight;
+                }
             }
         });
     };
@@ -48,10 +101,12 @@
         }
     };
 
-    ns.initializePromptRail = () => {
-        if (!chatMessages || !promptRailNodes || !promptRail) return;
+    ns.positionPromptRailNodes = () => {};
 
-        state.promptAnchors = Array.from(chatMessages.querySelectorAll("[data-prompt-id]"));
+    ns.initializePromptRail = () => {
+        if (!chatMessages || !chatMessageList || !promptRailNodes || !promptRail) return;
+
+        state.promptAnchors = Array.from(chatMessageList.querySelectorAll("[data-prompt-id]"));
         if (!state.promptAnchors.length) {
             promptRail.classList.add("hidden");
             return;
@@ -67,14 +122,20 @@
             const nodeButton = document.createElement("button");
             nodeButton.type = "button";
             nodeButton.className = "prompt-rail-node";
-            nodeButton.textContent = `${index + 1}`;
             nodeButton.dataset.promptId = promptId;
+            nodeButton.dataset.promptIndex = String(index + 1);
+            nodeButton.dataset.promptPreview = promptText;
             nodeButton.title = promptText;
             nodeButton.setAttribute("aria-label", `Jump to prompt ${index + 1}`);
+
             nodeButton.addEventListener("click", () => {
                 anchor.scrollIntoView({ behavior: "smooth", block: "center" });
                 ns.setActivePromptNode(promptId);
             });
+            nodeButton.addEventListener("mouseenter", () => ns.showPromptRailTooltip(nodeButton));
+            nodeButton.addEventListener("mouseleave", () => ns.hidePromptRailTooltip());
+            nodeButton.addEventListener("focus", () => ns.showPromptRailTooltip(nodeButton));
+            nodeButton.addEventListener("blur", () => ns.hidePromptRailTooltip());
             promptRailNodes.appendChild(nodeButton);
             state.promptNodeButtons.set(promptId, nodeButton);
         });
@@ -91,7 +152,28 @@
             state.promptRailBound = true;
         }
 
+        if (!state.promptRailPointerBound) {
+            promptRail.addEventListener("mouseenter", () => {
+                state.promptRailPointerInside = true;
+            });
+            promptRail.addEventListener("mouseleave", () => {
+                state.promptRailPointerInside = false;
+            });
+            state.promptRailPointerBound = true;
+        }
+
+        if (!state.promptRailResizeBound) {
+            window.addEventListener("resize", () => {
+                window.requestAnimationFrame(() => {
+                    ns.positionPromptRailNodes();
+                    ns.syncActivePromptNodeFromScroll();
+                });
+            });
+            state.promptRailResizeBound = true;
+        }
+
         ns.updatePromptRailDockSide();
+        ns.positionPromptRailNodes();
         ns.syncActivePromptNodeFromScroll();
     };
 }());

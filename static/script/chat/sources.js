@@ -55,12 +55,19 @@
         return Array.from(sourcesDetailedList.querySelectorAll('[data-source-select-btn="true"]'));
     };
 
-    ns.getSelectedSourceDocumentIds = () => (
+    ns.getSelectedSourceDocumentIds = () => {
+        const selectedIds = new Set();
         ns.getSourceSelectButtons()
             .filter((button) => button.dataset.selected === "true")
-            .map((button) => String(button.closest("[data-doc-id]")?.dataset.docId || "").trim())
-            .filter(Boolean)
-    );
+            .forEach((button) => {
+                const sourceNode = button.closest("[data-doc-id]");
+                if (!sourceNode || !ns.isSourceNodeVisible(sourceNode)) return;
+                const documentId = String(sourceNode.dataset.docId || "").trim();
+                if (!documentId) return;
+                selectedIds.add(documentId);
+            });
+        return Array.from(selectedIds);
+    };
 
     ns.isSourceNodeVisible = (node) => {
         if (!node) return false;
