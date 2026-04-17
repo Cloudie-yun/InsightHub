@@ -45,12 +45,16 @@ from services.extraction_store import (
 )
 from services.chat_answer_service import ChatAnswerService, ChatAnswerServiceError
 from services.retrieval_service import RetrievalService, RetrievalServiceError
+from services.document_summary_service import DocumentSummaryService
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
     get_quota_project_id,
     get_task_models,
     load_usage_state,
 )
+
+
+document_summary_service = DocumentSummaryService()
 
 
 # ===========================================================================
@@ -2973,6 +2977,44 @@ def api_document_parser_results(document_id):
         return jsonify({'error': 'Document not found.'}), 404
 
     return jsonify(_build_parser_review_payload(document_result)), 200
+
+
+@app.route('/api/documents/<document_id>/summary', methods=['GET'])
+def api_document_summary(document_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to view document summaries.'}), 401
+
+    conversation_id = (request.args.get("conversation_id") or "").strip() or None
+    summary_payload = document_summary_service.get_document_summary_payload(
+        user_id=user_id,
+        document_id=document_id,
+        conversation_id=conversation_id,
+    )
+    if not summary_payload:
+        return jsonify({'error': 'Document not found.'}), 404
+
+    return jsonify(summary_payload), 200
+
+
+@app.route('/api/conversations/<conversation_id>/summary', methods=['GET'])
+def api_conversation_summary(conversation_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in to view conversation summaries.'}), 401
+
+    conversation_id = (conversation_id or "").strip()
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+
+    summary_payload = document_summary_service.get_conversation_summary_payload(
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+    if not summary_payload:
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    return jsonify(summary_payload), 200
 
 
 @app.route('/api/documents/<document_id>/parser-review', methods=['POST'])
