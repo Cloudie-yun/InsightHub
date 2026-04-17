@@ -22,7 +22,7 @@ WINDOW_TYPES = (WINDOW_TYPE_RPM, WINDOW_TYPE_RPD, WINDOW_TYPE_TPM)
 DEFAULT_GEMINI_EMBED_MODELS = ["gemini-embedding-001", "gemini-embedding-002"]
 DEFAULT_GEMINI_VISION_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
 DEFAULT_GEMINI_TEXT_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
-DEFAULT_RPD_RESET_TIMEZONE = "Asia/Kuala_Lumpur"
+DEFAULT_RPD_RESET_TIMEZONE = "America/Los_Angeles"
 DEFAULT_MODEL_LIMITS = {
     "gemini-2.5-flash": {"provider": "gemini", "rpm_limit": 5, "tpm_limit": 250_000, "rpd_limit": 20},
     "gemini-embedding-001": {"provider": "gemini", "rpm_limit": 100, "tpm_limit": 30_000, "rpd_limit": 1_000},
