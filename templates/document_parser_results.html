@@ -51,46 +51,76 @@
     <section id="parser-review-layout" class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,46%)]">
         <div class="space-y-4">
             <div class="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div class="flex flex-col gap-3">
-                    <div>
-                        <h2 class="text-lg font-semibold text-slate-900">Document Parsing Results Review</h2>
-                        <p class="text-sm text-slate-500">Each block is shown in source order.</p>
-                    </div>
-                    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div class="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-medium text-slate-600">
-                            <button type="button" data-filter="all" class="review-filter rounded-full bg-white px-3 py-1.5 text-slate-900 shadow-sm">All</button>
-                            <button type="button" data-filter="text" class="review-filter rounded-full px-3 py-1.5">Text</button>
-                            <button type="button" data-filter="table" class="review-filter rounded-full px-3 py-1.5">Tables</button>
-                            <button type="button" data-filter="diagram" class="review-filter rounded-full px-3 py-1.5">Diagrams</button>
+                <div class="flex flex-col gap-6">
+                    <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                        <div class="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-medium text-slate-600 shadow-sm">
+                            <button type="button" data-filter="all" class="review-filter rounded-full bg-white px-5 py-2 text-slate-900 shadow-sm">All</button>
+                            <button type="button" data-filter="text" class="review-filter rounded-full px-5 py-2">Text</button>
+                            <button type="button" data-filter="table" class="review-filter rounded-full px-5 py-2">Tables</button>
+                            <button type="button" data-filter="diagram" class="review-filter rounded-full px-5 py-2">Diagrams</button>
                         </div>
-                        <div id="diagram-actions-panel" class="hidden lg:max-w-[42rem]">
-                            <div class="flex flex-col gap-3 lg:items-end">
-                                <p id="diagram-selection-status" class="text-sm text-slate-500 lg:text-right">Select diagrams to analyze with our backend, use each diagram card's Copy Image button for exact image copy, or copy a detailed external AI prompt.</p>
-                                <div class="flex flex-wrap items-center gap-2 lg:justify-end">
-                                    <button id="analyze-selected-diagrams-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-wand-magic-sparkles"></i>Analyze Selected</button>
-                                    <button id="copy-diagram-prompt-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-copy"></i>Copy AI Prompt</button>
-                                    <button id="clear-diagram-selection-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-eraser"></i>Clear Selection</button>
+                        <p class="text-sm text-slate-500 xl:text-right">Each block is shown in source order.</p>
+                    </div>
+                    <div id="diagram-actions-panel" class="hidden rounded-[1.35rem] border border-slate-200 bg-slate-50/50 px-3 py-3 shadow-sm">
+                        <div class="flex flex-col gap-3">
+                            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                <div class="flex min-w-0 items-center gap-3">
+                                    <h2 class="truncate text-sm font-semibold text-slate-900">Diagram actions</h2>
+                                    <div class="group relative shrink-0">
+                                        <button type="button" class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition hover:border-slate-400 hover:text-slate-700" aria-label="About diagram actions">
+                                            <i class="fa-solid fa-circle-info text-[11px]"></i>
+                                        </button>
+                                        <div class="pointer-events-none absolute left-0 top-full z-20 mt-2 hidden w-64 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] leading-4 text-slate-600 shadow-lg group-hover:block group-focus-within:block">
+                                            Select diagrams to analyze with our backend, use each diagram card's Copy Image button for exact image copy, or copy a detailed external AI prompt.
+                                        </div>
+                                    </div>
                                 </div>
-                                <div id="diagram-model-statuses" class="hidden flex-wrap items-center gap-2 lg:justify-end">
-                                    {% set usage = parser_document.diagram_analysis_usage or {} %}
-                                    {% for model in usage.model_statuses or [] %}
-                                        {% set status_label = model.status_label or "untracked" %}
-                                        {% set is_active = usage.active_model and usage.active_model == model.model_name %}
-                                        {% if status_label == "available" %}
-                                            {% set pill_classes = "border-emerald-200 bg-emerald-50 text-emerald-700" %}
-                                        {% elif status_label == "blocked" %}
-                                            {% set pill_classes = "border-rose-200 bg-rose-50 text-rose-700" %}
-                                        {% else %}
-                                            {% set pill_classes = "border-slate-200 bg-slate-50 text-slate-600" %}
-                                        {% endif %}
-                                        <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium {{ pill_classes }}" title="{{ model.model_name }}: {{ status_label }}">
-                                            <span class="font-semibold">{{ model.model_name }}</span>
-                                            <span class="uppercase tracking-wide">{{ status_label }}</span>
-                                            {% if is_active %}
-                                                <span class="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">active</span>
+                                <div class="flex items-center gap-2 self-start lg:self-auto">
+                                    <button id="analyze-selected-diagrams-btn" type="button" class="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-xs font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60">
+                                        <i class="fa-solid fa-check text-sm"></i>
+                                        <span>Analyze</span>
+                                    </button>
+                                    <div class="h-6 w-px bg-slate-200"></div>
+                                    <button id="copy-diagram-prompt-btn" type="button" class="group inline-flex h-9 w-9 items-center justify-center gap-1 overflow-hidden rounded-xl border border-slate-300 bg-white text-xs font-medium text-slate-700 transition-all duration-200 hover:w-[6.5rem] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60" title="Copy AI Prompt">
+                                        <i class="fa-regular fa-copy shrink-0 text-sm"></i>
+                                        <span class="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 group-hover:max-w-[4rem] group-hover:opacity-100">Copy</span>
+                                    </button>
+                                    <button id="clear-diagram-selection-btn" type="button" class="group inline-flex h-9 w-9 items-center justify-center gap-1 overflow-hidden rounded-xl border border-slate-300 bg-white text-xs font-medium text-slate-700 transition-all duration-200 hover:w-[6rem] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60" title="Clear Selection">
+                                        <i class="fa-solid fa-xmark shrink-0 text-sm"></i>
+                                        <span class="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 group-hover:max-w-[3.5rem] group-hover:opacity-100">Clear</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <p id="diagram-selection-status" class="hidden text-xs text-slate-500">Select diagrams to analyze with our backend, use each diagram card's Copy Image button for exact image copy, or copy a detailed external AI prompt.</p>
+                            <div id="diagram-model-statuses" class="hidden border-t border-slate-200 pt-3">
+                                {% set usage = parser_document.diagram_analysis_usage or {} %}
+                                <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:gap-4">
+                                    <div class="pt-1 text-xs font-medium text-slate-700">Models</div>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        {% for model in usage.model_statuses or [] %}
+                                            {% set status_label = model.status_label or "untracked" %}
+                                            {% set is_active = usage.active_model and usage.active_model == model.model_name %}
+                                            {% if status_label == "available" %}
+                                                {% set pill_classes = "border-emerald-200 bg-emerald-50 text-emerald-700" %}
+                                                {% set dot_classes = "bg-emerald-500" %}
+                                            {% elif status_label == "blocked" %}
+                                                {% set pill_classes = "border-rose-200 bg-rose-50 text-rose-700" %}
+                                                {% set dot_classes = "bg-rose-500" %}
+                                            {% else %}
+                                                {% set pill_classes = "border-slate-300 bg-white text-slate-600" %}
+                                                {% set dot_classes = "bg-slate-400" %}
                                             {% endif %}
-                                        </span>
-                                    {% endfor %}
+                                            <span class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium {{ pill_classes }}" title="{{ model.model_name }}: {{ status_label }}">
+                                                <span class="h-2 w-2 rounded-full {{ dot_classes }}"></span>
+                                                <span class="font-semibold">{{ model.model_name }}</span>
+                                                {% if is_active %}
+                                                    <span class="rounded-full bg-sky-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700">active</span>
+                                                {% else %}
+                                                    <span class="text-slate-500">{{ status_label }}</span>
+                                                {% endif %}
+                                            </span>
+                                        {% endfor %}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -254,11 +284,13 @@ let initialParserDocument = {{ parser_document|tojson }};
     const showCopyDiagramPromptFeedback = () => {
         if (!copyDiagramPromptBtn) return;
         if (copyDiagramPromptFeedbackTimer) window.clearTimeout(copyDiagramPromptFeedbackTimer);
-        copyDiagramPromptBtn.innerHTML = `<i class="fa-solid fa-check"></i>Copied to clipboard!`;
+        copyDiagramPromptBtn.innerHTML = `<i class="fa-solid fa-check shrink-0 text-sm"></i><span class="max-w-[3.75rem] overflow-hidden whitespace-nowrap opacity-100 transition-all duration-200">Copied</span>`;
+        copyDiagramPromptBtn.title = "Copied";
         copyDiagramPromptBtn.classList.add("border-emerald-200", "bg-emerald-50", "text-emerald-700");
         copyDiagramPromptBtn.classList.remove("border-slate-200", "bg-white", "text-slate-700");
         copyDiagramPromptFeedbackTimer = window.setTimeout(() => {
-            copyDiagramPromptBtn.innerHTML = `<i class="fa-regular fa-copy"></i>Copy AI Prompt`;
+            copyDiagramPromptBtn.innerHTML = `<i class="fa-regular fa-copy shrink-0 text-sm"></i><span class="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 group-hover:max-w-[4rem] group-hover:opacity-100">Copy</span>`;
+            copyDiagramPromptBtn.title = "Copy AI Prompt";
             copyDiagramPromptBtn.classList.remove("border-emerald-200", "bg-emerald-50", "text-emerald-700");
             copyDiagramPromptBtn.classList.add("border-slate-200", "bg-white", "text-slate-700");
             copyDiagramPromptFeedbackTimer = null;
@@ -319,23 +351,34 @@ let initialParserDocument = {{ parser_document|tojson }};
         if (diagramModelStatuses) {
             const statuses = Array.isArray(usage?.model_statuses) ? usage.model_statuses : [];
             diagramModelStatuses.classList.toggle("hidden", !statuses.length);
-            diagramModelStatuses.classList.toggle("flex", !!statuses.length);
             if (!statuses.length) {
                 diagramModelStatuses.innerHTML = "";
             } else {
-                diagramModelStatuses.innerHTML = statuses.map((status) => {
+                diagramModelStatuses.innerHTML = `
+                    <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:gap-4">
+                        <div class="pt-1 text-xs font-medium text-slate-700">Models</div>
+                        <div class="flex flex-wrap items-center gap-2">
+                        ${statuses.map((status) => {
                     const modelName = esc(status?.model_name || "unknown");
                     const label = String(status?.status_label || "untracked").toLowerCase();
                     const pillClasses = label === "available"
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                         : label === "blocked"
                             ? "border-rose-200 bg-rose-50 text-rose-700"
-                            : "border-slate-200 bg-slate-50 text-slate-600";
+                            : "border-slate-300 bg-white text-slate-600";
+                    const dotClasses = label === "available"
+                        ? "bg-emerald-500"
+                        : label === "blocked"
+                            ? "bg-rose-500"
+                            : "bg-slate-400";
                     const activeTag = usage?.active_model && status?.model_name === usage.active_model
-                        ? `<span class="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">active</span>`
-                        : "";
-                    return `<span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${pillClasses}" title="${modelName}: ${esc(label)}"><span class="font-semibold">${modelName}</span><span class="uppercase tracking-wide">${esc(label)}</span>${activeTag}</span>`;
-                }).join("");
+                        ? `<span class="rounded-full bg-sky-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700">active</span>`
+                        : `<span class="text-slate-500">${esc(label)}</span>`;
+                    return `<span class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium ${pillClasses}" title="${modelName}: ${esc(label)}"><span class="h-2 w-2 rounded-full ${dotClasses}"></span><span class="font-semibold">${modelName}</span>${activeTag}</span>`;
+                }).join("")}
+                        </div>
+                    </div>
+                `;
             }
         }
     };

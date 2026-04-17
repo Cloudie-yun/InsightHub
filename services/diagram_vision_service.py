@@ -1062,7 +1062,7 @@ def run_diagram_analysis_for_document(
     project_id = get_quota_project_id()
     outcome = _empty_analysis_result()
 
-    fetch_statuses = ["pending_vision_analysis", "failed", "skipped"] if force_analyze else None
+    fetch_statuses = ["pending_vision_analysis", "failed", "skipped", "completed"] if force_analyze else None
     for item in fetch_pending_diagram_inputs(
         cur,
         document_id=document_id,

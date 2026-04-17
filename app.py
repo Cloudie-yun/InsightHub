@@ -596,18 +596,22 @@ def _load_latest_diagram_analysis_error(cur, block_ids: list[str]) -> str:
         return ""
     cur.execute(
         """
-        SELECT error_message
+        SELECT status, error_message
         FROM diagram_block_analysis_runs
         WHERE block_id = ANY(%s::uuid[])
-          AND status = 'failed'
-          AND COALESCE(error_message, '') <> ''
         ORDER BY started_at DESC
         LIMIT 1
         """,
         (normalized_block_ids,),
     )
     row = cur.fetchone()
-    return str((row or [""])[0] or "").strip()
+    if not row:
+        return ""
+    status = str(row[0] or "").strip().lower()
+    error_message = str(row[1] or "").strip()
+    if status != "failed" or not error_message:
+        return ""
+    return error_message
 
 
 def get_conversation_title(user_id, conversation_id) -> str:
