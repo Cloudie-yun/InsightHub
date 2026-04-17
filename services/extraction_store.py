@@ -9,6 +9,7 @@ from services.document_block_store import (
     save_document_blocks,
 )
 from services.extraction_normalizer import normalize_extraction_result
+from services.summary_jobs import enqueue_document_summary_job
 
 
 PARSER_VERSION = "1.0.0"
@@ -301,11 +302,24 @@ def save_document_extraction(cur, document_id, extraction_payload):
             ),
         )
 
+    document_blocks = extraction_payload.get("document_blocks") or []
     save_document_blocks(
         cur,
         document_id=document_id,
-        document_blocks=extraction_payload.get("document_blocks") or [],
+        document_blocks=document_blocks,
         block_assets=extraction_payload.get("block_assets") or [],
+    )
+
+    enqueue_document_summary_job(
+        cur,
+        document_id=str(document_id),
+        conversation_id=(
+            str(document_blocks[0].get("conversation_id"))
+            if document_blocks and document_blocks[0].get("conversation_id")
+            else None
+        ),
+        parser_version=extraction_payload.get("parser_version"),
+        document_blocks=document_blocks,
     )
 
 
