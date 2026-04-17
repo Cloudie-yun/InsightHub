@@ -404,6 +404,152 @@ def _compose_upload_conversation_title(file_names: list[str]) -> str:
     return "New conversation"
 
 
+NEW_CONVERSATION_TITLE = "New conversation"
+CONVERSATION_TITLE_MAX_LENGTH = 120
+CONVERSATION_TITLE_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "by", "for", "from", "how", "in", "into",
+    "is", "of", "on", "or", "paper", "study", "the", "to", "using", "with",
+}
+
+
+def _normalize_conversation_title_candidate(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(value or "").replace("_", " ").replace("-", " ")).strip()
+    return normalized[:CONVERSATION_TITLE_MAX_LENGTH]
+
+
+def _title_from_filename(file_name: str) -> str:
+    stem = Path(str(file_name or "").strip()).stem
+    return _normalize_conversation_title_candidate(stem)
+
+
+def _extract_document_title_candidate(metadata: dict | None, original_filename: str) -> str:
+    if isinstance(metadata, dict):
+        canonical = metadata.get("canonical") if isinstance(metadata.get("canonical"), dict) else {}
+        for key in ("title", "document_title"):
+            candidate = _normalize_conversation_title_candidate(canonical.get(key) or metadata.get(key) or "")
+            if candidate:
+                return candidate
+    return _title_from_filename(original_filename)
+
+
+def _derive_conversation_title_from_documents(documents: list[dict]) -> str:
+    candidates: list[str] = []
+    for payload in documents:
+        candidate = _extract_document_title_candidate(
+            payload.get("metadata") if isinstance(payload, dict) else None,
+            str(payload.get("original_filename") or "") if isinstance(payload, dict) else "",
+        )
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    if not candidates:
+        return NEW_CONVERSATION_TITLE
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) == 2:
+        return _normalize_conversation_title_candidate(f"{candidates[0]} + {candidates[1]}")
+
+    token_counts: dict[str, int] = {}
+    token_labels: dict[str, str] = {}
+    for candidate in candidates:
+        seen_tokens: set[str] = set()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9+.-]{2,}", candidate):
+            normalized_token = token.lower()
+            if normalized_token in CONVERSATION_TITLE_STOPWORDS:
+                continue
+            if normalized_token in seen_tokens:
+                continue
+            seen_tokens.add(normalized_token)
+            token_counts[normalized_token] = token_counts.get(normalized_token, 0) + 1
+            token_labels.setdefault(normalized_token, token)
+
+    ranked_tokens = sorted(
+        token_counts.items(),
+        key=lambda item: (-item[1], -len(item[0]), item[0]),
+    )
+    topic_tokens = [token_labels[token] for token, count in ranked_tokens if count >= 2][:3]
+    if topic_tokens:
+        return _normalize_conversation_title_candidate(" / ".join(topic_tokens))
+
+    return _normalize_conversation_title_candidate(f"{candidates[0]} + {len(candidates) - 1} more")
+
+
+def _maybe_refresh_conversation_title(cur, conversation_id: str) -> str | None:
+    if not conversation_id:
+        return None
+
+    cur.execute(
+        """
+        SELECT title
+        FROM conversations
+        WHERE conversation_id = %s
+        """,
+        (conversation_id,),
+    )
+    conversation_row = cur.fetchone()
+    if not conversation_row:
+        return None
+
+    current_title = str(conversation_row[0] or "").strip()
+    if current_title and current_title.lower() != NEW_CONVERSATION_TITLE.lower():
+        return None
+
+    cur.execute(
+        """
+        SELECT
+            d.original_filename,
+            de.parser_status,
+            de.metadata
+        FROM conversation_documents cd
+        JOIN documents d ON d.document_id = cd.document_id
+        LEFT JOIN document_extractions de ON de.document_id = cd.document_id
+        WHERE cd.conversation_id = %s
+          AND d.is_deleted = FALSE
+        ORDER BY d.created_at ASC, d.document_id ASC
+        """,
+        (conversation_id,),
+    )
+    document_rows = cur.fetchall()
+    if not document_rows:
+        return None
+
+    document_payloads: list[dict] = []
+    for original_filename, parser_status, metadata in document_rows:
+        normalized_status = str(parser_status or "pending").strip().lower()
+        if normalized_status == "pending":
+            return None
+        document_payloads.append(
+            {
+                "original_filename": str(original_filename or ""),
+                "parser_status": normalized_status,
+                "metadata": metadata if isinstance(metadata, dict) else {},
+            }
+        )
+
+    completed_payloads = [
+        payload for payload in document_payloads
+        if payload.get("parser_status") == "success"
+    ]
+    if not completed_payloads:
+        return None
+
+    next_title = _derive_conversation_title_from_documents(completed_payloads)
+    if not next_title or next_title == NEW_CONVERSATION_TITLE:
+        return None
+
+    cur.execute(
+        """
+        UPDATE conversations
+        SET title = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE conversation_id = %s
+          AND COALESCE(NULLIF(title, ''), %s) = %s
+        """,
+        (next_title, conversation_id, NEW_CONVERSATION_TITLE, NEW_CONVERSATION_TITLE),
+    )
+    return next_title if cur.rowcount else None
+
+
 def _demo_chat_messages() -> list[dict]:
     return [
         {
@@ -3083,6 +3229,7 @@ def _run_document_parse_job(job: dict) -> None:
                 document_id=document_id,
                 extraction_payload=extraction_payload,
             )
+            _maybe_refresh_conversation_title(cur, str(conversation_id or ""))
         conn.commit()
         _schedule_embedding_autorun(f"document_parse:{document_id}")
     except Exception as exc:
@@ -3118,6 +3265,7 @@ def _run_document_parse_job(job: dict) -> None:
                     document_id=document_id,
                     extraction_payload=failed_payload,
                 )
+                _maybe_refresh_conversation_title(fallback_cur, str(conversation_id or ""))
             fallback_conn.commit()
         except Exception:
             if fallback_conn is not None:

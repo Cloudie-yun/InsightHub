@@ -52,13 +52,16 @@
     };
 
     ns.updatePromptRailDockSide = () => {
-        if (!promptRail) return;
+        if (!promptRail || !chatMessages) return;
         promptRail.classList.remove("order-first", "order-last", "prompt-rail-left", "prompt-rail-right");
+        chatMessages.classList.remove("prompt-rail-space-left", "prompt-rail-space-right");
         if (state.dockSide === "right") {
             promptRail.classList.add("order-first", "prompt-rail-left");
+            chatMessages.classList.add("prompt-rail-space-left");
             return;
         }
         promptRail.classList.add("order-last", "prompt-rail-right");
+        chatMessages.classList.add("prompt-rail-space-right");
     };
 
     ns.setActivePromptNode = (promptId) => {
@@ -109,6 +112,7 @@
         state.promptAnchors = Array.from(chatMessageList.querySelectorAll("[data-prompt-id]"));
         if (!state.promptAnchors.length) {
             promptRail.classList.add("hidden");
+            chatMessages.classList.remove("prompt-rail-space-left", "prompt-rail-space-right");
             return;
         }
 
