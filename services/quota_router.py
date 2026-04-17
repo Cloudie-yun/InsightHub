@@ -5,8 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-
-from psycopg2.extras import Json
+from zoneinfo import ZoneInfo
 
 from db import get_db_connection
 
@@ -23,6 +22,15 @@ WINDOW_TYPES = (WINDOW_TYPE_RPM, WINDOW_TYPE_RPD, WINDOW_TYPE_TPM)
 DEFAULT_GEMINI_EMBED_MODELS = ["gemini-embedding-001", "gemini-embedding-002"]
 DEFAULT_GEMINI_VISION_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
 DEFAULT_GEMINI_TEXT_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
+DEFAULT_RPD_RESET_TIMEZONE = "Asia/Kuala_Lumpur"
+DEFAULT_MODEL_LIMITS = {
+    "gemini-2.5-flash": {"provider": "gemini", "rpm_limit": 5, "tpm_limit": 250_000, "rpd_limit": 20},
+    "gemini-embedding-001": {"provider": "gemini", "rpm_limit": 100, "tpm_limit": 30_000, "rpd_limit": 1_000},
+    "gemini-3-flash": {"provider": "gemini", "rpm_limit": 5, "tpm_limit": 250_000, "rpd_limit": 20},
+    "gemini-3.1-flash-lite": {"provider": "gemini", "rpm_limit": 15, "tpm_limit": 250_000, "rpd_limit": 500},
+    "gemini-2.5-flash-lite": {"provider": "gemini", "rpm_limit": 10, "tpm_limit": 250_000, "rpd_limit": 20},
+    "gemini-embedding-002": {"provider": "gemini", "rpm_limit": 100, "tpm_limit": 30_000, "rpd_limit": 1_000},
+}
 
 
 class QuotaRouterError(RuntimeError):
@@ -47,8 +55,33 @@ class ModelQuotaWindow:
         return self.is_active and bool(self.last_error_code)
 
 
+@dataclass
+class ModelQuotaLimit:
+    model_name: str
+    provider: str
+    rpm_limit: int | None
+    tpm_limit: int | None
+    rpd_limit: int | None
+    is_active: bool = True
+
+    def limit_for(self, window_type: str) -> int | None:
+        return {
+            WINDOW_TYPE_RPM: self.rpm_limit,
+            WINDOW_TYPE_TPM: self.tpm_limit,
+            WINDOW_TYPE_RPD: self.rpd_limit,
+        }.get(window_type)
+
+
 def get_quota_project_id() -> str:
     return (os.environ.get("QUOTA_PROJECT_ID") or "default").strip() or "default"
+
+
+def get_rpd_reset_timezone() -> ZoneInfo:
+    raw_name = (os.environ.get("QUOTA_RPD_RESET_TIMEZONE") or DEFAULT_RPD_RESET_TIMEZONE).strip()
+    try:
+        return ZoneInfo(raw_name)
+    except Exception:
+        return ZoneInfo(DEFAULT_RPD_RESET_TIMEZONE)
 
 
 def get_task_models(task_type: str, *, fallback_model: str | None = None) -> list[str]:
@@ -74,17 +107,63 @@ def pick_available_model(
     project_id = project_id or get_quota_project_id()
     models = get_task_models(task_type, fallback_model=fallback_model)
     excluded = {str(model).strip() for model in (excluded_models or []) if str(model).strip()}
+    limits = load_model_limits(model_names=models)
     states = load_usage_state(project_id=project_id, model_names=models)
 
     for model in models:
         if model in excluded:
             continue
         model_windows = states.get(model, {})
-        if any(window.is_exhausted for window in model_windows.values()):
+        if _is_model_exhausted(model_windows=model_windows, model_limit=limits.get(model)):
             continue
         return model
 
     raise QuotaRouterError(f"No compatible model is currently available for task_type={task_type}.")
+
+
+def load_model_limits(*, model_names: list[str]) -> dict[str, ModelQuotaLimit]:
+    if not model_names:
+        return {}
+
+    limits: dict[str, ModelQuotaLimit] = {}
+    for model_name in model_names:
+        default_limit = _build_limit_from_defaults(model_name)
+        if default_limit is not None:
+            limits[model_name] = default_limit
+
+    conn = get_db_connection()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    model_name,
+                    provider,
+                    rpm_limit,
+                    tpm_limit,
+                    rpd_limit,
+                    is_active
+                FROM quota_limits
+                WHERE model_name = ANY(%s)
+                """,
+                (model_names,),
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return limits
+    finally:
+        conn.close()
+
+    for row in rows:
+        limits[row[0]] = ModelQuotaLimit(
+            model_name=row[0],
+            provider=str(row[1] or "gemini"),
+            rpm_limit=_coerce_optional_int(row[2]),
+            tpm_limit=_coerce_optional_int(row[3]),
+            rpd_limit=_coerce_optional_int(row[4]),
+            is_active=bool(row[5]),
+        )
+    return limits
 
 
 def load_usage_state(*, project_id: str, model_names: list[str]) -> dict[str, dict[str, ModelQuotaWindow]]:
@@ -269,6 +348,43 @@ def _build_success_update(
     }
 
 
+def _build_limit_from_defaults(model_name: str) -> ModelQuotaLimit | None:
+    payload = DEFAULT_MODEL_LIMITS.get(str(model_name or "").strip())
+    if not payload:
+        return None
+    return ModelQuotaLimit(
+        model_name=str(model_name).strip(),
+        provider=str(payload.get("provider") or "gemini"),
+        rpm_limit=_coerce_optional_int(payload.get("rpm_limit")),
+        tpm_limit=_coerce_optional_int(payload.get("tpm_limit")),
+        rpd_limit=_coerce_optional_int(payload.get("rpd_limit")),
+        is_active=True,
+    )
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_model_exhausted(*, model_windows: dict[str, ModelQuotaWindow], model_limit: ModelQuotaLimit | None) -> bool:
+    if any(window.is_exhausted for window in model_windows.values()):
+        return True
+    if model_limit is None or not model_limit.is_active:
+        return False
+    for window_type, window in model_windows.items():
+        limit_value = model_limit.limit_for(window_type)
+        if limit_value is None:
+            continue
+        if window.is_active and window.used_count >= limit_value:
+            return True
+    return False
+
+
 def _normalize_headers(headers: dict[str, Any] | None) -> dict[str, str]:
     if not isinstance(headers, dict):
         return {}
@@ -297,8 +413,15 @@ def _resolve_reset_at(
         return now + timedelta(seconds=max(0.0, retry_after_seconds))
 
     if window_type == WINDOW_TYPE_RPD:
-        next_day = now + timedelta(days=1)
-        return datetime(next_day.year, next_day.month, next_day.day, tzinfo=timezone.utc)
+        reset_timezone = get_rpd_reset_timezone()
+        local_now = now.astimezone(reset_timezone)
+        next_local_day = local_now + timedelta(days=1)
+        return datetime(
+            next_local_day.year,
+            next_local_day.month,
+            next_local_day.day,
+            tzinfo=reset_timezone,
+        ).astimezone(timezone.utc)
 
     return now + timedelta(minutes=1)
 

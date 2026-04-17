@@ -291,7 +291,13 @@ body.theme-dark .bg-gray-200,
 body.theme-dark .bg-gray-300 { background-color: #2a2a2a !important; }
 body.theme-dark .bg-brand-50 { background-color: rgba(160, 140, 200, 0.08) !important; }
 body.theme-dark .bg-brand-100 { background-color: rgba(160, 140, 200, 0.13) !important; }
+body.theme-dark .bg-emerald-50 { background-color: rgba(16, 185, 129, 0.12) !important; }
+body.theme-dark .bg-emerald-100 { background-color: rgba(16, 185, 129, 0.18) !important; }
+body.theme-dark .bg-rose-50 { background-color: rgba(244, 63, 94, 0.12) !important; }
+body.theme-dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.12) !important; }
+body.theme-dark .bg-amber-100 { background-color: rgba(245, 158, 11, 0.18) !important; }
 body.theme-dark .bg-purple-100 { background-color: rgba(160, 140, 200, 0.11) !important; }
+body.theme-dark .bg-red-100 { background-color: rgba(200, 100, 100, 0.16) !important; }
 body.theme-dark .bg-red-50 { background-color: rgba(200, 100, 100, 0.09) !important; }
 body.theme-dark .bg-red-400 { background-color: #a03030 !important; }
 body.theme-dark .hover\:bg-gray-50:hover,
@@ -299,14 +305,20 @@ body.theme-dark .hover\:bg-slate-100:hover { background-color: #2c2c2c !importan
 body.theme-dark .hover\:bg-gray-100:hover { background-color: #303030 !important; }
 body.theme-dark .hover\:bg-brand-50:hover { background-color: rgba(160, 140, 200, 0.1) !important; }
 body.theme-dark .hover\:bg-brand-100:hover { background-color: rgba(168, 158, 237, 0.08) !important; }
+body.theme-dark .hover\:bg-red-50:hover { background-color: rgba(200, 100, 100, 0.14) !important; }
 body.theme-dark .border-white { border-color: #252525 !important; }
 body.theme-dark .border-gray-100,
 body.theme-dark .border-slate-100 { border-color: #2e2e2e !important; }
 body.theme-dark .border-gray-200,
 body.theme-dark .border-slate-200 { border-color: #353535 !important; }
+body.theme-dark .border-emerald-200 { border-color: rgba(16, 185, 129, 0.3) !important; }
+body.theme-dark .border-rose-200 { border-color: rgba(244, 63, 94, 0.3) !important; }
+body.theme-dark .border-amber-200 { border-color: rgba(245, 158, 11, 0.3) !important; }
 body.theme-dark .border-brand-100 { border-color: rgba(160, 140, 200, 0.18) !important; }
 body.theme-dark .border-brand-200 { border-color: rgba(160, 140, 200, 0.22) !important; }
 body.theme-dark .border-brand-300 { border-color: rgba(160, 140, 200, 0.28) !important; }
+body.theme-dark .border-l-emerald-500 { border-left-color: #34d399 !important; }
+body.theme-dark .border-l-amber-500 { border-left-color: #fbbf24 !important; }
 body.theme-dark .border-red-500 { border-color: rgba(180, 80, 80, 0.5) !important; }
 body.theme-dark .text-slate-900,
 body.theme-dark .text-gray-900 { color: #d8d8d8 !important; }
@@ -320,6 +332,9 @@ body.theme-dark .text-slate-500,
 body.theme-dark .text-gray-500 { color: #909090 !important; }
 body.theme-dark .text-slate-400,
 body.theme-dark .text-gray-400 { color: #787878 !important; }
+body.theme-dark .text-emerald-700 { color: #6ee7b7 !important; }
+body.theme-dark .text-rose-700 { color: #fda4af !important; }
+body.theme-dark .text-amber-700 { color: #fcd34d !important; }
 body.theme-dark .text-purple-600,
 body.theme-dark .text-brand-700 { color: #b0a0cc !important; }
 body.theme-dark .text-brand-800 { color: #bfb0d8 !important; }
@@ -332,6 +347,7 @@ body.theme-dark .shadow-2xl { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !import
 body.theme-dark button.bg-white,
 body.theme-dark a.bg-white,
 body.theme-dark .bg-white.border { background-color: #2c2c2c !important; }
+body.theme-dark .bg-white\/80 { background-color: rgba(44, 44, 44, 0.86) !important; }
 body.theme-dark button[class*="bg-brand-50"] { color: #bfb0d8 !important; }
 body.theme-dark button[class*="bg-brand-600"] { background-color: #5a4a72 !important; }
 body.theme-dark button[class*="bg-brand-600"]:hover  { background-color: #4e3f66 !important; }
@@ -407,3 +423,14 @@ body.theme-dark .suggestion-chip { background-color: #2c2c2c !important; border-
 body.theme-dark .suggestion-chip:hover { background-color: rgba(160, 140, 200, 0.1) !important; border-color: rgba(160, 140, 200, 0.22) !important; color: #bfb0d8 !important; }
 body.theme-dark .chat-input-container { background-color: #252525 !important; border-color: #353535 !important; }
 body.theme-dark .chat-input-container:focus-within { box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2) !important; }
+body.theme-dark .app-toast {
+  background-color: rgba(37, 37, 37, 0.96) !important;
+  border-color: #353535 !important;
+}
+body.theme-dark .app-toast-title { color: #d8d8d8 !important; }
+body.theme-dark .app-toast-message { color: #adadad !important; }
+body.theme-dark .app-toast-close { color: #909090 !important; }
+body.theme-dark .app-toast-close:hover {
+  background-color: #2e2e2e !important;
+  color: #c9c9c9 !important;
+}

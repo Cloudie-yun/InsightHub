@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mx-auto flex flex-col gap-6 px-4 py-6 md:px-8">
+<div class="mx-auto flex flex-col gap-4 px-4 py-6 md:px-8">
     <header class="parser-review-header sticky top-5 z-20 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-md before:pointer-events-none before:absolute before:-top-5 before:left-0 before:right-0 before:h-5 before:rounded-t-2xl before:bg-slate-50/70 before:backdrop-blur-md before:content-['']">
         <div class="flex flex-col gap-3 px-4 py-4 lg:px-6">
             <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -35,7 +35,7 @@
                     </button>
                 </div>
             </div>
-            <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500">
                     <span id="total-block-count">{{ parser_document.parser_result.review_summary.total_blocks }} items</span>
                     <span>Text <span id="text-block-count" class="font-semibold text-slate-700">{{ parser_document.parser_result.review_summary.text_blocks }}</span></span>
@@ -43,82 +43,78 @@
                     <span>Diagrams <span id="diagram-block-count" class="font-semibold text-slate-700">{{ parser_document.parser_result.review_summary.diagram_blocks }}</span></span>
                     <span id="last-review-value">{% if parser_document.parser_result.metadata.review.updated_at %}Saved {{ parser_document.parser_result.metadata.review.updated_at }}{% else %}Not saved yet{% endif %}</span>
                 </div>
+                <p id="save-status" class="hidden text-sm text-slate-500"></p>
             </div>
-            <p id="save-status" class="min-h-[20px] text-sm text-slate-500"></p>
         </div>
     </header>
 
-<section class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(420px,46%)]">
-        <div class="space-y-5">
+    <section id="parser-review-layout" class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(420px,46%)]">
+        <div class="space-y-4">
             <div class="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-col gap-3">
                     <div>
                         <h2 class="text-lg font-semibold text-slate-900">Document Parsing Results Review</h2>
                         <p class="text-sm text-slate-500">Each block is shown in source order.</p>
                     </div>
-                    <div class="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-medium text-slate-600">
-                        <button type="button" data-filter="all" class="review-filter rounded-full bg-white px-3 py-1.5 text-slate-900 shadow-sm">All</button>
-                        <button type="button" data-filter="text" class="review-filter rounded-full px-3 py-1.5">Text</button>
-                        <button type="button" data-filter="table" class="review-filter rounded-full px-3 py-1.5">Tables</button>
-                        <button type="button" data-filter="diagram" class="review-filter rounded-full px-3 py-1.5">Diagrams</button>
-                    </div>
-                </div>
-            </div>
-            <div id="diagram-actions-panel" class="hidden rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div>
-                        <h2 class="text-base font-semibold text-slate-900">Diagram Actions</h2>
-                        <p id="diagram-selection-status" class="text-sm text-slate-500">Select diagrams to analyze with our backend, use each diagram card's Copy Image button for exact image copy, or copy a detailed external AI prompt.</p>
-                        <div id="diagram-model-statuses" class="mt-3 flex flex-wrap items-center gap-2">
-                            {% set usage = parser_document.diagram_analysis_usage or {} %}
-                            {% for model in usage.model_statuses or [] %}
-                                {% set status_label = model.status_label or "untracked" %}
-                                {% set is_active = usage.active_model and usage.active_model == model.model_name %}
-                                {% if status_label == "available" %}
-                                    {% set pill_classes = "border-emerald-200 bg-emerald-50 text-emerald-700" %}
-                                {% elif status_label == "blocked" %}
-                                    {% set pill_classes = "border-rose-200 bg-rose-50 text-rose-700" %}
-                                {% else %}
-                                    {% set pill_classes = "border-slate-200 bg-slate-50 text-slate-600" %}
-                                {% endif %}
-                                <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium {{ pill_classes }}" title="{{ model.model_name }}: {{ status_label }}">
-                                    <span class="font-semibold">{{ model.model_name }}</span>
-                                    <span class="uppercase tracking-wide">{{ status_label }}</span>
-                                    {% if is_active %}
-                                        <span class="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">active</span>
-                                    {% endif %}
-                                </span>
-                            {% endfor %}
-                            {% if not (usage.model_statuses or []) %}
-                                <span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">No model status available</span>
-                            {% endif %}
+                    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div class="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-medium text-slate-600">
+                            <button type="button" data-filter="all" class="review-filter rounded-full bg-white px-3 py-1.5 text-slate-900 shadow-sm">All</button>
+                            <button type="button" data-filter="text" class="review-filter rounded-full px-3 py-1.5">Text</button>
+                            <button type="button" data-filter="table" class="review-filter rounded-full px-3 py-1.5">Tables</button>
+                            <button type="button" data-filter="diagram" class="review-filter rounded-full px-3 py-1.5">Diagrams</button>
+                        </div>
+                        <div id="diagram-actions-panel" class="hidden lg:max-w-[42rem]">
+                            <div class="flex flex-col gap-3 lg:items-end">
+                                <p id="diagram-selection-status" class="text-sm text-slate-500 lg:text-right">Select diagrams to analyze with our backend, use each diagram card's Copy Image button for exact image copy, or copy a detailed external AI prompt.</p>
+                                <div class="flex flex-wrap items-center gap-2 lg:justify-end">
+                                    <button id="analyze-selected-diagrams-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-wand-magic-sparkles"></i>Analyze Selected</button>
+                                    <button id="copy-diagram-prompt-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-copy"></i>Copy AI Prompt</button>
+                                    <button id="clear-diagram-selection-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-eraser"></i>Clear Selection</button>
+                                </div>
+                                <div id="diagram-model-statuses" class="hidden flex-wrap items-center gap-2 lg:justify-end">
+                                    {% set usage = parser_document.diagram_analysis_usage or {} %}
+                                    {% for model in usage.model_statuses or [] %}
+                                        {% set status_label = model.status_label or "untracked" %}
+                                        {% set is_active = usage.active_model and usage.active_model == model.model_name %}
+                                        {% if status_label == "available" %}
+                                            {% set pill_classes = "border-emerald-200 bg-emerald-50 text-emerald-700" %}
+                                        {% elif status_label == "blocked" %}
+                                            {% set pill_classes = "border-rose-200 bg-rose-50 text-rose-700" %}
+                                        {% else %}
+                                            {% set pill_classes = "border-slate-200 bg-slate-50 text-slate-600" %}
+                                        {% endif %}
+                                        <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium {{ pill_classes }}" title="{{ model.model_name }}: {{ status_label }}">
+                                            <span class="font-semibold">{{ model.model_name }}</span>
+                                            <span class="uppercase tracking-wide">{{ status_label }}</span>
+                                            {% if is_active %}
+                                                <span class="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">active</span>
+                                            {% endif %}
+                                        </span>
+                                    {% endfor %}
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button id="analyze-selected-diagrams-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-wand-magic-sparkles"></i>Analyze Selected</button>
-                        <button id="copy-diagram-prompt-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-regular fa-copy"></i>Copy AI Prompt</button>
-                        <button id="clear-diagram-selection-btn" type="button" class="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><i class="fa-solid fa-eraser"></i>Clear Selection</button>
-                    </div>
                 </div>
             </div>
-            <div id="review-blocks" class="space-y-5"></div>
+            <div id="review-blocks" class="space-y-4"></div>
         </div>
-        <aside class="space-y-5 xl:sticky xl:top-24 xl:self-start">
-            <section class="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div class="flex items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-base font-semibold text-slate-900">Document View</h2>
-                        <p class="text-sm text-slate-500">Reference the original file while reviewing parsed blocks.</p>
-                    </div>
+        <aside id="document-preview-sidebar" class="space-y-5 xl:sticky xl:top-24 xl:self-start">
+            <section class="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div class="relative overflow-hidden rounded-[1.6rem] border border-slate-200 bg-slate-50">
+                    <button id="close-document-preview-btn" type="button" class="absolute left-3 top-3 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-600 shadow-sm backdrop-blur transition hover:bg-white hover:text-slate-900" title="Hide document preview" aria-label="Hide document preview">
+                        <i class="fa-solid fa-chevron-right text-xs"></i>
+                    </button>
                     {% if parser_document.upload_url %}
-                        <a href="{{ parser_document.upload_url }}" target="_blank" rel="noopener" class="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><i class="fa-solid fa-arrow-up-right-from-square"></i>Open</a>
+                        <a href="{{ parser_document.upload_url }}" target="_blank" rel="noopener" class="document-preview-open-link absolute right-3 top-3 z-10 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm backdrop-blur transition hover:bg-white">
+                            <i class="fa-solid fa-arrow-up-right-from-square text-[11px]"></i>
+                            <span>Open Document</span>
+                        </a>
                     {% endif %}
-                </div>
-                <div class="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
                     {% if parser_document.preview_url %}
-                        <iframe src="{{ parser_document.preview_url }}" title="Document preview" class="h-[620px] w-full bg-white"></iframe>
+                        <iframe src="{{ parser_document.preview_url }}" title="Document preview" class="h-[720px] w-full bg-white"></iframe>
                     {% else %}
-                        <div class="flex h-[320px] items-center justify-center px-6 text-center text-sm text-slate-500">Preview is not available for this file type yet.</div>
+                        <div class="flex h-[420px] items-center justify-center px-6 text-center text-sm text-slate-500">Preview is not available for this file type yet.</div>
                     {% endif %}
                 </div>
             </section>
@@ -142,7 +138,40 @@
     <i class="fa-solid fa-arrow-up"></i>
 </button>
 
+<button
+    id="open-document-preview-btn"
+    type="button"
+    class="hidden fixed right-0 top-1/2 z-30 -translate-y-1/2 translate-x-[70%] items-center gap-2 rounded-l-2xl border border-slate-200 bg-white/95 px-3 py-3 text-sm font-semibold text-slate-700 shadow-lg backdrop-blur transition hover:translate-x-[1%] hover:bg-white"
+    title="Show document preview"
+    aria-label="Show document preview"
+>
+    <i class="fa-regular fa-file-lines text-sm"></i>
+    <span>Preview</span>
+</button>
+
 <style>
+@media (hover: hover) {
+    .table-header-controls {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease;
+    }
+
+    .table-header-cell:hover .table-header-controls,
+    .table-header-cell:focus-within .table-header-controls {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+.document-preview-hidden {
+    display: none;
+}
+
+.document-preview-handle-visible {
+    display: inline-flex;
+}
+
 body.theme-dark .parser-review-header {
     border-color: rgba(148, 163, 184, 0.22) !important;
     background: rgba(15, 23, 42, 0.78) !important;
@@ -157,6 +186,14 @@ body.theme-dark #parser-scroll-top-btn {
     background: rgba(15, 23, 42, 0.86) !important;
     color: #e2e8f0 !important;
 }
+
+body.theme-dark #close-document-preview-btn,
+body.theme-dark #open-document-preview-btn,
+body.theme-dark .document-preview-open-link {
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    background: rgba(15, 23, 42, 0.92) !important;
+    color: #e2e8f0 !important;
+}
 </style>
 
 <script>
@@ -167,7 +204,11 @@ let initialParserDocument = {{ parser_document|tojson }};
     let hasUnsavedChanges = false;
     const dirtyBlockIds = new Set();
     const editingBlockIds = new Set();
+    const parserReviewLayout = document.getElementById("parser-review-layout");
     const reviewBlocksContainer = document.getElementById("review-blocks");
+    const documentPreviewSidebar = document.getElementById("document-preview-sidebar");
+    const closeDocumentPreviewBtn = document.getElementById("close-document-preview-btn");
+    const openDocumentPreviewBtn = document.getElementById("open-document-preview-btn");
     const saveReviewBtn = document.getElementById("save-review-btn");
     const resetReviewBtn = document.getElementById("reset-review-btn");
     const saveStatus = document.getElementById("save-status");
@@ -195,7 +236,20 @@ let initialParserDocument = {{ parser_document|tojson }};
         }
     };
     const blocks = () => Array.isArray(parserDocument?.parser_result?.review_blocks) ? parserDocument.parser_result.review_blocks : [];
-    const setStatus = (msg, bad=false) => { saveStatus.textContent = msg || ""; saveStatus.classList.toggle("text-red-600", !!bad); saveStatus.classList.toggle("text-slate-500", !bad); };
+    const setDocumentPreviewOpen = (isOpen) => {
+        documentPreviewSidebar?.classList.toggle("document-preview-hidden", !isOpen);
+        openDocumentPreviewBtn?.classList.toggle("hidden", isOpen);
+        openDocumentPreviewBtn?.classList.toggle("document-preview-handle-visible", !isOpen);
+        parserReviewLayout?.classList.toggle("xl:grid-cols-[minmax(0,1fr)_minmax(420px,46%)]", isOpen);
+        parserReviewLayout?.classList.toggle("xl:grid-cols-1", !isOpen);
+    };
+    const setStatus = (msg, bad=false) => {
+        const hasMessage = !!String(msg || "").trim();
+        saveStatus.textContent = hasMessage ? msg : "";
+        saveStatus.classList.toggle("hidden", !hasMessage);
+        saveStatus.classList.toggle("text-red-600", !!bad);
+        saveStatus.classList.toggle("text-slate-500", !bad);
+    };
     const setDirty = (v) => { hasUnsavedChanges = !!v; if (hasUnsavedChanges) setStatus("You have unsaved review changes."); };
     const showCopyDiagramPromptFeedback = () => {
         if (!copyDiagramPromptBtn) return;
@@ -264,8 +318,10 @@ let initialParserDocument = {{ parser_document|tojson }};
         }
         if (diagramModelStatuses) {
             const statuses = Array.isArray(usage?.model_statuses) ? usage.model_statuses : [];
+            diagramModelStatuses.classList.toggle("hidden", !statuses.length);
+            diagramModelStatuses.classList.toggle("flex", !!statuses.length);
             if (!statuses.length) {
-                diagramModelStatuses.innerHTML = `<span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">No model status available</span>`;
+                diagramModelStatuses.innerHTML = "";
             } else {
                 diagramModelStatuses.innerHTML = statuses.map((status) => {
                     const modelName = esc(status?.model_name || "unknown");
@@ -422,7 +478,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         const value = n.text_content || n.normalized_text || block.display_text || "";
         const isEditing = editingBlockIds.has(String(block.block_id || ""));
         return `
-            <article data-block-type="text" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <article data-block-type="text" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
@@ -436,7 +492,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                         <i class="fa-regular ${isEditing ? "fa-circle-check" : "fa-pen-to-square"}"></i>${isEditing ? "Done" : "Edit"}
                     </button>
                 </div>
-                <div class="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">${isEditing ? "Editable Text" : "Reader View"}</p>
                     ${isEditing
                         ? `<textarea data-role="text-editor" data-block-id="${esc(block.block_id)}" class="mt-3 min-h-[220px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100">${esc(value)}</textarea>`
@@ -453,10 +509,10 @@ let initialParserDocument = {{ parser_document|tojson }};
         const body = matrix.map((row, rowIndex) => `
             <tr>
                 ${row.map((cell, colIndex) => `
-                    <td class="border border-slate-200 bg-white p-2 align-top">
+                    <td class="${rowIndex === 0 ? "table-header-cell " : ""}border border-slate-200 bg-white p-2 align-top">
                         <div class="flex items-center justify-between gap-2">
                             <span class="text-[11px] font-medium uppercase tracking-wide text-slate-400">${rowIndex === 0 ? `Col ${colIndex + 1}` : `R${rowIndex + 1}C${colIndex + 1}`}</span>
-                            ${rowIndex === 0 ? `<div class="flex items-center gap-1"><button type="button" data-action="merge-right" data-block-id="${esc(block.block_id)}" data-col-index="${colIndex}" class="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50">Merge Right</button><button type="button" data-action="delete-column" data-block-id="${esc(block.block_id)}" data-col-index="${colIndex}" class="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50">Delete</button></div>` : ""}
+                            ${rowIndex === 0 ? `<div class="table-header-controls flex items-center gap-1"><button type="button" data-action="merge-right" data-block-id="${esc(block.block_id)}" data-col-index="${colIndex}" class="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50">Merge Right</button><button type="button" data-action="delete-column" data-block-id="${esc(block.block_id)}" data-col-index="${colIndex}" class="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50">Delete</button></div>` : ""}
                         </div>
                         <input type="text" data-role="table-cell" data-block-id="${esc(block.block_id)}" data-row-index="${rowIndex}" data-col-index="${colIndex}" value="${esc(cell)}" class="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100">
                     </td>
@@ -464,7 +520,7 @@ let initialParserDocument = {{ parser_document|tojson }};
             </tr>
         `).join("");
         return `
-            <article data-block-type="table" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <article data-block-type="table" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
@@ -478,7 +534,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                         <button type="button" data-action="add-column" data-block-id="${esc(block.block_id)}" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Add Column</button>
                     </div>
                 </div>
-                <div class="mt-5 space-y-4">
+                <div class="mt-3 space-y-4">
                     <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Table Caption</span><input type="text" data-role="table-caption" data-block-id="${esc(block.block_id)}" value="${esc(caption)}" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100"></label>
                     <div class="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-3">
                         ${matrix.length ? `<table class="min-w-full border-separate border-spacing-0 text-left"><tbody>${body}</tbody></table>` : `<div class="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">No structured cells were found. Use Add Column and Add Row to build the table.</div>`}
@@ -505,7 +561,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         const gateReasons = Array.isArray(n.vision_gate_reasons) ? n.vision_gate_reasons.filter(Boolean) : [];
         const isEditing = editingBlockIds.has(String(block.block_id || ""));
         return `
-            <article data-block-type="diagram" class="review-card rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <article data-block-type="diagram" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
@@ -528,7 +584,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                         </label>
                     </div>
                 </div>
-                <div class="mt-5 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+                <div class="mt-3 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
                     <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                         ${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(caption || kind)}" class="h-auto max-h-[320px] w-full rounded-2xl border border-slate-200 bg-white object-contain">` : `<div class="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm text-slate-500">No preview image available.</div>`}
                         <div class="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
@@ -563,7 +619,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         const ordered = [...blocks()].sort(compareBlocks);
         const filtered = activeFilter === "all" ? ordered : ordered.filter((block) => String(block?.block_type || "").toLowerCase() === activeFilter);
         if (!filtered.length) {
-            reviewBlocksContainer.innerHTML = `<section class="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No review blocks match the current filter.</section>`;
+            reviewBlocksContainer.innerHTML = `<section class="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">No review blocks match the current filter.</section>`;
             return;
         }
         reviewBlocksContainer.innerHTML = filtered.map((block, index) => {
@@ -810,6 +866,8 @@ let initialParserDocument = {{ parser_document|tojson }};
     };
     pageScroller?.addEventListener("scroll", toggleScrollTopButton, { passive: true });
     window.addEventListener("scroll", toggleScrollTopButton, { passive: true });
+    closeDocumentPreviewBtn?.addEventListener("click", () => setDocumentPreviewOpen(false));
+    openDocumentPreviewBtn?.addEventListener("click", () => setDocumentPreviewOpen(true));
     scrollToTopBtn?.addEventListener("click", () => {
         if (pageScroller) {
             pageScroller.scrollTo({ top: 0, behavior: "smooth" });
@@ -817,6 +875,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         }
         window.scrollTo({ top: 0, behavior: "smooth" });
     });
+    setDocumentPreviewOpen(true);
     toggleScrollTopButton();
     renderBlocks();
     updateCounts();

@@ -90,6 +90,7 @@ const showToast = (input, options = {}) => {
 
     const toastEl = document.createElement("article");
     toastEl.className = [
+        "app-toast",
         "pointer-events-auto",
         "relative",
         "w-full",
@@ -123,16 +124,16 @@ const showToast = (input, options = {}) => {
     contentEl.className = "min-w-0 flex-1";
 
     const titleEl = document.createElement("p");
-    titleEl.className = "truncate text-sm font-semibold text-slate-900";
+    titleEl.className = "app-toast-title truncate text-sm font-semibold text-slate-900";
     titleEl.textContent = title;
 
     const messageEl = document.createElement("p");
-    messageEl.className = "mt-0.5 text-sm leading-5 text-slate-600";
+    messageEl.className = "app-toast-message mt-0.5 text-sm leading-5 text-slate-600";
     messageEl.textContent = message;
 
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
-    closeBtn.className = "mt-0.5 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors";
+    closeBtn.className = "app-toast-close mt-0.5 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors";
     closeBtn.setAttribute("aria-label", "Dismiss notification");
     closeBtn.innerHTML = '<i class="fa-solid fa-xmark text-xs"></i>';
     closeBtn.addEventListener("click", () => removeToast(toastEl));
