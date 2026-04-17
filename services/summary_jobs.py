@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,22 +10,8 @@ from psycopg2.extras import Json
 DOCUMENT_SUMMARY_INPUT_VERSION = "document_summary_input_v1"
 CONVERSATION_SUMMARY_INPUT_VERSION = "conversation_summary_input_v1"
 PROCESSING_STATUS_RETRIEVAL_PREPARED = "retrieval_prepared"
-JOB_STATUS_PENDING = "pending"
 JOB_STATUS_QUEUED = "queued"
-JOB_STATUS_FAILED = "failed"
-JOB_STATUS_FAILED_PERMANENT = "failed_permanent"
 JOB_STATUS_COMPLETED = "completed"
-JOB_STATUS_PROCESSING = "processing"
-
-RETRYABLE_SUMMARY_ERROR_CODES = {
-    "rate_limited",
-    "timeout",
-    "service_unavailable",
-    "temporary_provider_error",
-}
-DEFAULT_SUMMARY_RETRY_BASE_SECONDS = 30.0
-DEFAULT_SUMMARY_RETRY_MAX_SECONDS = 1800.0
-DEFAULT_SUMMARY_RETRY_JITTER_SECONDS = 5.0
 
 
 def _relation_exists(cur, relation_name: str) -> bool:
@@ -52,18 +37,6 @@ def _pick_column(columns: set[str], *candidates: str) -> str | None:
         if name in columns:
             return name
     return None
-
-
-def _summary_status_column(columns: set[str]) -> str | None:
-    return _pick_column(columns, "summary_status", "status", "job_status")
-
-
-def _compute_retry_delay_seconds(*, attempt_count: int) -> float:
-    safe_attempt = max(1, int(attempt_count or 1))
-    exponential_delay = DEFAULT_SUMMARY_RETRY_BASE_SECONDS * (2 ** max(0, safe_attempt - 1))
-    capped = min(exponential_delay, DEFAULT_SUMMARY_RETRY_MAX_SECONDS)
-    jitter = random.uniform(0.0, DEFAULT_SUMMARY_RETRY_JITTER_SECONDS)
-    return max(0.0, capped + jitter)
 
 
 def _normalize_block_text(block: dict[str, Any]) -> str:
@@ -145,11 +118,10 @@ def enqueue_document_summary_job(
     content_hash_col = _pick_column(columns, "content_hash", "source_content_hash", "input_hash")
     content_version_col = _pick_column(columns, "content_version", "summary_version", "source_version")
     conversation_id_col = _pick_column(columns, "conversation_id")
-    status_col = _summary_status_column(columns)
+    status_col = _pick_column(columns, "status", "job_status")
     metadata_col = _pick_column(columns, "metadata")
     payload_col = _pick_column(columns, "payload")
     block_count_col = _pick_column(columns, "block_count")
-    next_attempt_at_col = _pick_column(columns, "next_attempt_at")
 
     if not document_id_col:
         return {"enqueued": False, "reason": "schema_missing_document_id"}
@@ -190,10 +162,7 @@ def enqueue_document_summary_job(
         insert_values.append(content_version)
     if status_col:
         insert_columns.append(status_col)
-        insert_values.append(JOB_STATUS_PENDING)
-    if next_attempt_at_col:
-        insert_columns.append(next_attempt_at_col)
-        insert_values.append(now)
+        insert_values.append(JOB_STATUS_QUEUED)
     if block_count_col:
         insert_columns.append(block_count_col)
         insert_values.append(len(eligible_blocks))
@@ -248,7 +217,7 @@ def enqueue_conversation_summary_recompute(
 
     columns = _get_table_columns(cur, "conversation_summary_jobs")
     conversation_id_col = _pick_column(columns, "conversation_id")
-    status_col = _summary_status_column(columns)
+    status_col = _pick_column(columns, "status", "job_status")
     trigger_col = _pick_column(columns, "trigger", "reason")
     source_document_col = _pick_column(columns, "source_document_id", "document_id")
 
@@ -259,7 +228,7 @@ def enqueue_conversation_summary_recompute(
     dedupe_params: list[Any] = [conversation_id]
     if status_col:
         dedupe_conditions.append(f"{status_col} IN (%s, %s)")
-        dedupe_params.extend([JOB_STATUS_PENDING, JOB_STATUS_PROCESSING])
+        dedupe_params.extend([JOB_STATUS_QUEUED, "processing"])
 
     cur.execute(
         f"SELECT 1 FROM conversation_summary_jobs WHERE {' AND '.join(dedupe_conditions)} LIMIT 1",
@@ -273,7 +242,7 @@ def enqueue_conversation_summary_recompute(
 
     if status_col:
         insert_columns.append(status_col)
-        insert_values.append(JOB_STATUS_PENDING)
+        insert_values.append(JOB_STATUS_QUEUED)
     if trigger_col:
         insert_columns.append(trigger_col)
         insert_values.append(trigger)
@@ -302,7 +271,7 @@ def mark_document_summary_completed(
 
     columns = _get_table_columns(cur, "document_summary_jobs")
     document_id_col = _pick_column(columns, "document_id")
-    status_col = _summary_status_column(columns)
+    status_col = _pick_column(columns, "status", "job_status")
     content_hash_col = _pick_column(columns, "content_hash", "source_content_hash", "input_hash")
     content_version_col = _pick_column(columns, "content_version", "summary_version", "source_version")
 
@@ -331,123 +300,3 @@ def mark_document_summary_completed(
             trigger="document_summary_completed",
         )
     return True
-
-
-def claim_summary_jobs(cur, *, table_name: str, limit: int = 10) -> list[dict[str, Any]]:
-    if limit <= 0 or not _relation_exists(cur, table_name):
-        return []
-
-    columns = _get_table_columns(cur, table_name)
-    id_col = _pick_column(columns, "id")
-    status_col = _summary_status_column(columns)
-    attempt_count_col = _pick_column(columns, "attempt_count")
-    max_attempts_col = _pick_column(columns, "max_attempts")
-    next_attempt_at_col = _pick_column(columns, "next_attempt_at")
-    last_error_code_col = _pick_column(columns, "last_error_code")
-    last_error_message_col = _pick_column(columns, "last_error_message")
-    if not id_col or not status_col or not attempt_count_col or not max_attempts_col or not next_attempt_at_col:
-        return []
-
-    select_cols = [id_col, attempt_count_col, max_attempts_col, next_attempt_at_col]
-    optional_cols: list[tuple[str, str]] = []
-    for candidate in ("document_id", "conversation_id", "payload"):
-        col = _pick_column(columns, candidate)
-        if col:
-            select_cols.append(col)
-            optional_cols.append((candidate, col))
-    if last_error_code_col:
-        select_cols.append(last_error_code_col)
-        optional_cols.append(("last_error_code", last_error_code_col))
-    if last_error_message_col:
-        select_cols.append(last_error_message_col)
-        optional_cols.append(("last_error_message", last_error_message_col))
-
-    cur.execute(
-        f"""
-        WITH selected_jobs AS (
-            SELECT {', '.join(select_cols)}
-            FROM {table_name}
-            WHERE {status_col} IN (%s, %s, %s)
-              AND COALESCE({next_attempt_at_col}, CURRENT_TIMESTAMP) <= CURRENT_TIMESTAMP
-            ORDER BY COALESCE({next_attempt_at_col}, CURRENT_TIMESTAMP) ASC, {id_col} ASC
-            LIMIT %s
-            FOR UPDATE SKIP LOCKED
-        )
-        UPDATE {table_name} tgt
-        SET {status_col} = %s,
-            {attempt_count_col} = selected_jobs.{attempt_count_col} + 1,
-            {next_attempt_at_col} = NULL
-        FROM selected_jobs
-        WHERE tgt.{id_col} = selected_jobs.{id_col}
-        RETURNING selected_jobs.{', selected_jobs.'.join(select_cols)}, selected_jobs.{attempt_count_col} + 1 AS claimed_attempt_count
-        """,
-        (JOB_STATUS_PENDING, JOB_STATUS_FAILED, JOB_STATUS_QUEUED, limit, JOB_STATUS_PROCESSING),
-    )
-
-    jobs: list[dict[str, Any]] = []
-    for row in cur.fetchall():
-        job: dict[str, Any] = {
-            "id": row[0],
-            "attempt_count": int(row[1] or 0),
-            "max_attempts": int(row[2] or 0),
-            "next_attempt_at": row[3],
-            "claimed_attempt_count": int(row[-1] or 0),
-        }
-        row_idx = 4
-        for key, _ in optional_cols:
-            job[key] = row[row_idx]
-            row_idx += 1
-        jobs.append(job)
-    return jobs
-
-
-def finalize_summary_job_attempt(
-    cur,
-    *,
-    table_name: str,
-    job_id: Any,
-    attempt_count: int,
-    max_attempts: int,
-    error_code: str | None = None,
-    error_message: str | None = None,
-) -> str | None:
-    if not _relation_exists(cur, table_name):
-        return None
-
-    columns = _get_table_columns(cur, table_name)
-    id_col = _pick_column(columns, "id")
-    status_col = _summary_status_column(columns)
-    next_attempt_at_col = _pick_column(columns, "next_attempt_at")
-    last_error_code_col = _pick_column(columns, "last_error_code")
-    last_error_message_col = _pick_column(columns, "last_error_message")
-    if not id_col or not status_col:
-        return None
-
-    normalized_code = str(error_code or "").strip().lower()
-    retryable = normalized_code in RETRYABLE_SUMMARY_ERROR_CODES
-    attempts_remaining = max(0, int(max_attempts or 0) - int(attempt_count or 0))
-    should_retry = retryable and attempts_remaining > 0 and next_attempt_at_col is not None
-
-    target_status = JOB_STATUS_FAILED if should_retry else JOB_STATUS_FAILED_PERMANENT
-    assignments = [f"{status_col} = %s"]
-    params: list[Any] = [target_status]
-    if next_attempt_at_col:
-        if should_retry:
-            delay_seconds = _compute_retry_delay_seconds(attempt_count=attempt_count)
-            assignments.append(f"{next_attempt_at_col} = CURRENT_TIMESTAMP + (%s * INTERVAL '1 second')")
-            params.append(delay_seconds)
-        else:
-            assignments.append(f"{next_attempt_at_col} = NULL")
-    if last_error_code_col:
-        assignments.append(f"{last_error_code_col} = %s")
-        params.append(normalized_code or None)
-    if last_error_message_col:
-        assignments.append(f"{last_error_message_col} = %s")
-        params.append(str(error_message or "").strip() or None)
-
-    params.append(job_id)
-    cur.execute(
-        f"UPDATE {table_name} SET {', '.join(assignments)} WHERE {id_col} = %s",
-        tuple(params),
-    )
-    return target_status
