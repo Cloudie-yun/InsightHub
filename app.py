@@ -103,6 +103,15 @@ PASSWORD_POLICY_ERROR = (
     "lowercase, number, and special character."
 )
 
+def _build_default_user_system_prompt(username: str) -> str:
+    safe_name = (username or "").strip() or "there"
+    return (
+        f"You are InsightHub assistant helping {safe_name}.\n"
+        "Prioritize clear, practical answers with short steps.\n"
+        "When files are attached, ground answers in the uploaded content and cite specific evidence.\n"
+        "If information is uncertain or missing, say so and propose the next best action."
+    )
+
 
 def _is_truthy_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -2499,6 +2508,8 @@ def auth_settings():
             for prompt_type in default_prompt_profiles
         }
         user_payload = serialize_user_row(row[:8]) or {}
+        default_prompt = _build_default_user_system_prompt(user_payload.get("username") or "")
+        custom_prompt = row[8] or ''
         return jsonify({
             'user': user_payload,
             'custom_system_prompt': prompt_profiles.get(PROMPT_TYPE_QNA, ''),
@@ -2611,6 +2622,55 @@ def update_prompt_profiles():
         if conn is not None:
             conn.rollback()
         return jsonify({'error': 'Unable to update prompt profiles right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/auth/system-prompt/regenerate', methods=['POST'])
+def regenerate_system_prompt():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT username
+                FROM users
+                WHERE user_id = %s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                session.pop("user_id", None)
+                return jsonify({'error': 'User not found.'}), 404
+
+            regenerated_prompt = _build_default_user_system_prompt(row[0] or "")
+            cur.execute(
+                """
+                UPDATE users
+                SET custom_system_prompt = %s
+                WHERE user_id = %s
+                RETURNING custom_system_prompt
+                """,
+                (regenerated_prompt, user_id),
+            )
+            updated = cur.fetchone()
+
+        conn.commit()
+        return jsonify({
+            'message': 'System prompt regenerated.',
+            'custom_system_prompt': (updated[0] if updated else regenerated_prompt) or regenerated_prompt,
+        }), 200
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        return jsonify({'error': 'Unable to regenerate system prompt right now.'}), 500
     finally:
         if conn is not None:
             conn.close()

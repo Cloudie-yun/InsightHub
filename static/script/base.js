@@ -28,6 +28,8 @@ const profileVisionPromptInput = document.getElementById("profile-vision-prompt-
 const profileSystemPromptSaveBtn = document.getElementById("profile-system-prompt-save-btn");
 const profilePromptViewButtons = Array.from(document.querySelectorAll(".profile-prompt-view-btn"));
 const profilePromptViewPanels = Array.from(document.querySelectorAll("[data-prompt-view-panel]"));
+const profileSystemPromptRegenerateBtn = document.getElementById("profile-system-prompt-regenerate-btn");
+const profileSystemPromptMeta = document.getElementById("profile-system-prompt-meta");
 const profilePasswordForm = document.getElementById("profile-password-form");
 const profileNewPasswordInput = document.getElementById("profile-new-password-input");
 const profilePasswordSaveBtn = document.getElementById("profile-password-save-btn");
@@ -681,6 +683,27 @@ if (profileSystemPromptForm) {
             notifyUser({ type: "error", message: "Network error. Please try again." });
         } finally {
             profileSystemPromptSaveBtn.disabled = false;
+        }
+    });
+}
+
+if (profileSystemPromptRegenerateBtn) {
+    profileSystemPromptRegenerateBtn.addEventListener("click", async () => {
+        profileSystemPromptRegenerateBtn.disabled = true;
+        try {
+            const { response, payload } = await postJson("/api/auth/system-prompt/regenerate", {});
+            if (!response.ok) {
+                notifyUser({ type: "error", message: payload.error || "Unable to regenerate prompt right now." });
+                return;
+            }
+            if (profileSystemPromptInput) {
+                profileSystemPromptInput.value = payload.custom_system_prompt || "";
+            }
+            notifyUser({ type: "success", message: payload.message || "System prompt regenerated." });
+        } catch (error) {
+            notifyUser({ type: "error", message: "Network error. Please try again." });
+        } finally {
+            profileSystemPromptRegenerateBtn.disabled = false;
         }
     });
 }
