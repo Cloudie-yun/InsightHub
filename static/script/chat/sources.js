@@ -55,6 +55,13 @@
         return Array.from(sourcesDetailedList.querySelectorAll('[data-source-select-btn="true"]'));
     };
 
+    ns.getSelectedSourceDocumentIds = () => (
+        ns.getSourceSelectButtons()
+            .filter((button) => button.dataset.selected === "true")
+            .map((button) => String(button.closest("[data-doc-id]")?.dataset.docId || "").trim())
+            .filter(Boolean)
+    );
+
     ns.getVisibleSourceSelectButtons = () => (
         ns.getSourceSelectButtons().filter((button) => !button.closest(".hidden"))
     );
@@ -136,11 +143,12 @@
 
     ns.updateSendButtonState = () => {
         if (!sendButton) return;
-        const selectedCount = ns.getSourceSelectButtons().filter((button) => button.dataset.selected === "true").length;
-        const hasSelected = selectedCount > 0;
-        sendButton.disabled = !hasSelected;
-        sendButton.classList.toggle("opacity-50", !hasSelected);
-        sendButton.classList.toggle("cursor-not-allowed", !hasSelected);
+        const hasSelected = ns.getSelectedSourceDocumentIds().length > 0;
+        const hasConversation = Boolean(ns.getCurrentConversationId());
+        const shouldDisable = !hasSelected || !hasConversation || ns.state.isSendingMessage;
+        sendButton.disabled = shouldDisable;
+        sendButton.classList.toggle("opacity-50", shouldDisable);
+        sendButton.classList.toggle("cursor-not-allowed", shouldDisable);
     };
 
     ns.initializeSourceSelectionButtons = () => {

@@ -32,6 +32,7 @@
         ns.initializeDocumentViewer();
         ns.initializeConversationUpload();
         ns.initializePendingSourcePolling();
+        ns.initializeChatMessages();
         ns.initializePromptRail();
         ns.applyPanelCollapseState();
         ns.updateSectionLayout();

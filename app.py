@@ -42,6 +42,7 @@ from services.extraction_store import (
     get_document_extraction as fetch_document_extraction,
     get_conversation_extractions as fetch_conversation_extractions,
 )
+from services.chat_answer_service import ChatAnswerService, ChatAnswerServiceError
 from services.retrieval_service import RetrievalService, RetrievalServiceError
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
@@ -506,6 +507,25 @@ def _serialize_conversation_document(row) -> dict:
     }
 
 
+def _serialize_conversation_message(row) -> dict:
+    selected_document_ids = row[5] if isinstance(row[5], list) else []
+    retrieval_payload = row[6] if isinstance(row[6], dict) else None
+    return {
+        "message_id":          str(row[0]),
+        "conversation_id":     str(row[1]),
+        "user_id":             str(row[2]),
+        "role":                row[3] or "",
+        "message_text":        row[4] or "",
+        "selected_document_ids": [str(item) for item in selected_document_ids],
+        "retrieval_payload":   retrieval_payload,
+        "model_provider":      row[7] or "",
+        "model_name":          row[8] or "",
+        "prompt_version":      row[9] or "",
+        "reply_to_message_id": str(row[10]) if row[10] else None,
+        "created_at":          row[11].isoformat() if row[11] else "",
+    }
+
+
 # ===========================================================================
 # 4. DATA ACCESS LAYER  (DB queries, no HTTP concerns)
 # ===========================================================================
@@ -703,6 +723,49 @@ def conversation_exists_for_user(user_id, conversation_id) -> bool:
             return bool(cur.fetchone())
     except Exception:
         return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_conversation_messages(user_id, conversation_id) -> list:
+    if not user_id or not conversation_id:
+        return []
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if not _relation_exists(cur, "conversation_messages"):
+                return []
+
+            cur.execute(
+                """
+                SELECT
+                    cm.message_id,
+                    cm.conversation_id,
+                    cm.user_id,
+                    cm.role,
+                    cm.message_text,
+                    cm.selected_document_ids,
+                    cm.retrieval_payload,
+                    cm.model_provider,
+                    cm.model_name,
+                    cm.prompt_version,
+                    cm.reply_to_message_id,
+                    cm.created_at
+                FROM conversation_messages cm
+                JOIN conversations c ON c.conversation_id = cm.conversation_id
+                WHERE cm.conversation_id = %s
+                  AND c.user_id = %s
+                ORDER BY cm.created_at ASC, cm.message_id ASC
+                """,
+                (conversation_id, user_id),
+            )
+            rows = cur.fetchall()
+        return [_serialize_conversation_message(row) for row in rows]
+    except Exception:
+        return []
     finally:
         if conn is not None:
             conn.close()
@@ -1629,6 +1692,7 @@ def chat():
         ), 404
 
     conversation_documents       = get_conversation_documents(user_id, current_conversation_id)
+    conversation_messages        = get_conversation_messages(user_id, current_conversation_id)
 
     return render_template(
         'chat.html',
@@ -1637,6 +1701,7 @@ def chat():
         conversation_title          = conversation_title,
         highlight_new_conversation  = highlight_new_conversation,
         conversation_documents      = conversation_documents,
+        conversation_messages       = conversation_messages,
         demo_messages               = _demo_chat_messages() if not current_conversation_id else [],
     )
 
@@ -2837,6 +2902,53 @@ def api_conversation_retrieve(conversation_id):
     except Exception:
         logger.exception("Conversation retrieval failed conversation_id=%s", conversation_id)
         return jsonify({'error': 'Unable to retrieve context right now.'}), 500
+
+
+@app.route('/api/conversations/<conversation_id>/messages', methods=['POST'])
+def api_conversation_messages(conversation_id):
+    user_id = session.get("user_id")
+    conversation_id = (conversation_id or "").strip()
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+    if not conversation_exists_for_user(user_id, conversation_id):
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return jsonify({'error': 'query is required.'}), 400
+
+    try:
+        response_payload = ChatAnswerService().answer_conversation_query(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            query=query,
+            document_ids=payload.get("document_ids"),
+            k=payload.get("k"),
+            include_filtered=payload.get("include_filtered"),
+        )
+        return jsonify(response_payload), 200
+    except ChatAnswerServiceError as exc:
+        return jsonify({
+            'error': exc.message,
+            'details': exc.to_dict(),
+        }), exc.status_code
+    except RetrievalServiceError as exc:
+        return jsonify({
+            'error': exc.message,
+            'details': exc.to_dict(),
+        }), exc.status_code
+    except EmbeddingServiceError as exc:
+        logger.exception("Conversation message embedding failed conversation_id=%s", conversation_id)
+        return jsonify({
+            'error': 'Could not embed the query for retrieval.',
+            'details': exc.to_dict(),
+        }), 503
+    except Exception:
+        logger.exception("Conversation message generation failed conversation_id=%s", conversation_id)
+        return jsonify({'error': 'Unable to send your message right now.'}), 500
 
 
 @app.route('/api/documents/<document_id>/parser-results', methods=['GET'])

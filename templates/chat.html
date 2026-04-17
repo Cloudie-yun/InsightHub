@@ -196,121 +196,141 @@
                 <div id="chat-messages" class="flex-1 min-h-0 overflow-y-auto p-5 pb-36 space-y-5 max-w-5xl w-full mx-auto">
                     {% if demo_messages %}
                         {% for message in demo_messages %}
-                        <article class="flex {% if message.role == 'user' %}justify-end{% else %}justify-start{% endif %}">
-                            <div class="max-w-3xl rounded-3xl px-5 py-4 shadow-sm {% if message.role == 'user' %}bg-brand-600 text-white{% else %}border border-gray-200 bg-white text-slate-800{% endif %}">
+                        <article class="flex {% if message.role == 'user' %}justify-end{% else %}justify-start{% endif %}" {% if message.role == 'user' %}data-prompt-id="demo-{{ loop.index }}"{% endif %}>
+                            <div class="max-w-3xl rounded-3xl px-5 py-4 shadow-sm {% if message.role == 'user' %}bg-brand-600 text-white rounded-tr-none{% else %}border border-gray-200 bg-white text-slate-800{% endif %}">
                                 <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] {% if message.role == 'user' %}text-brand-100{% else %}text-slate-400{% endif %}">
                                     <span>{{ "You" if message.role == "user" else "Assistant" }}</span>
                                 </div>
-                                <p class="text-sm leading-7 {% if message.role == 'user' %}text-white{% else %}text-slate-700{% endif %}">{{ message.text }}</p>
+                                <div class="whitespace-pre-wrap text-sm leading-7 {% if message.role == 'user' %}text-white{% else %}text-slate-700{% endif %}">{{ message.text }}</div>
                             </div>
                         </article>
                         {% endfor %}
                     {% else %}
-                        <div class="flex justify-end">
-                            <div class="relative group max-w-xl pb-[32px]">
-                                <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
-                                    Can you explain the difference between supervised and unsupervised learning?
+                        {% if conversation_messages %}
+                            {% set prompt_counter = namespace(value=0) %}
+                            {% for message in conversation_messages %}
+                            {% if message.role == "user" %}
+                                {% set prompt_counter.value = prompt_counter.value + 1 %}
+                            {% endif %}
+                            <article
+                                class="flex {% if message.role == 'user' %}justify-end{% else %}justify-start{% endif %}"
+                                {% if message.role == 'user' %}data-prompt-id="prompt-{{ prompt_counter.value }}"{% endif %}
+                                data-message-id="{{ message.message_id }}"
+                                data-message-role="{{ message.role }}"
+                            >
+                                {% if message.role == "user" %}
+                                <div class="max-w-3xl rounded-3xl rounded-tr-none bg-brand-600 px-5 py-4 text-white shadow-sm">
+                                    <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-100">
+                                        <span>You</span>
+                                    </div>
+                                    <div class="whitespace-pre-wrap text-sm leading-7 text-white">{{ message.message_text }}</div>
                                 </div>
-                                <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                        <i class="fa-solid fa-clone"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors" title="Edit">
-                                        <i class="fa-solid fa-pen"></i>
-                                    </button>
+                                {% else %}
+                                <div class="w-full max-w-4xl">
+                                    {% set retrieval = message.retrieval_payload or {} %}
+                                    {% set results = retrieval.get('results') or [] %}
+                                    {% set filter_summary = retrieval.get('filter_summary') or {} %}
+                                    <div class="rounded-3xl border border-gray-200 bg-white px-5 py-4 shadow-sm">
+                                        <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                            <span>Retrieval Inspection</span>
+                                        </div>
+                                        <div class="text-sm leading-6 text-slate-700">{{ message.message_text }}</div>
+                                    </div>
+                                    {% if retrieval %}
+                                    <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                        <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Diagnostics</p>
+                                        <div class="mt-2 grid gap-2 sm:grid-cols-4">
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Top K</p>
+                                                <p class="mt-1 text-sm font-semibold text-slate-700">{{ retrieval.get('k') or 0 }}</p>
+                                            </div>
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Returned</p>
+                                                <p class="mt-1 text-sm font-semibold text-slate-700">{{ retrieval.get('returned_count') or (results|length) }}</p>
+                                            </div>
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Filtered Out</p>
+                                                <p class="mt-1 text-sm font-semibold text-slate-700">{{ filter_summary.get('excluded_candidate_count') or 0 }}</p>
+                                            </div>
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                                <p class="text-[11px] uppercase tracking-[0.18em] text-slate-400">Strategy</p>
+                                                <p class="mt-1 text-sm font-semibold capitalize text-slate-700">{{ (retrieval.get('strategy') or 'vector')|replace('_', ' ') }}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                        <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Top Chunks</p>
+                                        {% if results %}
+                                        <div class="mt-2 space-y-2">
+                                            {% for result in results %}
+                                            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                                <div class="flex flex-wrap items-center justify-between gap-3">
+                                                    <p class="truncate text-sm font-medium text-slate-700">#{{ loop.index }} {{ result.document_name or result.document_id }}</p>
+                                                    <span class="text-xs font-semibold text-slate-500">Score {{ "%.3f"|format(result.score or 0) }}</span>
+                                                </div>
+                                                <div class="mt-2 flex flex-wrap gap-2">
+                                                    <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{{ result.block_type or 'block' }}</span>
+                                                    {% if result.text_role %}
+                                                    <span class="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">{{ result.text_role }}</span>
+                                                    {% endif %}
+                                                    {% if result.section_path %}
+                                                    <span class="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">{{ result.section_path|join(' > ') }}</span>
+                                                    {% endif %}
+                                                    {% if result.filter_reason %}
+                                                    <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{{ result.filter_reason|replace('_', ' ') }}</span>
+                                                    {% endif %}
+                                                </div>
+                                                <p class="mt-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-400">{{ result.relevance_reason }}</p>
+                                                <p class="mt-1 text-xs leading-5 text-slate-500">{{ result.snippet }}</p>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        <div class="mt-2 rounded-xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">
+                                            No useful chunks were found for this query after filtering.
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    {% endif %}
                                 </div>
-                            </div>
+                                {% endif %}
+                            </article>
+                            {% endfor %}
+                        {% elif current_conversation_id %}
+                        <div id="chat-empty-state" class="mx-auto mt-10 max-w-2xl rounded-3xl border border-dashed border-slate-200 bg-white/80 px-8 py-10 text-center shadow-sm">
+                            <p class="text-xs font-semibold uppercase tracking-[0.24em] text-brand-500">Ready</p>
+                            <h2 class="mt-3 text-2xl font-semibold text-slate-900">Ask about your selected documents</h2>
+                            <p class="mt-3 text-sm leading-6 text-slate-500">
+                                Choose one or more parsed sources from the panel, then ask a question. Retrieval will scope the answer to those selected documents.
+                            </p>
                         </div>
-
-                        <div class="w-full flex justify-center">
-                            <div class="w-full max-w-4xl">
-                                <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
-                                    <p class="mb-3">Based on your document <strong>&quot;Machine Learning Fundamentals.pdf&quot;</strong>, supervised learning uses labeled data where the algorithm learns from input-output pairs. The model is trained to predict the output from the input data, and its performance is evaluated based on how accurately it can make these predictions on new, unseen data.</p>
-                                    <p>In contrast, unsupervised learning works with unlabeled data, where the algorithm identifies patterns and structures on its own.</p>
-                                </div>
-                                <div class="mt-1 flex items-center gap-1">
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                        <i class="fa-solid fa-clone"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Helpful">
-                                        <i class="fa-regular fa-thumbs-up"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Not helpful">
-                                        <i class="fa-regular fa-thumbs-down"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Regenerate">
-                                        <i class="fa-solid fa-rotate-right"></i>
-                                    </button>
-                                    <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-8 w-8 rounded-md text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors" title="Create study aid">
-                                        <i class="fa-solid fa-lightbulb"></i>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="flex justify-end">
-                            <div class="relative group max-w-xl pb-[32px]">
-                                <div class="bg-brand-100 text-gray-800 rounded-2xl rounded-tr-none py-3 px-5 shadow-sm font-normal text-[16px] leading-6">
-                                    What are some common algorithms used in supervised learning?
-                                </div>
-                                <div class="absolute right-1 bottom-0 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                        <i class="fa-solid fa-clone"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors" title="Edit">
-                                        <i class="fa-solid fa-pen"></i>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="w-full flex justify-center">
-                            <div class="w-full max-w-4xl">
-                                <div class="text-gray-800 py-1 px-1 text-[16px] leading-7">
-                                    <p class="mb-3">Some common algorithms used in supervised learning include:</p>
-                                    <ul class="list-disc list-inside mb-2">
-                                        <li><strong>Linear Regression</strong>: Used for predicting continuous values.</li>
-                                        <li><strong>Logistic Regression</strong>: Used for binary classification tasks.</li>
-                                        <li><strong>Support Vector Machines (SVM)</strong>: Effective for high-dimensional spaces.</li>
-                                        <li><strong>Decision Trees</strong>: Simple and interpretable models for classification and regression.</li>
-                                        <li><strong>Random Forests</strong>: An ensemble of decision trees that improves accuracy and reduces overfitting.</li>
-                                        <li><strong>Neural Networks</strong>: Powerful models that can capture complex relationships in data, especially with large datasets.</li>
-                                    </ul>
-                                    <p>The choice of algorithm depends on the specific problem, the size and nature of the dataset, and the desired balance between interpretability and performance.</p>
-                                </div>
-                                <div class="mt-1 flex items-center gap-1">
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Copy">
-                                        <i class="fa-solid fa-clone"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Helpful">
-                                        <i class="fa-regular fa-thumbs-up"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Not helpful">
-                                        <i class="fa-regular fa-thumbs-down"></i>
-                                    </button>
-                                    <button class="h-8 w-8 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="Regenerate">
-                                        <i class="fa-solid fa-rotate-right"></i>
-                                    </button>
-                                    <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-8 w-8 rounded-md text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 transition-colors" title="Create study aid">
-                                        <i class="fa-solid fa-lightbulb"></i>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
+                        {% endif %}
                     {% endif %}
                 </div>
                 <div id="chat-input-area" class="sticky bottom-0 z-10 px-6 pb-3 pt-5 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
                     <div class="max-w-4xl mx-auto">
                         <div class="flex flex-wrap gap-2 mb-3">
-                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">What is Machine Learning?</button>
-                            <button class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">Explain Regression</button>
+                            <button type="button" class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">Summarize the key concepts in these documents</button>
+                            <button type="button" class="suggestion-chip bg-white/95 border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-full shadow-sm hover:bg-brand-50 hover:border-brand-200 transition">What are the main arguments or findings?</button>
                         </div>
                         <div class="chat-input-container bg-white/95 border border-gray-200 rounded-full p-2 flex items-center shadow-lg backdrop-blur-sm focus-within:ring-2 focus-within:ring-brand-500 transition-shadow">
-                            <input type="text" placeholder="Ask any question..." class="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 px-4 py-2 text-gray-700 placeholder-gray-400">
-                            <button class="bg-brand-600 text-white h-10 w-10 rounded-full flex items-center justify-center hover:bg-brand-700 transition">
+                            <input
+                                id="chat-prompt-input"
+                                type="text"
+                                placeholder="{% if current_conversation_id %}Ask a question about the selected documents...{% else %}Open a conversation to start asking questions...{% endif %}"
+                                class="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 px-4 py-2 text-gray-700 placeholder-gray-400"
+                                {% if not current_conversation_id %}disabled{% endif %}
+                            >
+                            <button
+                                id="chat-send-button"
+                                type="button"
+                                class="bg-brand-600 text-white h-10 w-10 rounded-full flex items-center justify-center hover:bg-brand-700 transition disabled:cursor-not-allowed disabled:opacity-50"
+                                {% if not current_conversation_id %}disabled{% endif %}
+                            >
                                 <i class="fa-solid fa-arrow-up"></i>
                             </button>
                         </div>
+                        <p id="chat-send-status" class="mt-2 min-h-[20px] text-center text-[13px] text-slate-500"></p>
                         <p class="chat-disclaimer mt-2 text-center text-[13px] text-gray-500">
                             AI may make mistakes. Please double-check details with your sources and do not rely on AI alone.
                         </p>
@@ -424,6 +444,7 @@
 <script src="{{ url_for('static', filename='script/chat/panel.js') }}"></script>
 <script src="{{ url_for('static', filename='script/chat/sources.js') }}"></script>
 <script src="{{ url_for('static', filename='script/chat/upload.js') }}"></script>
+<script src="{{ url_for('static', filename='script/chat/messages.js') }}"></script>
 <script src="{{ url_for('static', filename='script/chat/prompt-rail.js') }}"></script>
 <script src="{{ url_for('static', filename='script/chat.js') }}"></script>
 {% endblock %}

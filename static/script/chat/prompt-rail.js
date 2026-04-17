@@ -79,14 +79,17 @@
             state.promptNodeButtons.set(promptId, nodeButton);
         });
 
-        chatMessages.addEventListener("scroll", () => {
-            if (state.promptScrollTicking) return;
-            state.promptScrollTicking = true;
-            window.requestAnimationFrame(() => {
-                ns.syncActivePromptNodeFromScroll();
-                state.promptScrollTicking = false;
-            });
-        }, { passive: true });
+        if (!state.promptRailBound) {
+            chatMessages.addEventListener("scroll", () => {
+                if (state.promptScrollTicking) return;
+                state.promptScrollTicking = true;
+                window.requestAnimationFrame(() => {
+                    ns.syncActivePromptNodeFromScroll();
+                    state.promptScrollTicking = false;
+                });
+            }, { passive: true });
+            state.promptRailBound = true;
+        }
 
         ns.updatePromptRailDockSide();
         ns.syncActivePromptNodeFromScroll();

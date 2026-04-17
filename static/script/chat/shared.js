@@ -36,7 +36,9 @@
         studyAidIconList: document.getElementById("study-aid-icon-list"),
         toolsDefaultContent: document.getElementById("floating-tools-default-content"),
         toolsDocumentContent: document.getElementById("floating-tools-document-content"),
-        sendButton: document.querySelector("#chat-main .fa-arrow-up")?.closest("button"),
+        sendButton: document.getElementById("chat-send-button"),
+        promptInput: document.getElementById("chat-prompt-input"),
+        sendStatus: document.getElementById("chat-send-status"),
         toolboxDocFrame: document.getElementById("toolbox-doc-frame"),
         toolboxDocEmpty: document.getElementById("toolbox-doc-empty"),
         toolboxDocTitle: document.getElementById("toolbox-doc-title"),
@@ -81,6 +83,9 @@
         promptNodeButtons: new Map(),
         sourceSearchQuery: "",
         sourceSortMode: "upload_desc",
+        isSendingMessage: false,
+        nextPromptIndex: 0,
+        promptRailBound: false,
     };
 
     ns.constants = {
@@ -238,4 +243,11 @@
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
+
+    ns.setChatSendStatus = (message, isError = false) => {
+        const { sendStatus } = ns.elements;
+        if (!sendStatus) return;
+        sendStatus.textContent = message || "";
+        sendStatus.className = `mt-2 min-h-[20px] text-center text-[13px] ${isError ? "text-red-600" : "text-slate-500"}`;
+    };
 }());
