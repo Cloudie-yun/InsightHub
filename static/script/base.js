@@ -25,6 +25,8 @@ const profileGoogleLinkBtn = document.getElementById("profile-google-link-btn");
 const profileSystemPromptForm = document.getElementById("profile-system-prompt-form");
 const profileSystemPromptInput = document.getElementById("profile-system-prompt-input");
 const profileSystemPromptSaveBtn = document.getElementById("profile-system-prompt-save-btn");
+const profileSystemPromptRegenerateBtn = document.getElementById("profile-system-prompt-regenerate-btn");
+const profileSystemPromptMeta = document.getElementById("profile-system-prompt-meta");
 const profilePasswordForm = document.getElementById("profile-password-form");
 const profileNewPasswordInput = document.getElementById("profile-new-password-input");
 const profilePasswordSaveBtn = document.getElementById("profile-password-save-btn");
@@ -558,9 +560,21 @@ const syncProfileSettingsUi = (payload) => {
     const authProvider = String(settingsUser.auth_provider || "").toLowerCase();
     const isGoogleLinked = Boolean(settingsUser.is_google_linked) || authProvider === "google";
     const canChangePassword = authProvider === "local";
+    const effectivePrompt = String(payload?.effective_system_prompt || payload?.custom_system_prompt || "");
+    const defaultPrompt = String(payload?.default_system_prompt || "");
 
     if (profileUsernameInput) profileUsernameInput.value = settingsUser.username || "";
-    if (profileSystemPromptInput) profileSystemPromptInput.value = payload?.custom_system_prompt || "";
+    if (profileSystemPromptInput) {
+        profileSystemPromptInput.value = effectivePrompt;
+        if (defaultPrompt) {
+            profileSystemPromptInput.placeholder = defaultPrompt;
+        }
+    }
+    if (profileSystemPromptMeta) {
+        profileSystemPromptMeta.textContent = defaultPrompt
+            ? "Max 3000 characters. Regenerate restores your default assistant prompt."
+            : "Max 3000 characters.";
+    }
 
     if (profileGoogleStatus) {
         profileGoogleStatus.textContent = isGoogleLinked ? "Linked and ready for Google sign-in." : "Not linked yet.";
@@ -646,11 +660,35 @@ if (profileSystemPromptForm) {
                 notifyUser({ type: "error", message: payload.error || "Unable to save prompt right now." });
                 return;
             }
+            if (profileSystemPromptInput) {
+                profileSystemPromptInput.value = payload.custom_system_prompt || customSystemPrompt;
+            }
             notifyUser({ type: "success", message: "System prompt saved." });
         } catch (error) {
             notifyUser({ type: "error", message: "Network error. Please try again." });
         } finally {
             profileSystemPromptSaveBtn.disabled = false;
+        }
+    });
+}
+
+if (profileSystemPromptRegenerateBtn) {
+    profileSystemPromptRegenerateBtn.addEventListener("click", async () => {
+        profileSystemPromptRegenerateBtn.disabled = true;
+        try {
+            const { response, payload } = await postJson("/api/auth/system-prompt/regenerate", {});
+            if (!response.ok) {
+                notifyUser({ type: "error", message: payload.error || "Unable to regenerate prompt right now." });
+                return;
+            }
+            if (profileSystemPromptInput) {
+                profileSystemPromptInput.value = payload.custom_system_prompt || "";
+            }
+            notifyUser({ type: "success", message: payload.message || "System prompt regenerated." });
+        } catch (error) {
+            notifyUser({ type: "error", message: "Network error. Please try again." });
+        } finally {
+            profileSystemPromptRegenerateBtn.disabled = false;
         }
     });
 }

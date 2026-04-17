@@ -241,8 +241,11 @@
                             <label for="profile-system-prompt-input" class="text-sm font-semibold text-slate-700">Your system prompt</label>
                             <textarea id="profile-system-prompt-input" rows="10" maxlength="3000" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm leading-6 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"></textarea>
                             <div class="flex items-center justify-between gap-3">
-                                <p class="text-xs text-slate-500">Max 3000 characters.</p>
-                                <button id="profile-system-prompt-save-btn" type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-70">Save Prompt</button>
+                                <p id="profile-system-prompt-meta" class="text-xs text-slate-500">Max 3000 characters.</p>
+                                <div class="flex items-center gap-2">
+                                    <button id="profile-system-prompt-regenerate-btn" type="button" class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-70">Regenerate</button>
+                                    <button id="profile-system-prompt-save-btn" type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-70">Save Prompt</button>
+                                </div>
                             </div>
                         </form>
                     </div>
