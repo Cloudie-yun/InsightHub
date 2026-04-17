@@ -16,6 +16,20 @@ const userMenuDropdown = document.getElementById("user-menu-dropdown");
 const userMenuCaret = document.getElementById("user-menu-caret");
 const userEditProfileBtn = document.getElementById("user-edit-profile-btn");
 const userLogoutBtn = document.getElementById("user-logout-btn");
+const profileSettingsModal = document.getElementById("profile-settings-modal");
+const profileUsernameForm = document.getElementById("profile-username-form");
+const profileUsernameInput = document.getElementById("profile-username-input");
+const profileUsernameSaveBtn = document.getElementById("profile-username-save-btn");
+const profileGoogleStatus = document.getElementById("profile-google-status");
+const profileGoogleLinkBtn = document.getElementById("profile-google-link-btn");
+const profileSystemPromptForm = document.getElementById("profile-system-prompt-form");
+const profileSystemPromptInput = document.getElementById("profile-system-prompt-input");
+const profileSystemPromptSaveBtn = document.getElementById("profile-system-prompt-save-btn");
+const profileSystemPromptRegenerateBtn = document.getElementById("profile-system-prompt-regenerate-btn");
+const profileSystemPromptMeta = document.getElementById("profile-system-prompt-meta");
+const profilePasswordForm = document.getElementById("profile-password-form");
+const profileNewPasswordInput = document.getElementById("profile-new-password-input");
+const profilePasswordSaveBtn = document.getElementById("profile-password-save-btn");
 const emailVerifyBadge = document.getElementById("email-verify-badge");
 const emailVerifyBanner = document.getElementById("email-verify-banner");
 const emailVerifyResendBtn = document.getElementById("email-verify-resend-btn");
@@ -36,6 +50,9 @@ const resetSubmitText = document.getElementById("reset-submit-text");
 const resetSubmitSpinner = document.getElementById("reset-submit-spinner");
 let currentAuthUser = null;
 let isUserMenuOpen = false;
+
+const profileTabButtons = Array.from(document.querySelectorAll(".profile-settings-tab-btn"));
+const profileTabPanels = Array.from(document.querySelectorAll("[data-profile-tab-panel]"));
 
 // ========== TOAST NOTIFICATIONS ==========
 const toastContainer = document.getElementById("toast-container");
@@ -411,6 +428,7 @@ document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     closeAuth();
     closeEmailVerifyResultModal();
+    closeProfileSettingsModal();
     setUserMenuOpen(false);
 });
 
@@ -483,6 +501,7 @@ const setAuthUiState = (user) => {
 
     if (!isLoggedIn) {
         setUserMenuOpen(false);
+        closeProfileSettingsModal();
         if (emailVerifyBanner) emailVerifyBanner.classList.add("hidden");
         if (emailVerifyBadge) emailVerifyBadge.classList.add("hidden");
         setEmailVerifyResendStatus("");
@@ -502,6 +521,9 @@ const setAuthUiState = (user) => {
     if (emailVerifyBadge) emailVerifyBadge.classList.toggle("hidden", isVerified);
     if (isVerified) setEmailVerifyResendStatus("");
     renderConvoSubmenu();
+    if (profileSettingsModal && !profileSettingsModal.classList.contains("hidden")) {
+        syncProfileSettingsUi({ user });
+    }
 };
 
 if (userMenuToggle && userMenuDropdown) {
@@ -517,29 +539,186 @@ if (userMenuToggle && userMenuDropdown) {
     });
 }
 
-if (userEditProfileBtn) {
-    userEditProfileBtn.addEventListener("click", async () => {
-        if (!currentAuthUser) return;
-        const currentName = (currentAuthUser.username || "").trim();
-        const nextName = (window.prompt("Enter your new display name:", currentName) || "").trim();
+const setProfileTab = (tabName = "profile") => {
+    profileTabButtons.forEach((button) => {
+        const isActive = button.dataset.profileTab === tabName;
+        button.classList.toggle("is-active", isActive);
+    });
+    profileTabPanels.forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.profileTabPanel !== tabName);
+    });
+};
 
-        if (!nextName || nextName === currentName) {
-            setUserMenuOpen(false);
+const closeProfileSettingsModal = () => {
+    if (!profileSettingsModal) return;
+    profileSettingsModal.classList.add("hidden");
+    profileSettingsModal.classList.remove("flex");
+};
+
+const syncProfileSettingsUi = (payload) => {
+    const settingsUser = payload?.user || currentAuthUser || {};
+    const authProvider = String(settingsUser.auth_provider || "").toLowerCase();
+    const isGoogleLinked = Boolean(settingsUser.is_google_linked) || authProvider === "google";
+    const canChangePassword = authProvider === "local";
+    const effectivePrompt = String(payload?.effective_system_prompt || payload?.custom_system_prompt || "");
+    const defaultPrompt = String(payload?.default_system_prompt || "");
+
+    if (profileUsernameInput) profileUsernameInput.value = settingsUser.username || "";
+    if (profileSystemPromptInput) {
+        profileSystemPromptInput.value = effectivePrompt;
+        if (defaultPrompt) {
+            profileSystemPromptInput.placeholder = defaultPrompt;
+        }
+    }
+    if (profileSystemPromptMeta) {
+        profileSystemPromptMeta.textContent = defaultPrompt
+            ? "Max 3000 characters. Regenerate restores your default assistant prompt."
+            : "Max 3000 characters.";
+    }
+
+    if (profileGoogleStatus) {
+        profileGoogleStatus.textContent = isGoogleLinked ? "Linked and ready for Google sign-in." : "Not linked yet.";
+    }
+    if (profileGoogleLinkBtn) {
+        profileGoogleLinkBtn.classList.toggle("hidden", authProvider !== "local" || isGoogleLinked);
+    }
+    if (profilePasswordForm) {
+        profilePasswordForm.classList.toggle("hidden", !canChangePassword);
+    }
+};
+
+const openProfileSettingsModal = async () => {
+    if (!profileSettingsModal || !currentAuthUser) return;
+    setProfileTab("profile");
+    profileSettingsModal.classList.remove("hidden");
+    profileSettingsModal.classList.add("flex");
+    setUserMenuOpen(false);
+
+    try {
+        const response = await fetch("/api/auth/settings", { credentials: "include" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            notifyUser({ type: "error", message: payload.error || "Unable to load profile settings." });
             return;
         }
+        setAuthFromPayload(payload);
+        syncProfileSettingsUi(payload);
+    } catch (error) {
+        notifyUser({ type: "error", message: "Network error while loading settings." });
+    }
+};
 
+profileTabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+        setProfileTab(button.dataset.profileTab);
+    });
+});
+
+document.querySelectorAll("[data-profile-settings-close]").forEach((el) => {
+    el.addEventListener("click", closeProfileSettingsModal);
+});
+
+if (userEditProfileBtn) {
+    userEditProfileBtn.addEventListener("click", openProfileSettingsModal);
+}
+
+if (profileUsernameForm) {
+    profileUsernameForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const nextName = (profileUsernameInput?.value || "").trim();
+        if (!nextName) {
+            notifyUser({ type: "warning", message: "Username is required." });
+            return;
+        }
+        profileUsernameSaveBtn.disabled = true;
         try {
             const { response, payload } = await postJson("/api/auth/profile", { username: nextName });
             if (!response.ok) {
-                window.alert(payload.error || "Unable to update profile right now.");
+                notifyUser({ type: "error", message: payload.error || "Unable to update profile right now." });
                 return;
             }
             setAuthFromPayload(payload);
-            window.alert("Profile updated.");
+            notifyUser({ type: "success", message: "Profile updated." });
         } catch (error) {
-            window.alert("Network error. Please try again.");
+            notifyUser({ type: "error", message: "Network error. Please try again." });
         } finally {
-            setUserMenuOpen(false);
+            profileUsernameSaveBtn.disabled = false;
+        }
+    });
+}
+
+if (profileSystemPromptForm) {
+    profileSystemPromptForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const customSystemPrompt = (profileSystemPromptInput?.value || "").trim();
+        profileSystemPromptSaveBtn.disabled = true;
+        try {
+            const { response, payload } = await postJson("/api/auth/system-prompt", {
+                custom_system_prompt: customSystemPrompt,
+            });
+            if (!response.ok) {
+                notifyUser({ type: "error", message: payload.error || "Unable to save prompt right now." });
+                return;
+            }
+            if (profileSystemPromptInput) {
+                profileSystemPromptInput.value = payload.custom_system_prompt || customSystemPrompt;
+            }
+            notifyUser({ type: "success", message: "System prompt saved." });
+        } catch (error) {
+            notifyUser({ type: "error", message: "Network error. Please try again." });
+        } finally {
+            profileSystemPromptSaveBtn.disabled = false;
+        }
+    });
+}
+
+if (profileSystemPromptRegenerateBtn) {
+    profileSystemPromptRegenerateBtn.addEventListener("click", async () => {
+        profileSystemPromptRegenerateBtn.disabled = true;
+        try {
+            const { response, payload } = await postJson("/api/auth/system-prompt/regenerate", {});
+            if (!response.ok) {
+                notifyUser({ type: "error", message: payload.error || "Unable to regenerate prompt right now." });
+                return;
+            }
+            if (profileSystemPromptInput) {
+                profileSystemPromptInput.value = payload.custom_system_prompt || "";
+            }
+            notifyUser({ type: "success", message: payload.message || "System prompt regenerated." });
+        } catch (error) {
+            notifyUser({ type: "error", message: "Network error. Please try again." });
+        } finally {
+            profileSystemPromptRegenerateBtn.disabled = false;
+        }
+    });
+}
+
+if (profilePasswordForm) {
+    profilePasswordForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const newPassword = profileNewPasswordInput?.value || "";
+        if (!strongPasswordRegex.test(newPassword)) {
+            notifyUser({
+                type: "warning",
+                message: "Use at least 8 chars with uppercase, lowercase, number, and special character.",
+            });
+            return;
+        }
+        profilePasswordSaveBtn.disabled = true;
+        try {
+            const { response, payload } = await postJson("/api/auth/change-password", {
+                new_password: newPassword,
+            });
+            if (!response.ok) {
+                notifyUser({ type: "error", message: payload.error || "Unable to update password right now." });
+                return;
+            }
+            if (profileNewPasswordInput) profileNewPasswordInput.value = "";
+            notifyUser({ type: "success", message: payload.message || "Password updated successfully." });
+        } catch (error) {
+            notifyUser({ type: "error", message: "Network error. Please try again." });
+        } finally {
+            profilePasswordSaveBtn.disabled = false;
         }
     });
 }
@@ -1164,6 +1343,9 @@ if (emailVerifiedStatus) {
 if (googleAuthStatus === "success") {
     showToast({ type: "success", title: "Signed In", message: "Signed in with Google." });
     params.delete("google_auth");
+} else if (googleAuthStatus === "linked") {
+    showToast({ type: "success", title: "Google Linked", message: "Your Google account is now linked." });
+    params.delete("google_auth");
 } else if (googleAuthStatus === "conflict") {
     showToast({
         type: "warning",
@@ -1172,6 +1354,14 @@ if (googleAuthStatus === "success") {
         duration: 6000,
     });
     openAuth("login");
+    params.delete("google_auth");
+} else if (googleAuthStatus === "link_mismatch") {
+    showToast({
+        type: "warning",
+        title: "Account Mismatch",
+        message: "Please choose the same Google email as your current account.",
+        duration: 6000,
+    });
     params.delete("google_auth");
 } else if (googleAuthStatus === "error") {
     showToast({ type: "error", title: "Google Sign-In Failed", message: "Please try again." });

@@ -18,6 +18,7 @@ CREATE TABLE users (
 
     google_sub VARCHAR(255) UNIQUE,
     password_hash TEXT,
+    custom_system_prompt TEXT NOT NULL DEFAULT '',
 
     email_verified BOOLEAN NOT NULL DEFAULT false,
 
@@ -27,7 +28,7 @@ CREATE TABLE users (
     CONSTRAINT provider_min_requirements CHECK (
         (auth_provider = 'local' AND password_hash IS NOT NULL)
         OR
-        (auth_provider = 'google' AND google_sub IS NOT NULL)
+        (auth_provider = 'google' AND google_sub IS NOT NULL AND password_hash IS NULL)
     )
 );
 
