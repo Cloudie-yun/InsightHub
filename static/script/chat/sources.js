@@ -284,7 +284,18 @@
         if (typeof value === "number" && Number.isFinite(value)) {
             return value;
         }
-        const parsed = Date.parse(String(value || "").trim());
+
+        const normalizedValue = String(value || "").trim();
+        if (!normalizedValue) {
+            return 0;
+        }
+
+        const numericValue = Number(normalizedValue);
+        if (Number.isFinite(numericValue)) {
+            return numericValue;
+        }
+
+        const parsed = Date.parse(normalizedValue);
         return Number.isFinite(parsed) ? parsed : 0;
     };
 

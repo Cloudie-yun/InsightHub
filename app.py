@@ -21,6 +21,7 @@ import logging
 import mimetypes
 import time
 from dotenv import load_dotenv
+from huggingface_hub import login as huggingface_login
 
 load_dotenv()
 
@@ -60,6 +61,13 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 logger = logging.getLogger(__name__)
+
+hf_token = os.getenv("HF_TOKEN")
+if hf_token:
+    huggingface_login(token=hf_token)
+else:
+    logger.warning("HF_TOKEN not set; continuing without Hugging Face authentication")
+
 DOCUMENT_PARSE_MAX_WORKERS = max(1, int(os.getenv("DOCUMENT_PARSE_MAX_WORKERS", "2")))
 document_parse_executor = ThreadPoolExecutor(
     max_workers=DOCUMENT_PARSE_MAX_WORKERS,

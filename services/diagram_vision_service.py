@@ -42,7 +42,12 @@ DIAGRAM_ASSETS_BASE_DIR = Path(
 
 
 def _get_default_gemini_model() -> str:
-    return os.environ.get("GEMINI_VISION_MODEL", "gemini-3-flash")
+    return os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+
+
+def _get_diagram_vision_provider_name() -> str:
+    vertex_enabled = str(os.environ.get("VERTEX_AI_ENABLED", "")).strip().lower()
+    return "vertex_ai" if vertex_enabled in {"1", "true", "yes", "on"} else "gemini"
 
 
 def _get_max_diagram_vision_model_attempts() -> int:
@@ -590,10 +595,18 @@ def resolve_image_path(storage_path: str) -> str:
 
 
 class GeminiDiagramVisionService:
-    def __init__(self, *, api_key: str, model: str | None = None, timeout_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str | None = None,
+        timeout_seconds: int = 60,
+        provider_name: str | None = None,
+    ) -> None:
         self.api_key = api_key
         self.model = model or _get_default_gemini_model()
         self.timeout_seconds = timeout_seconds
+        self.provider_name = str(provider_name or _get_diagram_vision_provider_name()).strip() or "gemini"
 
     def request_analysis(self, item: DiagramVisionInput) -> dict[str, Any]:
         VISION_QUEUE.wait_if_needed()
@@ -660,7 +673,7 @@ class GeminiDiagramVisionService:
             raise ValueError("Gemini returned no JSON text")
 
         return {
-            "provider_name": "gemini",
+            "provider_name": self.provider_name,
             "model_name": self.model,
             "prompt_version": PROMPT_VERSION,
             "request_payload": payload,
@@ -1167,7 +1180,7 @@ def run_diagram_analysis_for_document(
             failure_raw_response = None
             if result:
                 failure_payload = dict(result.get("request_payload") or {})
-                failure_payload["_gemini_response_text"] = result.get("response_text", "")
+                failure_payload["_response_text"] = result.get("response_text", "")
                 if result.get("candidate_metadata"):
                     failure_payload["_candidate_metadata"] = result.get("candidate_metadata")
                 if result.get("parse_metadata"):
@@ -1176,7 +1189,7 @@ def run_diagram_analysis_for_document(
             save_diagram_analysis_failure(
                 cur,
                 block_id=item.block_id,
-                provider_name="gemini",
+                provider_name=(result or {}).get("provider_name") or _get_diagram_vision_provider_name(),
                 model_name=(result or {}).get("model_name") or selected_model,
                 prompt_version=PROMPT_VERSION,
                 request_payload=failure_payload,
