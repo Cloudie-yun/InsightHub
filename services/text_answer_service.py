@@ -13,11 +13,20 @@ from json import JSONDecodeError
 from typing import Any
 from urllib import error, request
 
+try:
+    from google import genai
+    from google.genai.types import GenerateContentConfig, HttpOptions
+except ImportError:  # pragma: no cover - optional until dependency is installed
+    genai = None
+    GenerateContentConfig = None
+    HttpOptions = None
+
 from services.quota_router import (
     TASK_TYPE_TEXT,
     QuotaRouterError,
     classify_quota_error,
     extract_response_headers,
+    get_task_models,
     get_quota_project_id,
     pick_available_model,
     record_model_success,
@@ -97,6 +106,42 @@ PROMPT_PROFILES = {
         "max_sentences": 6,
     },
 }
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_default_vertex_text_model(default_model: str) -> str:
+    return (
+        str(os.environ.get("VERTEX_AI_TEXT_MODEL") or "").strip()
+        or str(os.environ.get("VERTEX_AI_MODEL") or "").strip()
+        or default_model
+    )
+
+
+def _is_vertex_ai_enabled() -> bool:
+    return _is_truthy_env(os.environ.get("VERTEX_AI_ENABLED"))
+
+
+def _get_vertex_ai_project() -> str:
+    return (
+        str(os.environ.get("VERTEX_AI_PROJECT") or "").strip()
+        or str(os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
+    )
+
+
+def _get_vertex_ai_location() -> str:
+    return str(os.environ.get("VERTEX_AI_LOCATION") or "global").strip() or "global"
+
+
+def _get_text_provider_order(*, has_gemini_api_key: bool) -> list[str]:
+    providers: list[str] = []
+    if has_gemini_api_key:
+        providers.append("gemini")
+    if _is_vertex_ai_enabled():
+        providers.append("vertex_ai")
+    return providers
 
 
 @dataclass
@@ -329,10 +374,57 @@ def _parse_retry_after(value: str | None) -> float | None:
     return max(0.0, (parsed_dt - datetime.now(timezone.utc)).total_seconds())
 
 
+def _safe_model_dump(payload: Any) -> Any:
+    if payload is None:
+        return None
+    model_dump = getattr(payload, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return model_dump()
+        except TypeError:
+            return model_dump(mode="json")
+    to_json_dict = getattr(payload, "to_json_dict", None)
+    if callable(to_json_dict):
+        return to_json_dict()
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, (list, tuple)):
+        return [_safe_model_dump(item) for item in payload]
+    if isinstance(payload, (str, int, float, bool)):
+        return payload
+    return {"repr": repr(payload)}
+
+
+def _extract_text_from_parts(parts: Any) -> str:
+    extracted_text: list[str] = []
+    for part in parts or []:
+        if isinstance(part, dict):
+            text = str(part.get("text") or "").strip()
+        else:
+            text = str(getattr(part, "text", "") or "").strip()
+        if text:
+            extracted_text.append(text)
+    return "\n".join(extracted_text).strip()
+
+
+def _extract_vertex_candidate_metadata(response: Any) -> dict[str, Any]:
+    response_dict = _safe_model_dump(response) or {}
+    candidates = response_dict.get("candidates") or []
+    candidate = candidates[0] if candidates else {}
+    finish_reason = candidate.get("finish_reason") or candidate.get("finishReason")
+    return {
+        "finish_reason": str(finish_reason or "").strip().split(".")[-1],
+        "usage_metadata": response_dict.get("usage_metadata") or response_dict.get("usageMetadata") or {},
+    }
+
+
 class TextAnswerService:
     def __init__(self) -> None:
         self.api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
         self.default_model = str(os.environ.get("GEMINI_TEXT_MODEL") or "gemini-2.5-flash").strip()
+        self.vertex_default_model = _get_default_vertex_text_model(self.default_model)
+        self.vertex_project = _get_vertex_ai_project()
+        self.vertex_location = _get_vertex_ai_location()
         self.max_output_tokens = max(256, DEFAULT_MAX_OUTPUT_TOKENS)
         self.temperature = float(os.environ.get("GEMINI_TEXT_TEMPERATURE", "0.2"))
         self.top_p = float(os.environ.get("GEMINI_TEXT_TOP_P", "0.95"))
@@ -351,10 +443,11 @@ class TextAnswerService:
         selected_document_ids: list[str],
         conversation_context: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
-        if not self.api_key:
+        provider_order = _get_text_provider_order(has_gemini_api_key=bool(self.api_key))
+        if not provider_order:
             raise TextAnswerServiceError(
-                code="missing_api_key",
-                message="Gemini API key is missing. Set GEMINI_API_KEY.",
+                code="text_provider_unavailable",
+                message="Grounded Q&A requires GEMINI_API_KEY or Vertex AI to be enabled with ADC and project configuration.",
                 retryable=False,
                 details={},
             )
@@ -371,10 +464,11 @@ class TextAnswerService:
             )
 
         project_id = get_quota_project_id()
+        configured_models = get_task_models(TASK_TYPE_TEXT, fallback_model=self.default_model)
         attempted_models: list[str] = []
-        fallback_errors: list[TextAnswerServiceError] = []
+        last_error: TextAnswerServiceError | None = None
 
-        while True:
+        while len(attempted_models) < len(configured_models):
             try:
                 selected_model = pick_available_model(
                     TASK_TYPE_TEXT,
@@ -383,15 +477,16 @@ class TextAnswerService:
                     excluded_models=attempted_models,
                 )
             except QuotaRouterError as exc:
-                last_error = fallback_errors[-1] if fallback_errors else None
+                if last_error is not None:
+                    raise last_error
                 raise TextAnswerServiceError(
                     code="quota_router_unavailable",
                     message=str(exc),
                     retryable=True,
-                    retry_after_seconds=last_error.retry_after_seconds if last_error else None,
+                    retry_after_seconds=None,
                     details={
                         "attempted_models": attempted_models,
-                        "last_error": last_error.to_dict() if last_error else None,
+                        "last_error": None,
                     },
                 ) from exc
 
@@ -402,76 +497,91 @@ class TextAnswerService:
                 selected_document_ids=selected_document_ids,
                 conversation_context=conversation_context or [],
             )
-            url = f"{GEMINI_API_BASE}/models/{selected_model}:generateContent?key={self.api_key}"
+            prompt_profile = self._select_prompt_profile(
+                query=query,
+                conversation_context=conversation_context or [],
+            )["label"]
 
-            try:
-                raw_response, response_headers = self._post_json_with_backoff(url=url, payload=payload)
-                response_text = (
-                    raw_response.get("candidates", [{}])[0]
-                    .get("content", {})
-                    .get("parts", [{}])[0]
-                    .get("text", "")
-                    .strip()
-                )
-                if not response_text:
-                    raise TextAnswerServiceError(
-                        code="empty_provider_response",
-                        message="Gemini returned no answer text.",
-                        details={"raw_response_keys": list(raw_response.keys())},
-                    )
-                parsed = _parse_gemini_json_text(response_text)
-                answer_text = str(parsed.get("answer_text") or "").strip()
-                if not answer_text:
-                    raise TextAnswerServiceError(
-                        code="empty_answer_text",
-                        message="Grounded answer generation returned an empty answer.",
-                        details={},
-                    )
-                citation_block_ids = [
-                    str(item).strip()
-                    for item in (parsed.get("citation_block_ids") or [])
-                    if str(item).strip()
-                ]
-                confidence = str(parsed.get("confidence") or "").strip().lower()
-                if confidence not in {"high", "partial", "insufficient"}:
-                    confidence = "partial" if citation_block_ids else "insufficient"
+            for provider_name in provider_order:
+                try:
+                    if provider_name == "gemini":
+                        raw_response, response_headers, candidate_metadata = self._request_with_gemini(
+                            model_name=selected_model,
+                            payload=payload,
+                        )
+                    elif provider_name == "vertex_ai":
+                        raw_response, response_headers, candidate_metadata = self._request_with_vertex_ai(
+                            model_name=selected_model,
+                            payload=payload,
+                        )
+                    else:
+                        continue
 
-                record_model_success(
-                    project_id=project_id,
-                    model_name=selected_model,
-                    request_count=1,
-                    token_count=self._resolve_token_count(raw_response),
-                    response_headers=response_headers,
-                )
-                return {
-                    "answer_text": answer_text,
-                    "citation_block_ids": citation_block_ids,
-                    "model_provider": "gemini",
-                    "model_name": selected_model,
-                    "prompt_version": PROMPT_VERSION,
-                    "prompt_profile": self._select_prompt_profile(
-                        query=query,
-                        conversation_context=conversation_context or [],
-                    )["label"],
-                    "confidence": confidence,
-                    "response_headers": response_headers,
-                }
-            except TextAnswerServiceError as exc:
-                quota_error_code = classify_quota_error(
-                    status_code=exc.status_code,
-                    message=exc.message,
-                    details=exc.details,
-                )
-                if not quota_error_code:
-                    raise
-                record_quota_failure(
-                    project_id=project_id,
-                    model_name=selected_model,
-                    error_code=quota_error_code,
-                    retry_after_seconds=exc.retry_after_seconds,
-                    response_headers=extract_response_headers(exc.details),
-                )
-                fallback_errors.append(exc)
+                    parsed = self._parse_provider_payload(
+                        provider_name=provider_name,
+                        raw_response=raw_response,
+                        candidate_metadata=candidate_metadata,
+                    )
+                    answer_text = str(parsed.get("answer_text") or "").strip()
+                    if not answer_text:
+                        raise TextAnswerServiceError(
+                            code="empty_answer_text",
+                            message="Grounded answer generation returned an empty answer.",
+                            details={},
+                        )
+                    citation_block_ids = [
+                        str(item).strip()
+                        for item in (parsed.get("citation_block_ids") or [])
+                        if str(item).strip()
+                    ]
+                    confidence = str(parsed.get("confidence") or "").strip().lower()
+                    if confidence not in {"high", "partial", "insufficient"}:
+                        confidence = "partial" if citation_block_ids else "insufficient"
+
+                    if provider_name == "gemini":
+                        record_model_success(
+                            project_id=project_id,
+                            model_name=selected_model,
+                            request_count=1,
+                            token_count=self._resolve_token_count(raw_response, candidate_metadata=candidate_metadata),
+                            response_headers=response_headers,
+                        )
+
+                    return {
+                        "answer_text": answer_text,
+                        "citation_block_ids": citation_block_ids,
+                        "model_provider": provider_name,
+                        "model_name": selected_model if provider_name == "gemini" else (str(raw_response.get("modelVersion") or raw_response.get("model") or self.vertex_default_model).strip() or self.vertex_default_model),
+                        "prompt_version": PROMPT_VERSION,
+                        "prompt_profile": prompt_profile,
+                        "confidence": confidence,
+                        "response_headers": response_headers,
+                    }
+                except TextAnswerServiceError as exc:
+                    last_error = exc
+                    if provider_name == "gemini":
+                        quota_error_code = classify_quota_error(
+                            status_code=exc.status_code,
+                            message=exc.message,
+                            details=exc.details,
+                        )
+                        if quota_error_code:
+                            record_quota_failure(
+                                project_id=project_id,
+                                model_name=selected_model,
+                                error_code=quota_error_code,
+                                retry_after_seconds=exc.retry_after_seconds,
+                                response_headers=extract_response_headers(exc.details),
+                            )
+
+        if last_error is not None:
+            raise last_error
+        raise TextAnswerServiceError(
+            code="text_provider_unavailable",
+            message="Grounded Q&A is unavailable because no text provider could be used.",
+            retryable=True,
+            details={},
+        )
 
     def _build_payload(
         self,
@@ -570,6 +680,132 @@ class TextAnswerService:
                 "maxOutputTokens": self.max_output_tokens,
             },
         }
+
+    def _request_with_gemini(
+        self,
+        *,
+        model_name: str,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
+        if not self.api_key:
+            raise TextAnswerServiceError(
+                code="missing_api_key",
+                message="Gemini API key is missing. Set GEMINI_API_KEY.",
+                retryable=False,
+                details={},
+            )
+        url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent?key={self.api_key}"
+        raw_response, response_headers = self._post_json_with_backoff(url=url, payload=payload)
+        candidate_metadata = (
+            raw_response.get("candidates", [{}])[0]
+            if isinstance(raw_response.get("candidates"), list) and raw_response.get("candidates")
+            else {}
+        )
+        return raw_response, response_headers, candidate_metadata
+
+    def _request_with_vertex_ai(
+        self,
+        *,
+        model_name: str,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
+        if genai is None or GenerateContentConfig is None or HttpOptions is None:
+            raise TextAnswerServiceError(
+                code="vertex_ai_unavailable",
+                message="google-genai is not installed; Vertex AI grounded Q&A fallback is unavailable.",
+                retryable=False,
+                details={},
+            )
+        if not self.vertex_project:
+            raise TextAnswerServiceError(
+                code="vertex_ai_misconfigured",
+                message="VERTEX_AI_PROJECT or GOOGLE_CLOUD_PROJECT is required for Vertex AI grounded Q&A.",
+                retryable=False,
+                details={},
+            )
+
+        client = genai.Client(
+            vertexai=True,
+            project=self.vertex_project,
+            location=self.vertex_location,
+            http_options=HttpOptions(api_version="v1"),
+        )
+        try:
+            response = client.models.generate_content(
+                model=model_name or self.vertex_default_model,
+                contents=payload.get("contents") or [],
+                config=GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=ANSWER_RESPONSE_SCHEMA,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_output_tokens=self.max_output_tokens,
+                ),
+            )
+        except Exception as exc:
+            status_code = int(getattr(exc, "code", 0) or getattr(exc, "status_code", 0) or 0) or None
+            retry_after_seconds = _parse_retry_after(
+                getattr(exc, "response", None) and getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After")
+            )
+            raise TextAnswerServiceError(
+                code="vertex_ai_request_failed",
+                message=f"Vertex AI request failed: {exc}",
+                status_code=status_code or 503,
+                retryable=bool(status_code == 429 or (status_code and 500 <= status_code < 600)),
+                retry_after_seconds=retry_after_seconds,
+                details={
+                    "response_body": str(exc)[:1000],
+                    "response_headers": {},
+                    "exception_type": exc.__class__.__name__,
+                },
+            ) from exc
+
+        response_dict = _safe_model_dump(response) or {}
+        return response_dict, {}, _extract_vertex_candidate_metadata(response)
+
+    def _parse_provider_payload(
+        self,
+        *,
+        provider_name: str,
+        raw_response: dict[str, Any],
+        candidate_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        response_text = ""
+        candidates = raw_response.get("candidates") if isinstance(raw_response.get("candidates"), list) else []
+        first_candidate = candidates[0] if candidates else {}
+        if provider_name == "gemini":
+            response_text = (
+                first_candidate
+                .get("content", {})
+                .get("parts", [{}])[0]
+                .get("text", "")
+                .strip()
+            )
+        else:
+            response_text = str(raw_response.get("text") or "").strip()
+            if not response_text:
+                response_text = _extract_text_from_parts(
+                    (first_candidate.get("content") or {}).get("parts") or []
+                )
+
+        if not response_text:
+            provider_label = "Vertex AI" if provider_name == "vertex_ai" else "Gemini"
+            raise TextAnswerServiceError(
+                code="empty_provider_response",
+                message=f"{provider_label} returned no answer text.",
+                details={"raw_response_keys": list(raw_response.keys())},
+            )
+
+        finish_reason = str(candidate_metadata.get("finish_reason") or "").strip().upper()
+        if finish_reason == "MAX_TOKENS":
+            provider_label = "Vertex AI" if provider_name == "vertex_ai" else "Gemini"
+            raise TextAnswerServiceError(
+                code="truncated_provider_response",
+                message=f"{provider_label} response was truncated before JSON completed.",
+                details={"response_preview": response_text[:500]},
+            )
+
+        return _parse_gemini_json_text(response_text)
 
     def _select_prompt_profile(
         self,
@@ -683,12 +919,24 @@ class TextAnswerService:
             details={},
         )
 
-    def _extract_usage_metadata(self, raw_response: dict[str, Any]) -> dict[str, Any]:
-        usage_metadata = raw_response.get("usageMetadata")
+    def _extract_usage_metadata(
+        self,
+        raw_response: dict[str, Any],
+        *,
+        candidate_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        usage_metadata = raw_response.get("usageMetadata") or raw_response.get("usage_metadata")
+        if not isinstance(usage_metadata, dict) and isinstance(candidate_metadata, dict):
+            usage_metadata = candidate_metadata.get("usage_metadata") or candidate_metadata.get("usageMetadata")
         return usage_metadata if isinstance(usage_metadata, dict) else {}
 
-    def _resolve_token_count(self, raw_response: dict[str, Any]) -> int:
-        usage_metadata = self._extract_usage_metadata(raw_response)
+    def _resolve_token_count(
+        self,
+        raw_response: dict[str, Any],
+        *,
+        candidate_metadata: dict[str, Any] | None = None,
+    ) -> int:
+        usage_metadata = self._extract_usage_metadata(raw_response, candidate_metadata=candidate_metadata)
         total_token_count = usage_metadata.get("totalTokenCount")
         if isinstance(total_token_count, (int, float)):
             return max(0, int(total_token_count))

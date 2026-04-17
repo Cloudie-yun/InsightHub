@@ -444,6 +444,9 @@ body.theme-dark .chat-input-container:focus-within { box-shadow: 0 0 0 2px rgba(
   width: 72px;
   height: 510px;
 }
+#chat-messages {
+  transition: padding 180ms ease;
+}
 .prompt-rail-left {
   left: 1rem;
 }
@@ -601,6 +604,14 @@ body.theme-dark .prompt-rail-tooltip-preview {
 @media (max-width: 1279px) {
   .prompt-rail-floating {
     display: none !important;
+  }
+}
+@media (min-width: 1280px) {
+  #chat-messages.prompt-rail-space-left {
+    padding-left: calc(1rem + 72px + 1.25rem);
+  }
+  #chat-messages.prompt-rail-space-right {
+    padding-right: calc(1rem + 72px + 1.75rem);
   }
 }
 body.theme-dark .app-toast {
