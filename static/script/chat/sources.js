@@ -62,8 +62,14 @@
             .filter(Boolean)
     );
 
+    ns.isSourceNodeVisible = (node) => {
+        if (!node) return false;
+        if (node.classList.contains("hidden")) return false;
+        return window.getComputedStyle(node).display !== "none";
+    };
+
     ns.getVisibleSourceSelectButtons = () => (
-        ns.getSourceSelectButtons().filter((button) => !button.closest(".hidden"))
+        ns.getSourceSelectButtons().filter((button) => ns.isSourceNodeVisible(button.closest("[data-doc-id], [data-temp-upload-id]")))
     );
 
     ns.bindSourceSelectButton = (button) => {

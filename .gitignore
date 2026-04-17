@@ -7,7 +7,4 @@ __pycache__/
 # Documents
 uploads/
 
-*.sql
-migrations/*.sql
-migrations/*.md
 

@@ -18,6 +18,14 @@ from typing import Any
 from urllib import error, request
 
 from psycopg2.extras import Json
+try:
+    from google import genai
+    from google.genai.types import GenerateContentConfig, HttpOptions, Part
+except ImportError:  # pragma: no cover - optional until dependency is installed
+    genai = None
+    GenerateContentConfig = None
+    HttpOptions = None
+    Part = None
 
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
@@ -45,9 +53,47 @@ def _get_default_gemini_model() -> str:
     return os.environ.get("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 
 
+def _get_default_vertex_model() -> str:
+    return (
+        os.environ.get("VERTEX_AI_MODEL")
+        or os.environ.get("GEMINI_VISION_MODEL")
+        or "gemini-2.5-flash"
+    )
+
+
+def is_vertex_ai_enabled() -> bool:
+    return _is_truthy_env(os.environ.get("VERTEX_AI_ENABLED"))
+
+
+def get_diagram_vision_provider_order(*, has_gemini_api_key: bool | None = None) -> list[str]:
+    providers: list[str] = []
+    if has_gemini_api_key is None:
+        has_gemini_api_key = bool(str(os.environ.get("GEMINI_API_KEY") or "").strip())
+    if has_gemini_api_key:
+        providers.append("gemini")
+    if is_vertex_ai_enabled():
+        providers.append("vertex_ai")
+    return providers
+
+
+def get_primary_diagram_vision_provider(*, has_gemini_api_key: bool | None = None) -> str:
+    ordered_providers = get_diagram_vision_provider_order(has_gemini_api_key=has_gemini_api_key)
+    return ordered_providers[0] if ordered_providers else "gemini"
+
+
 def _get_diagram_vision_provider_name() -> str:
-    vertex_enabled = str(os.environ.get("VERTEX_AI_ENABLED", "")).strip().lower()
-    return "vertex_ai" if vertex_enabled in {"1", "true", "yes", "on"} else "gemini"
+    return get_primary_diagram_vision_provider()
+
+
+def _get_vertex_ai_project() -> str:
+    return (
+        str(os.environ.get("VERTEX_AI_PROJECT") or "").strip()
+        or str(os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
+    )
+
+
+def _get_vertex_ai_location() -> str:
+    return str(os.environ.get("VERTEX_AI_LOCATION") or "global").strip() or "global"
 
 
 def _get_max_diagram_vision_model_attempts() -> int:
@@ -262,6 +308,8 @@ class DiagramVisionRequestError(RuntimeError):
 
 
 def _should_retry_with_another_model(exc: Exception) -> bool:
+    if isinstance(exc, (FileNotFoundError, PermissionError)):
+        return False
     if isinstance(exc, DiagramVisionRequestError):
         return True
     if isinstance(exc, ValueError):
@@ -272,6 +320,9 @@ def _should_retry_with_another_model(exc: Exception) -> bool:
                 "gemini returned no json text",
                 "gemini response was truncated",
                 "gemini returned invalid json text",
+                "vertex ai returned no json text",
+                "vertex ai response was truncated",
+                "vertex ai returned invalid json text",
             )
         )
     return False
@@ -558,6 +609,52 @@ def _extract_candidate_metadata(raw_response: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _safe_model_dump(payload: Any) -> Any:
+    if payload is None:
+        return None
+    model_dump = getattr(payload, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return model_dump(exclude_none=True)
+        except TypeError:
+            return model_dump()
+    to_json_dict = getattr(payload, "to_json_dict", None)
+    if callable(to_json_dict):
+        return to_json_dict()
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, (list, tuple)):
+        return [_safe_model_dump(item) for item in payload]
+    if isinstance(payload, (str, int, float, bool)):
+        return payload
+    return {"repr": repr(payload)}
+
+
+def _extract_text_from_parts(parts: Any) -> str:
+    extracted_text: list[str] = []
+    for part in parts or []:
+        if isinstance(part, dict):
+            text = str(part.get("text") or "").strip()
+        else:
+            text = str(getattr(part, "text", "") or "").strip()
+        if text:
+            extracted_text.append(text)
+    return "\n".join(extracted_text).strip()
+
+
+def _extract_vertex_candidate_metadata(response: Any) -> dict[str, Any]:
+    response_dict = _safe_model_dump(response) or {}
+    candidates = response_dict.get("candidates") or []
+    candidate = candidates[0] if candidates else {}
+    finish_reason = candidate.get("finish_reason") or candidate.get("finishReason")
+    return {
+        "finish_reason": str(finish_reason or "").strip().split(".")[-1],
+        "safety_ratings": candidate.get("safety_ratings") or candidate.get("safetyRatings") or [],
+        "avg_logprobs": candidate.get("avg_logprobs") or candidate.get("avgLogprobs"),
+        "usage_metadata": response_dict.get("usage_metadata") or response_dict.get("usageMetadata") or {},
+    }
+
+
 def resolve_image_path(storage_path: str) -> str:
     raw_path = str(storage_path or "").strip()
     if not raw_path:
@@ -703,6 +800,150 @@ class GeminiDiagramVisionService:
     def analyze(self, item: DiagramVisionInput) -> dict[str, Any]:
         captured_result = self.request_analysis(item)
         return self.parse_analysis_result(captured_result)
+
+
+class VertexDiagramVisionService:
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        timeout_seconds: int = 60,
+        provider_name: str = "vertex_ai",
+    ) -> None:
+        self.model = model or _get_default_vertex_model()
+        self.timeout_seconds = timeout_seconds
+        self.provider_name = provider_name
+        self.project = _get_vertex_ai_project()
+        self.location = _get_vertex_ai_location()
+
+    def _build_client(self):
+        if genai is None or HttpOptions is None:
+            raise RuntimeError("google-genai is not installed; Vertex AI fallback is unavailable")
+        if not self.project:
+            raise RuntimeError("VERTEX_AI_PROJECT or GOOGLE_CLOUD_PROJECT is required for Vertex AI diagram analysis")
+        return genai.Client(
+            vertexai=True,
+            project=self.project,
+            location=self.location,
+            http_options=HttpOptions(api_version="v1"),
+        )
+
+    def request_analysis(self, item: DiagramVisionInput) -> dict[str, Any]:
+        resolved_image_path = resolve_image_path(item.image_path)
+        image_path = Path(resolved_image_path)
+        mime_type = _guess_mime_type(str(image_path))
+        image_bytes = image_path.read_bytes()
+        prompt_text = build_diagram_prompt(caption=item.caption_text, nearby_text=item.nearby_text)
+
+        request_payload = {
+            "contents": [
+                prompt_text,
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "byte_length": len(image_bytes),
+                        "source_path": str(image_path),
+                    }
+                },
+            ],
+            "config": {
+                "response_mime_type": "application/json",
+                "response_schema": DIAGRAM_RESPONSE_SCHEMA,
+                "temperature": 0.1,
+                "top_p": 0.95,
+                "max_output_tokens": GEMINI_VISION_MAX_OUTPUT_TOKENS,
+            },
+            "vertex": {
+                "project": self.project,
+                "location": self.location,
+            },
+        }
+
+        client = self._build_client()
+        try:
+            response = client.models.generate_content(
+                model=self.model,
+                contents=[
+                    prompt_text,
+                    Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                ],
+                config=GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=DIAGRAM_RESPONSE_SCHEMA,
+                    temperature=0.1,
+                    top_p=0.95,
+                    max_output_tokens=GEMINI_VISION_MAX_OUTPUT_TOKENS,
+                ),
+            )
+        except Exception as exc:
+            status_code = int(getattr(exc, "code", 0) or getattr(exc, "status_code", 0) or 0) or None
+            retry_after_seconds = _parse_retry_after(
+                getattr(exc, "response", None) and getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After")
+            )
+            raise DiagramVisionRequestError(
+                message=f"Vertex AI request failed: {exc}",
+                status_code=status_code,
+                retry_after_seconds=retry_after_seconds,
+                details={
+                    "response_body": str(exc)[:1000],
+                    "response_headers": {},
+                    "exception_type": exc.__class__.__name__,
+                },
+            ) from exc
+
+        response_text = str(getattr(response, "text", "") or "").strip()
+        if not response_text:
+            response_dict = _safe_model_dump(response) or {}
+            response_text = _extract_text_from_parts(
+                ((response_dict.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+            )
+        if not response_text:
+            raise ValueError("Vertex AI returned no JSON text")
+
+        return {
+            "provider_name": self.provider_name,
+            "model_name": self.model,
+            "prompt_version": PROMPT_VERSION,
+            "request_payload": request_payload,
+            "raw_response": _safe_model_dump(response) or {},
+            "response_text": response_text,
+            "candidate_metadata": _extract_vertex_candidate_metadata(response),
+            "response_headers": {},
+        }
+
+    def parse_analysis_result(self, analysis_result: dict[str, Any]) -> dict[str, Any]:
+        response_text = analysis_result.get("response_text", "")
+        candidate_metadata = analysis_result.get("candidate_metadata") or {}
+        finish_reason = str(candidate_metadata.get("finish_reason") or "").strip().upper()
+
+        if finish_reason == "MAX_TOKENS":
+            raise ValueError(
+                "Vertex AI response was truncated by max_output_tokens before JSON completed. "
+                f"finish_reason={finish_reason}. Response text preview: {response_text[:500]}"
+            )
+
+        try:
+            parsed_output, parse_metadata = _parse_gemini_json_text(response_text)
+        except ValueError as exc:
+            raise ValueError(str(exc).replace("Gemini", "Vertex AI")) from exc
+        enriched_result = dict(analysis_result)
+        enriched_result["parsed_output"] = parsed_output
+        enriched_result["parse_metadata"] = parse_metadata
+        return enriched_result
+
+    def analyze(self, item: DiagramVisionInput) -> dict[str, Any]:
+        captured_result = self.request_analysis(item)
+        return self.parse_analysis_result(captured_result)
+
+
+def _build_diagram_vision_service(provider_name: str, *, api_key: str | None, model: str):
+    if provider_name == "vertex_ai":
+        return VertexDiagramVisionService(model=model)
+    if provider_name == "gemini":
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is required for Gemini diagram analysis")
+        return GeminiDiagramVisionService(api_key=api_key, model=model, provider_name="gemini")
+    raise RuntimeError(f"Unsupported diagram vision provider: {provider_name}")
 
 
 def save_diagram_analysis(cur, *, block_id: str, image_asset_id: str | None, diagram_kind: str, analysis_result: dict[str, Any]) -> None:
@@ -1069,8 +1310,11 @@ def run_diagram_analysis_for_document(
     force_analyze: bool = False,
 ) -> dict[str, Any]:
     api_key = api_key or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is required for diagram analysis")
+    provider_order = get_diagram_vision_provider_order(has_gemini_api_key=bool(str(api_key or "").strip()))
+    if not provider_order:
+        raise RuntimeError(
+            "Diagram analysis requires GEMINI_API_KEY or Vertex AI to be enabled with ADC and project configuration"
+        )
 
     project_id = get_quota_project_id()
     outcome = _empty_analysis_result()
@@ -1130,36 +1374,46 @@ def run_diagram_analysis_for_document(
                     ) from exc
 
                 attempted_models.append(selected_model)
-                service = GeminiDiagramVisionService(api_key=api_key, model=selected_model)
-                try:
-                    result = service.request_analysis(item)
-                    result = service.parse_analysis_result(result)
-                    record_model_success(
-                        project_id=project_id,
-                        model_name=selected_model,
-                        request_count=1,
-                        response_headers=result.get("response_headers") or {},
-                    )
-                    break
-                except Exception as exc:
-                    quota_error_code = classify_quota_error(
-                        status_code=getattr(exc, "status_code", None),
-                        message=str(exc),
-                        details=getattr(exc, "details", None),
-                    )
-                    if quota_error_code:
-                        record_quota_failure(
+                provider_attempt_failed = True
+                for provider_name in provider_order:
+                    try:
+                        service = _build_diagram_vision_service(
+                            provider_name,
+                            api_key=api_key,
+                            model=selected_model,
+                        )
+                        result = service.request_analysis(item)
+                        result = service.parse_analysis_result(result)
+                        record_model_success(
                             project_id=project_id,
                             model_name=selected_model,
-                            error_code=quota_error_code,
-                            retry_after_seconds=getattr(exc, "retry_after_seconds", None),
-                            response_headers=getattr(exc, "details", {}).get("response_headers", {}) if hasattr(exc, "details") else {},
+                            request_count=1,
+                            response_headers=result.get("response_headers") or {},
                         )
-                    elif not _should_retry_with_another_model(exc):
-                        raise
-                    fallback_errors.append(f"{selected_model}: {exc}")
-                    continue
-                fallback_errors.append(f"{selected_model}: {exc}")
+                        provider_attempt_failed = False
+                        break
+                    except Exception as exc:
+                        quota_error_code = classify_quota_error(
+                            status_code=getattr(exc, "status_code", None),
+                            message=str(exc),
+                            details=getattr(exc, "details", None),
+                        )
+                        if quota_error_code:
+                            record_quota_failure(
+                                project_id=project_id,
+                                model_name=selected_model,
+                                error_code=quota_error_code,
+                                retry_after_seconds=getattr(exc, "retry_after_seconds", None),
+                                response_headers=getattr(exc, "details", {}).get("response_headers", {}) if hasattr(exc, "details") else {},
+                            )
+                        elif not _should_retry_with_another_model(exc):
+                            raise
+                        fallback_errors.append(f"{selected_model}/{provider_name}: {exc}")
+                        continue
+
+                if not provider_attempt_failed:
+                    break
+                continue
             save_diagram_analysis(
                 cur,
                 block_id=item.block_id,
@@ -1189,7 +1443,9 @@ def run_diagram_analysis_for_document(
             save_diagram_analysis_failure(
                 cur,
                 block_id=item.block_id,
-                provider_name=(result or {}).get("provider_name") or _get_diagram_vision_provider_name(),
+                provider_name=(result or {}).get("provider_name") or get_primary_diagram_vision_provider(
+                    has_gemini_api_key=bool(str(api_key or "").strip())
+                ),
                 model_name=(result or {}).get("model_name") or selected_model,
                 prompt_version=PROMPT_VERSION,
                 request_payload=failure_payload,

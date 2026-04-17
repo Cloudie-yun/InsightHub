@@ -5,3 +5,4 @@ python-dotenv
 httpx
 beautifulsoup4
 sentence-transformers
+google-genai

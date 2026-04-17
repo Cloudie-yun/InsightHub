@@ -32,6 +32,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from services.document_parser import parse_document
 from services.diagram_vision_service import (
     DiagramVisionThrottleError,
+    get_diagram_vision_provider_order,
+    get_primary_diagram_vision_provider,
     run_diagram_analysis_for_document,
 )
 from services.embedding_worker import EmbeddingWorker
@@ -239,6 +241,8 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
     del cur
     project_id = get_quota_project_id()
     ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=os.getenv("GEMINI_VISION_MODEL", "gemini-3-flash"))
+    provider_order = get_diagram_vision_provider_order()
+    primary_provider = get_primary_diagram_vision_provider()
     usage_state = load_usage_state(project_id=project_id, model_names=ordered_models)
     now_utc = datetime.now(timezone.utc)
 
@@ -291,18 +295,20 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
     preferred_model = ordered_models[0] if ordered_models else os.getenv("GEMINI_VISION_MODEL", "gemini-3-flash")
     active_model = available_models[0] if available_models else None
     hover_parts = [f"{status['model_name']}: {status['status_label']}" for status in model_statuses]
+    if provider_order:
+        hover_parts.insert(0, f"Providers: {' -> '.join(provider_order)}")
     if earliest_reset_at is not None:
         hover_parts.append(f"Earliest reset: {earliest_reset_at.isoformat()}")
 
     return {
-        "provider": "gemini",
+        "provider": primary_provider,
         "project_id": project_id,
         "preferred_model": preferred_model,
         "active_model": active_model,
         "all_models_exhausted": not bool(available_models),
         "earliest_reset_at": earliest_reset_at.isoformat() if earliest_reset_at else None,
         "model_statuses": model_statuses,
-        "hover_text": " | ".join(hover_parts) if hover_parts else "No vision models configured.",
+        "hover_text": " | ".join(hover_parts) if hover_parts else "No vision providers configured.",
     }
 
 
@@ -315,7 +321,7 @@ def get_diagram_analysis_usage_summary() -> dict:
     except Exception:
         logger.exception("Unable to load diagram analysis usage summary")
         return {
-            "provider": "gemini",
+            "provider": get_primary_diagram_vision_provider(),
             "project_id": get_quota_project_id(),
             "preferred_model": os.getenv("GEMINI_VISION_MODEL", "gemini-3-flash"),
             "active_model": None,
@@ -1287,6 +1293,8 @@ def _build_parser_review_payload(document_result: dict) -> dict:
         block_id = str(block.get("block_id") or "")
         block_type = str(block.get("block_type") or "").lower()
         normalized = block.get("normalized_content") or {}
+        block_bbox = block.get("bbox") or {}
+        source_location = block.get("source_location") or {}
         counts[block_type] = counts.get(block_type, 0) + 1
 
         item = {
@@ -1303,6 +1311,10 @@ def _build_parser_review_payload(document_result: dict) -> dict:
             "embedding_status": block.get("embedding_status"),
             "processing_status": block.get("processing_status"),
             "linked_context": block.get("linked_context") or {},
+            "preview_anchor": {
+                "page_index": block.get("source_unit_index"),
+                "bbox": block_bbox or source_location.get("bbox") or {},
+            },
             "normalized_content": {},
         }
 
@@ -1351,6 +1363,15 @@ def _build_parser_review_payload(document_result: dict) -> dict:
                 "image_url": image_url,
                 "storage_path": storage_path,
                 "retrieval_text": normalized.get("retrieval_text") or "",
+            }
+            item["preview_anchor"] = {
+                "page_index": block.get("source_unit_index"),
+                "bbox": (
+                    block_bbox
+                    or ((detail.get("image_region") or {}).get("bbox") or {})
+                    or source_location.get("bbox")
+                    or {}
+                ),
             }
 
         review_blocks.append(item)

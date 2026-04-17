@@ -142,7 +142,13 @@
                         </a>
                     {% endif %}
                     {% if parser_document.preview_url %}
-                        <iframe src="{{ parser_document.preview_url }}" title="Document preview" class="h-[720px] w-full bg-white"></iframe>
+                        <div id="document-preview-shell" class="h-[720px] w-full overflow-y-auto bg-slate-100/80">
+                            <div id="document-preview-loading" class="flex h-full items-center justify-center px-6 text-center text-sm text-slate-500">
+                                Loading interactive preview...
+                            </div>
+                            <div id="document-preview-pages" class="hidden space-y-4 px-3 py-14"></div>
+                            <div id="document-preview-fallback" class="hidden h-full items-center justify-center px-6 text-center text-sm text-slate-500"></div>
+                        </div>
                     {% else %}
                         <div class="flex h-[420px] items-center justify-center px-6 text-center text-sm text-slate-500">Preview is not available for this file type yet.</div>
                     {% endif %}
@@ -202,6 +208,90 @@
     display: inline-flex;
 }
 
+.document-preview-page {
+    position: relative;
+    margin: 0 auto;
+    width: fit-content;
+    max-width: 100%;
+    border-radius: 1rem;
+    border: 1px solid rgba(226, 232, 240, 1);
+    background: #fff;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    overflow: hidden;
+}
+
+.document-preview-page-canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+.document-preview-overlay {
+    position: absolute;
+    inset: 0;
+}
+
+.document-preview-hotspot {
+    position: absolute;
+    border: 1px solid rgba(37, 99, 235, 0.18);
+    background: rgba(59, 130, 246, 0.08);
+    border-radius: 0.35rem;
+    transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.document-preview-hotspot:hover,
+.document-preview-hotspot:focus-visible {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: rgba(37, 99, 235, 0.44);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    outline: none;
+}
+
+.document-preview-hotspot.is-active {
+    background: rgba(14, 165, 233, 0.2);
+    border-color: rgba(2, 132, 199, 0.65);
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.18);
+}
+
+.document-preview-page-label {
+    position: absolute;
+    left: 0.9rem;
+    top: 0.9rem;
+    z-index: 3;
+    border-radius: 9999px;
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    background: rgba(255, 255, 255, 0.95);
+    padding: 0.3rem 0.65rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #475569;
+    backdrop-filter: blur(6px);
+}
+
+.review-card-linked-highlight {
+    animation: reviewCardLinkedPulse 1.6s ease;
+}
+
+@keyframes reviewCardLinkedPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.28);
+        border-color: rgba(59, 130, 246, 0.42);
+        transform: translateY(0);
+    }
+    35% {
+        box-shadow: 0 0 0 10px rgba(37, 99, 235, 0.08);
+        border-color: rgba(37, 99, 235, 0.55);
+        transform: translateY(-1px);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+        border-color: rgba(226, 232, 240, 1);
+        transform: translateY(0);
+    }
+}
+
 body.theme-dark .parser-review-header {
     border-color: rgba(148, 163, 184, 0.22) !important;
     background: rgba(15, 23, 42, 0.78) !important;
@@ -224,6 +314,23 @@ body.theme-dark .document-preview-open-link {
     background: rgba(15, 23, 42, 0.92) !important;
     color: #e2e8f0 !important;
 }
+
+body.theme-dark .document-preview-page {
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    background: rgba(15, 23, 42, 0.92) !important;
+    box-shadow: 0 12px 28px rgba(2, 6, 23, 0.35);
+}
+
+body.theme-dark .document-preview-page-label {
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    background: rgba(15, 23, 42, 0.9) !important;
+    color: #cbd5e1 !important;
+}
+
+body.theme-dark .document-preview-hotspot {
+    border-color: rgba(56, 189, 248, 0.22);
+    background: rgba(14, 165, 233, 0.12);
+}
 </style>
 
 <script>
@@ -237,6 +344,10 @@ let initialParserDocument = {{ parser_document|tojson }};
     const parserReviewLayout = document.getElementById("parser-review-layout");
     const reviewBlocksContainer = document.getElementById("review-blocks");
     const documentPreviewSidebar = document.getElementById("document-preview-sidebar");
+    const documentPreviewShell = document.getElementById("document-preview-shell");
+    const documentPreviewLoading = document.getElementById("document-preview-loading");
+    const documentPreviewPages = document.getElementById("document-preview-pages");
+    const documentPreviewFallback = document.getElementById("document-preview-fallback");
     const closeDocumentPreviewBtn = document.getElementById("close-document-preview-btn");
     const openDocumentPreviewBtn = document.getElementById("open-document-preview-btn");
     const saveReviewBtn = document.getElementById("save-review-btn");
@@ -254,6 +365,18 @@ let initialParserDocument = {{ parser_document|tojson }};
     const copyDiagramImageFeedbackTimers = new Map();
     const conversationId = {{ request.args.get('conversation_id')|tojson }};
     const selectedDiagramIds = new Set();
+    let linkedHighlightTimer = null;
+    let previewHighlightTimer = null;
+    const previewState = {
+        initialized: false,
+        ready: false,
+        loading: false,
+        pdfjsLib: null,
+        pdfDoc: null,
+        pendingFocusBlockId: "",
+        hotspotsByBlockId: new Map(),
+        renderedPageCount: 0,
+    };
     const esc = (v) => String(v || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
     const norm = (v) => String(v || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
     const absoluteUrl = (v) => {
@@ -266,6 +389,79 @@ let initialParserDocument = {{ parser_document|tojson }};
         }
     };
     const blocks = () => Array.isArray(parserDocument?.parser_result?.review_blocks) ? parserDocument.parser_result.review_blocks : [];
+    const currentPreviewUrl = () => String(parserDocument?.preview_url || "").trim();
+    const blockTypeLabel = (block) => {
+        const blockType = String(block?.block_type || "").toLowerCase();
+        if (blockType === "text") return "Text";
+        if (blockType === "table") return "Table";
+        if (blockType === "diagram") return "Diagram";
+        return "Block";
+    };
+    const getDirectLinkedBlockIds = (block) => {
+        const linkedContext = block?.linked_context || {};
+        const rawIds = [
+            ...(Array.isArray(linkedContext.explainer_block_ids) ? linkedContext.explainer_block_ids : []),
+            ...(Array.isArray(linkedContext.nearby_block_ids) ? linkedContext.nearby_block_ids : []),
+        ];
+        return [...new Set(rawIds.map((blockId) => String(blockId || "").trim()).filter(Boolean))];
+    };
+    const getReverseLinkedBlockIds = (targetBlockId) => {
+        const normalizedTarget = String(targetBlockId || "").trim();
+        if (!normalizedTarget) return [];
+        return blocks()
+            .filter((candidate) => getDirectLinkedBlockIds(candidate).includes(normalizedTarget))
+            .map((candidate) => String(candidate?.block_id || "").trim())
+            .filter(Boolean);
+    };
+    const getAllLinkedBlockIds = (block) => {
+        const blockId = String(block?.block_id || "").trim();
+        return [...new Set([...getDirectLinkedBlockIds(block), ...getReverseLinkedBlockIds(blockId)])]
+            .filter((candidateId) => candidateId && candidateId !== blockId);
+    };
+    const getPreviewAnchor = (block) => {
+        const anchor = block?.preview_anchor || {};
+        const bbox = anchor?.bbox || {};
+        const pageIndex = Number(anchor?.page_index || block?.source_unit_index || 0);
+        const x0 = Number(bbox?.x0);
+        const y0 = Number(bbox?.y0);
+        const x1 = Number(bbox?.x1);
+        const y1 = Number(bbox?.y1);
+        if (!Number.isFinite(pageIndex) || pageIndex <= 0) return null;
+        if (![x0, y0, x1, y1].every(Number.isFinite)) return null;
+        if (x1 <= x0 || y1 <= y0) return null;
+        return {
+            pageIndex,
+            bbox: {
+                x0: Math.max(0, Math.min(1, x0)),
+                y0: Math.max(0, Math.min(1, y0)),
+                x1: Math.max(0, Math.min(1, x1)),
+                y1: Math.max(0, Math.min(1, y1)),
+            },
+        };
+    };
+    const buildPreviewableBlocks = () => (
+        blocks()
+            .map((block) => ({ block, anchor: getPreviewAnchor(block) }))
+            .filter((item) => item.anchor)
+    );
+    const renderLinkedBlockPills = (block) => {
+        const linkedIds = getAllLinkedBlockIds(block);
+        if (!linkedIds.length) return "";
+        const items = linkedIds.map((linkedId) => {
+            const linkedBlock = findBlock(linkedId);
+            if (!linkedBlock) return "";
+            const sourceIndex = linkedBlock.source_unit_index ? `Source ${esc(linkedBlock.source_unit_index)}` : "Linked";
+            return `<button type="button" data-action="jump-block" data-target-block-id="${esc(linkedId)}" class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700">
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">${esc(blockTypeLabel(linkedBlock))}</span>
+                <span>${sourceIndex}</span>
+            </button>`;
+        }).filter(Boolean).join("");
+        if (!items) return "";
+        return `<div class="mt-3 rounded-2xl border border-slate-200 bg-white p-4">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Linked Extracted Content</p>
+            <div class="mt-3 flex flex-wrap gap-2">${items}</div>
+        </div>`;
+    };
     const setDocumentPreviewOpen = (isOpen) => {
         documentPreviewSidebar?.classList.toggle("document-preview-hidden", !isOpen);
         openDocumentPreviewBtn?.classList.toggle("hidden", isOpen);
@@ -538,6 +734,193 @@ let initialParserDocument = {{ parser_document|tojson }};
         document.getElementById("diagram-block-count").textContent = count.diagram;
     };
     const findBlock = (blockId) => blocks().find((block) => block.block_id === blockId);
+    const setPreviewFallbackMessage = (message) => {
+        if (documentPreviewFallback) {
+            documentPreviewFallback.textContent = message;
+            documentPreviewFallback.classList.remove("hidden");
+            documentPreviewFallback.classList.add("flex");
+        }
+        documentPreviewPages?.classList.add("hidden");
+        documentPreviewLoading?.classList.add("hidden");
+    };
+    const clearPreviewHighlight = () => {
+        previewState.hotspotsByBlockId.forEach((hotspots) => {
+            hotspots.forEach((hotspot) => hotspot.classList.remove("is-active"));
+        });
+        if (previewHighlightTimer) {
+            window.clearTimeout(previewHighlightTimer);
+            previewHighlightTimer = null;
+        }
+    };
+    const highlightPreviewBlock = (blockId) => {
+        const normalizedBlockId = String(blockId || "").trim();
+        if (!normalizedBlockId) return;
+        clearPreviewHighlight();
+        const hotspots = previewState.hotspotsByBlockId.get(normalizedBlockId) || [];
+        hotspots.forEach((hotspot) => hotspot.classList.add("is-active"));
+        if (hotspots.length) {
+            previewHighlightTimer = window.setTimeout(() => {
+                hotspots.forEach((hotspot) => hotspot.classList.remove("is-active"));
+                previewHighlightTimer = null;
+            }, 1800);
+        }
+    };
+    const focusReviewBlock = (blockId) => {
+        const normalizedBlockId = String(blockId || "").trim();
+        if (!normalizedBlockId) return;
+        if (activeFilter !== "all") {
+            activeFilter = "all";
+            document.querySelectorAll(".review-filter").forEach((button) => {
+                const isActive = button.dataset.filter === "all";
+                button.classList.toggle("bg-white", isActive);
+                button.classList.toggle("text-slate-900", isActive);
+                button.classList.toggle("shadow-sm", isActive);
+                button.classList.toggle("text-slate-500", !isActive);
+            });
+            renderBlocks();
+        }
+        const targetCard = reviewBlocksContainer?.querySelector(`[data-review-block-id="${CSS.escape(normalizedBlockId)}"]`);
+        if (!(targetCard instanceof HTMLElement)) return;
+        targetCard.scrollIntoView({ behavior: "smooth", block: "center" });
+        targetCard.classList.remove("review-card-linked-highlight");
+        void targetCard.offsetWidth;
+        targetCard.classList.add("review-card-linked-highlight");
+        if (linkedHighlightTimer) {
+            window.clearTimeout(linkedHighlightTimer);
+        }
+        linkedHighlightTimer = window.setTimeout(() => {
+            targetCard.classList.remove("review-card-linked-highlight");
+            linkedHighlightTimer = null;
+        }, 1800);
+    };
+    const focusPreviewBlock = async (blockId) => {
+        const normalizedBlockId = String(blockId || "").trim();
+        if (!normalizedBlockId || !documentPreviewShell) return;
+        setDocumentPreviewOpen(true);
+        if (!previewState.ready) {
+            previewState.pendingFocusBlockId = normalizedBlockId;
+            await initializeDocumentPreview();
+            return;
+        }
+        const hotspots = previewState.hotspotsByBlockId.get(normalizedBlockId) || [];
+        const firstHotspot = hotspots[0];
+        if (!(firstHotspot instanceof HTMLElement)) return;
+        firstHotspot.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        highlightPreviewBlock(normalizedBlockId);
+    };
+    const buildPreviewHotspot = (item, pageViewport) => {
+        const { block, anchor } = item;
+        const bbox = anchor?.bbox || {};
+        const hotspot = document.createElement("button");
+        hotspot.type = "button";
+        hotspot.className = "document-preview-hotspot";
+        hotspot.dataset.blockId = String(block.block_id || "");
+        hotspot.title = `${blockTypeLabel(block)} • Source ${String(block.source_unit_index || "") || "?"}`;
+        hotspot.style.left = `${bbox.x0 * pageViewport.width}px`;
+        hotspot.style.top = `${bbox.y0 * pageViewport.height}px`;
+        hotspot.style.width = `${Math.max(12, (bbox.x1 - bbox.x0) * pageViewport.width)}px`;
+        hotspot.style.height = `${Math.max(12, (bbox.y1 - bbox.y0) * pageViewport.height)}px`;
+        hotspot.addEventListener("click", () => {
+            focusReviewBlock(block.block_id);
+            highlightPreviewBlock(block.block_id);
+        });
+        return hotspot;
+    };
+    const refreshDocumentPreviewHotspots = () => {
+        if (!previewState.ready || !documentPreviewPages) return;
+        previewState.hotspotsByBlockId.clear();
+        const previewableBlocks = buildPreviewableBlocks();
+        documentPreviewPages.querySelectorAll("[data-preview-page]").forEach((pageNode) => {
+            const pageIndex = Number(pageNode.getAttribute("data-preview-page") || 0);
+            const overlay = pageNode.querySelector("[data-preview-overlay]");
+            const viewportWidth = Number(pageNode.getAttribute("data-viewport-width") || 0);
+            const viewportHeight = Number(pageNode.getAttribute("data-viewport-height") || 0);
+            if (!(overlay instanceof HTMLElement) || !pageIndex || !viewportWidth || !viewportHeight) return;
+            overlay.replaceChildren();
+            previewableBlocks
+                .filter((item) => item.anchor?.pageIndex === pageIndex)
+                .forEach((item) => {
+                    const hotspot = buildPreviewHotspot(item, { width: viewportWidth, height: viewportHeight });
+                    overlay.appendChild(hotspot);
+                    const blockId = String(item.block.block_id || "").trim();
+                    if (!previewState.hotspotsByBlockId.has(blockId)) {
+                        previewState.hotspotsByBlockId.set(blockId, []);
+                    }
+                    previewState.hotspotsByBlockId.get(blockId).push(hotspot);
+                });
+        });
+        if (previewState.pendingFocusBlockId) {
+            const pendingBlockId = previewState.pendingFocusBlockId;
+            previewState.pendingFocusBlockId = "";
+            focusPreviewBlock(pendingBlockId);
+        }
+    };
+    const initializeDocumentPreview = async () => {
+        if (previewState.initialized || previewState.loading || !documentPreviewShell) return;
+        const previewUrl = currentPreviewUrl();
+        if (!previewUrl) return;
+        previewState.loading = true;
+        previewState.initialized = true;
+        documentPreviewLoading?.classList.remove("hidden");
+        try {
+            const pdfjsLib = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@5.6.205/build/pdf.min.mjs");
+            pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.6.205/build/pdf.worker.min.mjs";
+            previewState.pdfjsLib = pdfjsLib;
+            const loadingTask = pdfjsLib.getDocument({
+                url: previewUrl,
+                withCredentials: true,
+            });
+            const pdfDoc = await loadingTask.promise;
+            previewState.pdfDoc = pdfDoc;
+            documentPreviewPages?.replaceChildren();
+            for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
+                const page = await pdfDoc.getPage(pageNumber);
+                const unscaledViewport = page.getViewport({ scale: 1 });
+                const availableWidth = Math.max(320, (documentPreviewShell.clientWidth || 640) - 24);
+                const scale = availableWidth / unscaledViewport.width;
+                const viewport = page.getViewport({ scale });
+                const pageWrap = document.createElement("div");
+                pageWrap.className = "document-preview-page";
+                pageWrap.setAttribute("data-preview-page", String(pageNumber));
+                pageWrap.setAttribute("data-viewport-width", String(viewport.width));
+                pageWrap.setAttribute("data-viewport-height", String(viewport.height));
+
+                const pageLabel = document.createElement("div");
+                pageLabel.className = "document-preview-page-label";
+                pageLabel.textContent = `Page ${pageNumber}`;
+
+                const canvas = document.createElement("canvas");
+                canvas.className = "document-preview-page-canvas";
+                canvas.width = Math.ceil(viewport.width);
+                canvas.height = Math.ceil(viewport.height);
+
+                const overlay = document.createElement("div");
+                overlay.className = "document-preview-overlay";
+                overlay.setAttribute("data-preview-overlay", "true");
+
+                pageWrap.appendChild(pageLabel);
+                pageWrap.appendChild(canvas);
+                pageWrap.appendChild(overlay);
+                documentPreviewPages?.appendChild(pageWrap);
+
+                await page.render({
+                    canvasContext: canvas.getContext("2d"),
+                    viewport,
+                }).promise;
+            }
+            documentPreviewLoading?.classList.add("hidden");
+            documentPreviewFallback?.classList.add("hidden");
+            documentPreviewFallback?.classList.remove("flex");
+            documentPreviewPages?.classList.remove("hidden");
+            previewState.ready = true;
+            previewState.renderedPageCount = pdfDoc.numPages;
+            refreshDocumentPreviewHotspots();
+        } catch (_error) {
+            setPreviewFallbackMessage("Interactive preview could not be loaded. Use Open Document to inspect the file directly.");
+        } finally {
+            previewState.loading = false;
+        }
+    };
     const renderText = (block, index) => {
         const n = block.normalized_content || {};
         const role = String(n.text_role || "paragraph");
@@ -545,7 +928,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         const value = n.text_content || n.normalized_text || block.display_text || "";
         const isEditing = editingBlockIds.has(String(block.block_id || ""));
         return `
-            <article data-block-type="text" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <article data-block-type="text" data-review-block-id="${esc(block.block_id)}" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
@@ -555,9 +938,14 @@ let initialParserDocument = {{ parser_document|tojson }};
                         </div>
                         <div><h3 class="text-lg font-semibold text-slate-900">Paragraph Context</h3><p class="text-sm text-slate-500">${path ? esc(path) : "Edit this text exactly as you want the chatbot to retrieve it."}</p></div>
                     </div>
-                    <button type="button" data-action="${isEditing ? "close-edit" : "toggle-edit"}" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
-                        <i class="fa-regular ${isEditing ? "fa-circle-check" : "fa-pen-to-square"}"></i>${isEditing ? "Done" : "Edit"}
-                    </button>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" data-action="locate-preview" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                            <i class="fa-regular fa-map"></i>Locate
+                        </button>
+                        <button type="button" data-action="${isEditing ? "close-edit" : "toggle-edit"}" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                            <i class="fa-regular ${isEditing ? "fa-circle-check" : "fa-pen-to-square"}"></i>${isEditing ? "Done" : "Edit"}
+                        </button>
+                    </div>
                 </div>
                 <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">${isEditing ? "Editable Text" : "Reader View"}</p>
@@ -565,6 +953,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                         ? `<textarea data-role="text-editor" data-block-id="${esc(block.block_id)}" class="mt-3 min-h-[220px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:ring-2 focus:ring-brand-100">${esc(value)}</textarea>`
                         : `<div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">${esc(value || "No text entered.")}</div>`}
                 </div>
+                ${renderLinkedBlockPills(block)}
             </article>
         `;
     };
@@ -587,7 +976,7 @@ let initialParserDocument = {{ parser_document|tojson }};
             </tr>
         `).join("");
         return `
-            <article data-block-type="table" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <article data-block-type="table" data-review-block-id="${esc(block.block_id)}" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
@@ -597,6 +986,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                         <div><h3 class="text-lg font-semibold text-slate-900">Structured Table Review</h3><p class="text-sm text-slate-500">Edit cells directly, then use the column controls to merge or delete structure.</p></div>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" data-action="locate-preview" data-block-id="${esc(block.block_id)}" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Locate</button>
                         <button type="button" data-action="add-row" data-block-id="${esc(block.block_id)}" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Add Row</button>
                         <button type="button" data-action="add-column" data-block-id="${esc(block.block_id)}" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">Add Column</button>
                     </div>
@@ -607,6 +997,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                         ${matrix.length ? `<table class="min-w-full border-separate border-spacing-0 text-left"><tbody>${body}</tbody></table>` : `<div class="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">No structured cells were found. Use Add Column and Add Row to build the table.</div>`}
                     </div>
                     ${headers.length ? `<div class="rounded-2xl border border-slate-200 bg-white p-4"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Header Snapshot</p><p class="mt-2 text-sm text-slate-700">${esc(headers.join(" | "))}</p></div>` : ""}
+                    ${renderLinkedBlockPills(block)}
                 </div>
             </article>
         `;
@@ -628,7 +1019,7 @@ let initialParserDocument = {{ parser_document|tojson }};
         const gateReasons = Array.isArray(n.vision_gate_reasons) ? n.vision_gate_reasons.filter(Boolean) : [];
         const isEditing = editingBlockIds.has(String(block.block_id || ""));
         return `
-            <article data-block-type="diagram" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <article data-block-type="diagram" data-review-block-id="${esc(block.block_id)}" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div class="space-y-2">
                         <div class="flex flex-wrap items-center gap-2">
@@ -639,6 +1030,9 @@ let initialParserDocument = {{ parser_document|tojson }};
                         <div><h3 class="text-lg font-semibold text-slate-900">Diagram Interpretation</h3><p class="text-sm text-slate-500">Describe what the diagram means so the chatbot can reason over it.</p></div>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" data-action="locate-preview" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                            <i class="fa-regular fa-map"></i>Locate
+                        </button>
                         <button type="button" data-action="${isEditing ? "close-edit" : "toggle-edit"}" data-block-id="${esc(block.block_id)}" class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50">
                             <i class="fa-regular ${isEditing ? "fa-circle-check" : "fa-pen-to-square"}"></i>${isEditing ? "Done" : "Edit"}
                         </button>
@@ -677,6 +1071,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                                    ${caption ? `<p class="mt-3 text-sm font-medium text-slate-900">${esc(caption)}</p>` : ""}
                                    <div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">${esc(description || "No description available yet.")}</div>
                                </div>`}
+                        ${renderLinkedBlockPills(block)}
                     </div>
                 </div>
             </article>
@@ -695,6 +1090,7 @@ let initialParserDocument = {{ parser_document|tojson }};
             if (block.block_type === "diagram") return renderDiagram(block, index);
             return "";
         }).join("");
+        refreshDocumentPreviewHotspots();
     };
     const savePayload = () => ({
         blocks: [...blocks()].sort(compareBlocks).filter((block) => dirtyBlockIds.has(String(block?.block_id || ""))).map((block) => {
@@ -766,6 +1162,14 @@ let initialParserDocument = {{ parser_document|tojson }};
         if (action === "close-edit") {
             editingBlockIds.delete(blockId);
             renderBlocks();
+            return;
+        }
+        if (action === "jump-block") {
+            focusReviewBlock(button.dataset.targetBlockId || "");
+            return;
+        }
+        if (action === "locate-preview") {
+            await focusPreviewBlock(blockId);
             return;
         }
         const block = findBlock(button.dataset.blockId || "");
@@ -935,7 +1339,10 @@ let initialParserDocument = {{ parser_document|tojson }};
     pageScroller?.addEventListener("scroll", toggleScrollTopButton, { passive: true });
     window.addEventListener("scroll", toggleScrollTopButton, { passive: true });
     closeDocumentPreviewBtn?.addEventListener("click", () => setDocumentPreviewOpen(false));
-    openDocumentPreviewBtn?.addEventListener("click", () => setDocumentPreviewOpen(true));
+    openDocumentPreviewBtn?.addEventListener("click", () => {
+        setDocumentPreviewOpen(true);
+        initializeDocumentPreview();
+    });
     scrollToTopBtn?.addEventListener("click", () => {
         if (pageScroller) {
             pageScroller.scrollTo({ top: 0, behavior: "smooth" });
@@ -950,6 +1357,7 @@ let initialParserDocument = {{ parser_document|tojson }};
     applyDiagramUsageUi();
     updateDiagramActionState();
     updateDiagramActionsVisibility();
+    initializeDocumentPreview();
 })();
 </script>
 {% endblock %}
