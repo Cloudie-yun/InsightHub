@@ -6,15 +6,24 @@
     <!-- Header/Breadcrumb -->
     <div class="px-8 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
         <div class="flex items-center gap-2 text-gray-500">
-            <a href="/chat" class="hover:text-brand-600"><i class="fa-solid fa-arrow-left"></i> Back to Chat</a>
+            <a href="{% if study_context.conversation_id %}/chat?conversation_id={{ study_context.conversation_id }}{% else %}/dashboard{% endif %}" class="hover:text-brand-600"><i class="fa-solid fa-arrow-left"></i> {% if study_context.conversation_id %}Back to Chat{% else %}Back to Dashboard{% endif %}</a>
             <span>/</span>
             <span class="text-brand-700 font-bold" id="deck-title">Machine Learning Flashcards</span>
+            <select id="saved-decks-select" onchange="openSavedDeck(this.value)" class="ml-3 max-w-64 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600">
+                <option value="">Saved decks</option>
+                {% for item in (study_context.saved_items or []) %}
+                <option value="{{ item.study_aid_id }}" {% if study_context.study_aid_id == item.study_aid_id %}selected{% endif %}>{{ item.title }}</option>
+                {% endfor %}
+            </select>
+            <button onclick="startNewDeck()" class="rounded-lg border border-brand-200 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50">New Deck</button>
         </div>
         <div class="flex items-center gap-2">
             <span id="progress-text" class="text-sm text-gray-400 mr-2">Card 1 of 1</span>
             <button onclick="openEditModal()" title="Edit cards" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-pen-to-square"></i></button>
             <button onclick="saveToLocalStorage()" title="Save deck" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-floppy-disk"></i></button>
-            <button onclick="exportDeck()" title="Export as JSON" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-download"></i></button>
+            <button onclick="exportDeck()" title="Export as JSON" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-file-code"></i></button>
+            <button onclick="exportDeckImage()" title="Export current card as image" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-image"></i></button>
+            <button onclick="exportDeckPdf()" title="Export deck as PDF" class="h-10 w-10 bg-white border border-gray-200 rounded-lg text-gray-500 hover:text-brand-600 shadow-sm flex items-center justify-center"><i class="fa-solid fa-file-pdf"></i></button>
         </div>
     </div>
 
@@ -230,19 +239,59 @@
 </div>
 
 <!-- ─────────────────────────────────────────────
-     MODAL: AI Generate (TODO stub)
+     MODAL: AI Generate
 ───────────────────────────────────────────── -->
 <div id="modal-ai" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 text-center">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
         <div class="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-4">
             <i class="fa-solid fa-wand-magic-sparkles text-2xl text-brand-400"></i>
         </div>
-        <h3 class="text-lg font-bold text-gray-800 mb-2">AI Card Generation</h3>
-        <p class="text-sm text-gray-500 mb-4">This feature is coming soon! AI will be able to generate flashcard decks from topics, documents, or chat history.</p>
-        <div class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700 text-left mb-5">
-            <strong>TODO:</strong> Integrate with backend AI endpoint to accept a topic/document and return structured <code>{"front", "back"}</code> card pairs.
+        <h3 class="text-lg font-bold text-gray-800 mb-2 text-center">Generate Flashcards From Document</h3>
+        <p class="text-sm text-gray-500 mb-4 text-center">Use a parsed document as the source. Add optional page ranges or topic requirements if needed.</p>
+        <div class="space-y-4">
+            <div class="text-left">
+                <label for="ai-document" class="block text-sm font-medium text-gray-700 mb-1.5">Source document</label>
+                <select id="ai-document" class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white">
+                    <option value="">Select a document</option>
+                    {% for doc in (study_context.documents or []) %}
+                    {% if doc.parser_status != "pending" %}
+                    <option value="{{ doc.document_id }}" {% if study_context.document_id == doc.document_id %}selected{% endif %}>{{ doc.original_filename }}</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div class="text-left">
+                    <label for="ai-count" class="block text-sm font-medium text-gray-700 mb-1.5">Cards</label>
+                    <input id="ai-count" type="number" min="3" max="25" value="10" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+                </div>
+                <div class="text-left">
+                    <label for="ai-mode" class="block text-sm font-medium text-gray-700 mb-1.5">Add mode</label>
+                    <select id="ai-mode" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white">
+                        <option value="replace">Replace current deck</option>
+                        <option value="append">Append to current deck</option>
+                    </select>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 gap-3">
+                <div class="text-left">
+                    <label for="ai-page-range" class="block text-sm font-medium text-gray-700 mb-1.5">Page range</label>
+                    <input id="ai-page-range" type="text" value="{{ study_context.page_range or '' }}" placeholder="Optional, e.g. 1-5, 8, 10-12" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+                </div>
+                <div class="text-left">
+                    <label for="ai-requirements" class="block text-sm font-medium text-gray-700 mb-1.5">Extra requirements</label>
+                    <textarea id="ai-requirements" rows="3" placeholder="Optional, e.g. prioritize key terms, formulas, or exam-style concepts." class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none">{{ study_context.requirements or '' }}</textarea>
+                </div>
+            </div>
+            <div id="ai-error" class="hidden rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"></div>
+            <div class="flex items-center justify-end gap-3 pt-1">
+                <button onclick="closeModal('modal-ai')" class="px-5 py-2 text-sm bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition font-medium">Cancel</button>
+                <button id="ai-generate-btn" onclick="generateAICards()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium inline-flex items-center gap-2">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span id="ai-generate-btn-label">Generate</span>
+                </button>
+            </div>
         </div>
-        <button onclick="closeModal('modal-ai')" class="px-5 py-2 text-sm bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition font-medium">Close</button>
     </div>
 </div>
 
@@ -264,11 +313,17 @@ let pendingCSVCards = [];
 let activeImportTab = 'tab-text';
 
 const STORAGE_KEY = 'flashcards_deck_v1';
+const STUDY_CONTEXT = {{ (study_context or {}) | tojson }};
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+    const hasDocumentContext = Boolean(STUDY_CONTEXT.document_id);
+    const savedPayload = STUDY_CONTEXT.saved_payload || {};
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
+    if (Array.isArray(savedPayload.cards) && savedPayload.cards.length) {
+        deck = savedPayload.cards;
+        document.getElementById('deck-title').textContent = savedPayload.deck_title || savedPayload.title || 'Flashcards';
+    } else if (saved && !STUDY_CONTEXT.autostart) {
         try {
             const parsed = JSON.parse(saved);
             deck = parsed.cards || [];
@@ -277,17 +332,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Seed a default card if empty for demo purposes
-    if (deck.length === 0) {
+    if (deck.length === 0 && !hasDocumentContext) {
         deck = [
             { front: "What is supervised learning?", back: "A type of machine learning where the model is trained on labeled data — input-output pairs — so it can learn to predict outputs for new inputs." },
             { front: "What is overfitting?", back: "When a model learns the training data too well, including its noise, causing poor generalization to new data." },
             { front: "What is a neural network?", back: "A computational model loosely inspired by the brain, composed of layers of interconnected nodes (neurons) that transform inputs into predictions." },
             { front: "What is gradient descent?", back: "An optimization algorithm that iteratively adjusts model parameters to minimize a loss function by moving in the direction of the steepest decrease." },
         ];
+    } else if (hasDocumentContext && STUDY_CONTEXT.document_name) {
+        document.getElementById('deck-title').textContent = `${STUDY_CONTEXT.document_name} Flashcards`;
     }
 
     rebuildOrder();
     renderCard();
+
 });
 
 // ─── Order & Navigation ────────────────────────────────────────────────────────
@@ -613,13 +671,105 @@ function importCards() {
 }
 
 // ─── AI Modal ─────────────────────────────────────────────────────────────────
-function openAIModal() { openModal('modal-ai'); }
+function openAIModal() {
+    document.getElementById('ai-error').classList.add('hidden');
+    if (STUDY_CONTEXT.document_id && document.getElementById('ai-document')) {
+        document.getElementById('ai-document').value = STUDY_CONTEXT.document_id;
+    }
+    openModal('modal-ai');
+}
+
+async function generateAICards() {
+    const documentEl = document.getElementById('ai-document');
+    const countEl = document.getElementById('ai-count');
+    const modeEl = document.getElementById('ai-mode');
+    const pageRangeEl = document.getElementById('ai-page-range');
+    const requirementsEl = document.getElementById('ai-requirements');
+    const errorEl = document.getElementById('ai-error');
+    const buttonEl = document.getElementById('ai-generate-btn');
+    const buttonLabelEl = document.getElementById('ai-generate-btn-label');
+
+    const documentId = documentEl.value.trim();
+    const count = Math.max(3, Math.min(25, parseInt(countEl.value, 10) || 10));
+    const mode = modeEl.value === 'append' ? 'append' : 'replace';
+    const pageRange = pageRangeEl.value.trim();
+    const requirements = requirementsEl.value.trim();
+
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+
+    if (!documentId) {
+        errorEl.textContent = 'Select a source document first.';
+        errorEl.classList.remove('hidden');
+        shakeModal('modal-ai');
+        documentEl.focus();
+        return;
+    }
+
+    buttonEl.disabled = true;
+    buttonEl.classList.add('opacity-70', 'cursor-not-allowed');
+    buttonLabelEl.textContent = 'Generating...';
+
+    try {
+        const response = await fetch('/api/flashcards/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                document_id: documentId,
+                conversation_id: STUDY_CONTEXT.conversation_id || '',
+                count,
+                page_range: pageRange,
+                requirements,
+            }),
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            throw new Error(payload.error || 'AI generation failed.');
+        }
+
+        const cards = Array.isArray(payload.cards) ? payload.cards.filter(card => {
+            const front = typeof card?.front === 'string' ? card.front.trim() : '';
+            const back = typeof card?.back === 'string' ? card.back.trim() : '';
+            return front && back;
+        }) : [];
+
+        if (cards.length === 0) {
+            throw new Error('AI returned no valid flashcards.');
+        }
+
+        if (payload.deck_title) {
+            document.getElementById('deck-title').textContent = payload.deck_title;
+        }
+
+        deck = mode === 'replace' ? cards : [...deck, ...cards];
+        if (payload.study_aid_id) {
+            STUDY_CONTEXT.study_aid_id = payload.study_aid_id;
+        }
+        rebuildOrder();
+        currentPos = 0;
+        isFlipped = false;
+        closeModal('modal-ai');
+        renderCard();
+        showToast(`Generated ${cards.length} card${cards.length > 1 ? 's' : ''}!`);
+    } catch (error) {
+        errorEl.textContent = error.message || 'AI generation failed.';
+        errorEl.classList.remove('hidden');
+        shakeModal('modal-ai');
+    } finally {
+        buttonEl.disabled = false;
+        buttonEl.classList.remove('opacity-70', 'cursor-not-allowed');
+        buttonLabelEl.textContent = 'Generate';
+    }
+}
 
 // ─── Save / Export ────────────────────────────────────────────────────────────
 function saveToLocalStorage() {
     const name = document.getElementById('deck-title').textContent;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ name, cards: deck }));
     showToast('Deck saved to browser!');
+    saveDeckToServer();
 }
 
 function exportDeck() {
@@ -633,6 +783,143 @@ function exportDeck() {
     a.click();
     URL.revokeObjectURL(url);
     showToast('Exported!');
+}
+
+function exportDeckImage() {
+    if (!deck.length) {
+        showToast('No cards to export.');
+        return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 1400;
+    canvas.height = 900;
+    const ctx = canvas.getContext('2d');
+    const card = deck[order[currentPos] ?? 0] || deck[0];
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    roundRect(ctx, 120, 90, 1160, 720, 36);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#dbeafe';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '600 28px Arial';
+    ctx.fillText(document.getElementById('deck-title').textContent || 'Flashcards', 170, 155);
+    ctx.fillStyle = '#2563eb';
+    ctx.font = '700 30px Arial';
+    ctx.fillText('Question', 170, 220);
+    ctx.fillStyle = '#111827';
+    ctx.font = '700 48px Arial';
+    drawWrappedText(ctx, card.front || '', 170, 290, 1060, 64);
+    ctx.fillStyle = '#1d4ed8';
+    ctx.font = '700 30px Arial';
+    ctx.fillText('Answer', 170, 520);
+    ctx.fillStyle = '#1f2937';
+    ctx.font = '400 34px Arial';
+    drawWrappedText(ctx, card.back || '', 170, 585, 1060, 46);
+
+    const link = document.createElement('a');
+    link.href = canvas.toDataURL('image/png');
+    link.download = `${(document.getElementById('deck-title').textContent || 'flashcards').replace(/\s+/g, '_')}_card.png`;
+    link.click();
+    showToast('Image exported!');
+}
+
+function exportDeckPdf() {
+    if (!deck.length) {
+        showToast('No cards to export.');
+        return;
+    }
+    const title = document.getElementById('deck-title').textContent || 'Flashcards';
+    const rows = deck.map((card, index) => `
+        <div class="card">
+            <div class="num">Card ${index + 1}</div>
+            <div class="label">Front</div>
+            <div class="text">${escHtml(card.front || '')}</div>
+            <div class="label">Back</div>
+            <div class="text">${escHtml(card.back || '')}</div>
+        </div>
+    `).join('');
+    const printWindow = window.open('', '_blank', 'width=1000,height=800');
+    if (!printWindow) {
+        showToast('Popup blocked.');
+        return;
+    }
+    printWindow.document.write(`
+        <!doctype html>
+        <html>
+        <head>
+            <title>${escHtml(title)} PDF</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+                h1 { font-size: 24px; margin: 0 0 16px; }
+                .card { page-break-inside: avoid; border: 1px solid #d1d5db; border-radius: 16px; padding: 18px; margin: 0 0 16px; }
+                .num { font-size: 12px; color: #6b7280; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+                .label { font-size: 12px; font-weight: 700; color: #2563eb; margin-top: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+                .text { font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
+            </style>
+        </head>
+        <body>
+            <h1>${escHtml(title)}</h1>
+            ${rows}
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    showToast('Print dialog opened.');
+}
+
+async function saveDeckToServer() {
+    const title = document.getElementById('deck-title').textContent || 'Flashcards';
+    const payload = {
+        title,
+        source_requirements: STUDY_CONTEXT.requirements || '',
+        page_range: STUDY_CONTEXT.page_range || '',
+        payload_json: {
+            deck_title: title,
+            cards: deck,
+        },
+    };
+    const targetId = STUDY_CONTEXT.study_aid_id || '';
+    const requestUrl = targetId ? `/api/study-aids/${encodeURIComponent(targetId)}` : '/api/study-aids';
+    const method = targetId ? 'PUT' : 'POST';
+    if (!targetId) {
+        payload.aid_type = 'flashcards';
+        payload.conversation_id = STUDY_CONTEXT.conversation_id || '';
+        payload.document_id = STUDY_CONTEXT.document_id || '';
+    }
+    try {
+        const response = await fetch(requestUrl, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Save failed.');
+        if (result.study_aid_id) {
+            STUDY_CONTEXT.study_aid_id = result.study_aid_id;
+        }
+    } catch (_) {}
+}
+
+function openSavedDeck(studyAidId) {
+    if (!studyAidId) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('aid_id', studyAidId);
+    window.location.href = `/flashcards?${params.toString()}`;
+}
+
+function startNewDeck() {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('aid_id');
+    params.delete('autostart');
+    window.location.href = `/flashcards${params.toString() ? `?${params.toString()}` : ''}`;
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -655,6 +942,35 @@ function showToast(msg) {
 
 function escHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + width, y, x + width, y + height, radius);
+    ctx.arcTo(x + width, y + height, x, y + height, radius);
+    ctx.arcTo(x, y + height, x, y, radius);
+    ctx.arcTo(x, y, x + width, y, radius);
+    ctx.closePath();
+}
+
+function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    let line = '';
+    let currentY = y;
+    words.forEach((word) => {
+        const testLine = line ? `${line} ${word}` : word;
+        if (ctx.measureText(testLine).width > maxWidth && line) {
+            ctx.fillText(line, x, currentY);
+            line = word;
+            currentY += lineHeight;
+            return;
+        }
+        line = testLine;
+    });
+    if (line) {
+        ctx.fillText(line, x, currentY);
+    }
 }
 
 // Close modals on backdrop click

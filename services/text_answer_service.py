@@ -21,9 +21,14 @@ except ImportError:  # pragma: no cover - optional until dependency is installed
     GenerateContentConfig = None
     HttpOptions = None
 
+from services.gemini_credentials import (
+    build_quota_project_id_for_credential,
+    load_gemini_api_credentials,
+)
 from services.quota_router import (
     TASK_TYPE_TEXT,
     get_task_models,
+    get_quota_project_id,
     execute_with_shared_quota_router,
     resolve_usage_token_count,
 )
@@ -474,7 +479,8 @@ def _extract_vertex_candidate_metadata(response: Any) -> dict[str, Any]:
 
 class TextAnswerService:
     def __init__(self) -> None:
-        self.api_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+        self.gemini_credentials = load_gemini_api_credentials()
+        self.api_key = self.gemini_credentials[0].api_key if self.gemini_credentials else ""
         self.default_model = str(os.environ.get("GEMINI_TEXT_MODEL") or "gemini-2.5-flash").strip()
         self.vertex_default_model = _get_default_vertex_text_model(self.default_model)
         self.vertex_project = _get_vertex_ai_project()
@@ -498,11 +504,11 @@ class TextAnswerService:
         conversation_context: list[dict[str, str]] | None = None,
         user_prompt_override: str | None = None,
     ) -> dict[str, Any]:
-        provider_order = _get_text_provider_order(has_gemini_api_key=bool(self.api_key))
+        provider_order = _get_text_provider_order(has_gemini_api_key=bool(self.gemini_credentials))
         if not provider_order:
             raise TextAnswerServiceError(
                 code="text_provider_unavailable",
-                message="Grounded Q&A requires GEMINI_API_KEY or Vertex AI to be enabled with ADC and project configuration.",
+                message="Grounded Q&A requires GEMINI_API_KEY or GEMINI_API_KEYS, or Vertex AI to be enabled with ADC and project configuration.",
                 retryable=False,
                 details={},
             )
@@ -530,27 +536,7 @@ class TextAnswerService:
             conversation_context=conversation_context or [],
         )["label"]
 
-        try:
-            routed_result = execute_with_shared_quota_router(
-                TASK_TYPE_TEXT,
-                provider_order=provider_order,
-                fallback_model=self.default_model,
-                execute_provider=lambda model_name, provider_name: self._execute_provider_attempt(
-                    provider_name=provider_name,
-                    model_name=model_name,
-                    payload=payload,
-                ),
-                should_retry_with_another_model=_should_retry_text_with_another_model,
-            )
-        except Exception as exc:
-            if isinstance(exc, TextAnswerServiceError):
-                raise
-            raise TextAnswerServiceError(
-                code="text_provider_unavailable",
-                message=str(exc) or "Grounded Q&A is unavailable because no text provider could be used.",
-                retryable=True,
-                details={},
-            ) from exc
+        routed_result = self._execute_with_fallbacks(payload=payload)
 
         provider_payload = routed_result.payload if isinstance(routed_result.payload, dict) else {}
         return {
@@ -563,6 +549,55 @@ class TextAnswerService:
             "confidence": str(provider_payload.get("confidence") or "insufficient"),
             "response_headers": routed_result.response_headers,
         }
+
+    def _execute_with_fallbacks(self, *, payload: dict[str, Any]):
+        last_error: Exception | None = None
+        base_project_id = get_quota_project_id()
+
+        for credential in self.gemini_credentials:
+            try:
+                return execute_with_shared_quota_router(
+                    TASK_TYPE_TEXT,
+                    provider_order=["gemini"],
+                    fallback_model=self.default_model,
+                    project_id=build_quota_project_id_for_credential(base_project_id, credential.alias),
+                    execute_provider=lambda model_name, provider_name, api_key=credential.api_key: self._execute_provider_attempt(
+                        provider_name=provider_name,
+                        model_name=model_name,
+                        payload=payload,
+                        api_key=api_key,
+                    ),
+                    should_retry_with_another_model=_should_retry_text_with_another_model,
+                )
+            except Exception as exc:
+                last_error = exc
+
+        if _is_vertex_ai_enabled():
+            try:
+                return execute_with_shared_quota_router(
+                    TASK_TYPE_TEXT,
+                    provider_order=["vertex_ai"],
+                    fallback_model=self.default_model,
+                    project_id=base_project_id,
+                    execute_provider=lambda model_name, provider_name: self._execute_provider_attempt(
+                        provider_name=provider_name,
+                        model_name=model_name,
+                        payload=payload,
+                        api_key="",
+                    ),
+                    should_retry_with_another_model=_should_retry_text_with_another_model,
+                )
+            except Exception as exc:
+                last_error = exc
+
+        if isinstance(last_error, TextAnswerServiceError):
+            raise last_error
+        raise TextAnswerServiceError(
+            code="text_provider_unavailable",
+            message=str(last_error) or "Grounded Q&A is unavailable because no text provider could be used.",
+            retryable=True,
+            details={},
+        ) from last_error
 
     def _build_payload(
         self,
@@ -643,15 +678,16 @@ class TextAnswerService:
         *,
         model_name: str,
         payload: dict[str, Any],
+        api_key: str,
     ) -> tuple[dict[str, Any], dict[str, str], dict[str, Any]]:
-        if not self.api_key:
+        if not api_key:
             raise TextAnswerServiceError(
                 code="missing_api_key",
-                message="Gemini API key is missing. Set GEMINI_API_KEY.",
+                message="Gemini API key is missing. Set GEMINI_API_KEY or GEMINI_API_KEYS.",
                 retryable=False,
                 details={},
             )
-        url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent?key={self.api_key}"
+        url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent?key={api_key}"
         raw_response, response_headers = self._post_json_with_backoff(url=url, payload=payload)
         candidate_metadata = (
             raw_response.get("candidates", [{}])[0]
@@ -770,11 +806,13 @@ class TextAnswerService:
         provider_name: str,
         model_name: str,
         payload: dict[str, Any],
+        api_key: str,
     ) -> dict[str, Any]:
         if provider_name == "gemini":
             raw_response, response_headers, candidate_metadata = self._request_with_gemini(
                 model_name=model_name,
                 payload=payload,
+                api_key=api_key,
             )
         elif provider_name == "vertex_ai":
             raw_response, response_headers, candidate_metadata = self._request_with_vertex_ai(

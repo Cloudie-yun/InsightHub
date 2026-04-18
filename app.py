@@ -38,6 +38,7 @@ from services.diagram_vision_service import (
 )
 from services.embedding_worker import EmbeddingWorker
 from services.embedding_service import EmbeddingServiceError
+from services.gemini_credentials import load_gemini_api_credentials
 from services.extraction_store import (
     build_extraction_payload,
     build_pending_extraction_payload,
@@ -45,6 +46,8 @@ from services.extraction_store import (
     get_document_extraction as fetch_document_extraction,
     get_conversation_extractions as fetch_conversation_extractions,
 )
+from services.summary_jobs import enqueue_document_summary_job
+from services.summary_worker import SummaryWorker
 from services.chat_answer_service import ChatAnswerService, ChatAnswerServiceError
 from services.prompt_profile_service import (
     get_default_prompt_profiles,
@@ -57,6 +60,7 @@ from services.prompt_profile_service import (
 from services.retrieval_service import RetrievalService, RetrievalServiceError
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
+    TASK_TYPE_TEXT,
     format_quota_timestamp,
     get_quota_project_id,
     get_task_models,
@@ -138,6 +142,18 @@ embedding_autorun_running = False
 embedding_autorun_requested = False
 embedding_retry_poller_lock = Lock()
 embedding_retry_poller_started = False
+SUMMARY_AUTORUN_ENABLED = _is_truthy_env(os.getenv("SUMMARY_AUTORUN_ENABLED", "1"))
+SUMMARY_AUTORUN_LIMIT = max(1, int(os.getenv("SUMMARY_AUTORUN_LIMIT", "8")))
+SUMMARY_RETRY_POLL_SECONDS = max(1.0, _read_float_env(os.getenv("SUMMARY_RETRY_POLL_SECONDS"), 20.0))
+summary_autorun_executor = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="summary-autorun",
+)
+summary_autorun_lock = Lock()
+summary_autorun_running = False
+summary_autorun_requested = False
+summary_retry_poller_lock = Lock()
+summary_retry_poller_started = False
 
 
 def _relation_exists(cur, relation_name: str) -> bool:
@@ -201,6 +217,35 @@ def _run_embedding_autorun(trigger: str, limit: int) -> None:
             break
 
 
+def _run_summary_autorun(trigger: str, limit: int) -> None:
+    global summary_autorun_requested, summary_autorun_running
+
+    while True:
+        try:
+            stats = SummaryWorker(limit=limit).run_once()
+            logger.info(
+                "summary autorun completed trigger=%s doc_selected=%s doc_completed=%s doc_failed=%s convo_selected=%s convo_completed=%s convo_failed=%s",
+                trigger,
+                stats["document_jobs_selected"],
+                stats["document_jobs_completed"],
+                stats["document_jobs_failed"],
+                stats["conversation_jobs_selected"],
+                stats["conversation_jobs_completed"],
+                stats["conversation_jobs_failed"],
+            )
+        except Exception:
+            logger.exception("Summary autorun failed for trigger=%s", trigger)
+
+        with summary_autorun_lock:
+            if summary_autorun_requested:
+                summary_autorun_requested = False
+                trigger = f"{trigger}:coalesced"
+                continue
+
+            summary_autorun_running = False
+            break
+
+
 def _schedule_embedding_autorun(trigger: str, *, limit: int = EMBEDDING_AUTORUN_LIMIT) -> None:
     global embedding_autorun_requested, embedding_autorun_running
 
@@ -224,6 +269,636 @@ def _schedule_embedding_autorun(trigger: str, *, limit: int = EMBEDDING_AUTORUN_
         logger.exception("Unable to start embedding autorun for trigger=%s", trigger)
 
 
+def _schedule_summary_autorun(trigger: str, *, limit: int = SUMMARY_AUTORUN_LIMIT) -> None:
+    global summary_autorun_requested, summary_autorun_running
+
+    if not SUMMARY_AUTORUN_ENABLED:
+        return
+
+    with summary_autorun_lock:
+        if summary_autorun_running:
+            summary_autorun_requested = True
+            logger.info("Summary autorun already running; coalescing trigger=%s", trigger)
+            return
+        summary_autorun_running = True
+        summary_autorun_requested = False
+
+    try:
+        summary_autorun_executor.submit(_run_summary_autorun, trigger, limit)
+    except Exception:
+        with summary_autorun_lock:
+            summary_autorun_running = False
+            summary_autorun_requested = False
+        logger.exception("Unable to start summary autorun for trigger=%s", trigger)
+
+
+FLASHCARD_GENERATION_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ["deck_title", "cards"],
+    "properties": {
+        "deck_title": {"type": "string"},
+        "cards": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["front", "back"],
+                "properties": {
+                    "front": {"type": "string"},
+                    "back": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+MINDMAP_GENERATION_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ["title", "nodes"],
+    "properties": {
+        "title": {"type": "string"},
+        "nodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "parentId", "text"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "parentId": {"type": "string", "nullable": True},
+                    "text": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+
+def _extract_gemini_text_payload(raw_response: dict) -> str:
+    candidates = raw_response.get("candidates") if isinstance(raw_response.get("candidates"), list) else []
+    first_candidate = candidates[0] if candidates else {}
+    parts = ((first_candidate.get("content") or {}).get("parts") or [])
+    for part in parts:
+        text = str((part or {}).get("text") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _request_gemini_structured_output(
+    *,
+    prompt: str,
+    response_schema: dict,
+    max_output_tokens: int,
+    temperature: float = 0.4,
+) -> tuple[dict, str]:
+    credentials = load_gemini_api_credentials()
+    api_key = credentials[0].api_key if credentials else ""
+    if not api_key:
+        raise ValueError("Gemini API key is missing. Set GEMINI_API_KEY or GEMINI_API_KEYS.")
+
+    model_candidates = get_task_models(
+        TASK_TYPE_TEXT,
+        fallback_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
+    )
+    model_name = model_candidates[0] if model_candidates else "gemini-2.5-flash"
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}],
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": response_schema,
+            "temperature": temperature,
+            "topP": 0.9,
+            "maxOutputTokens": max_output_tokens,
+        },
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    request_payload = json.dumps(payload).encode("utf-8")
+    req = Request(url, data=request_payload, headers={"Content-Type": "application/json"}, method="POST")
+
+    try:
+        with urlopen(req, timeout=90) as response:
+            response_body = response.read().decode("utf-8")
+    except HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        logger.warning("Flashcard generation HTTP error status=%s body=%s", exc.code, error_body[:500])
+        error_message = f"AI generation request failed ({exc.code})."
+        try:
+            error_payload = json.loads(error_body)
+            api_message = (
+                error_payload.get("error", {}).get("message")
+                if isinstance(error_payload.get("error"), dict)
+                else error_payload.get("message")
+            )
+            if api_message:
+                error_message = f"{error_message} {str(api_message).strip()}"
+        except json.JSONDecodeError:
+            snippet = error_body[:240].strip()
+            if snippet:
+                error_message = f"{error_message} {snippet}"
+        raise ValueError(error_message) from exc
+    except URLError as exc:
+        raise ValueError("AI generation is currently unavailable.") from exc
+
+    raw_response = json.loads(response_body)
+    response_text = _extract_gemini_text_payload(raw_response)
+    if not response_text:
+        raise ValueError("AI returned an empty response.")
+
+    parsed = json.loads(response_text)
+    if not isinstance(parsed, dict):
+        raise ValueError("AI returned an invalid JSON payload.")
+    return parsed, model_name
+
+
+def _parse_page_range(page_range_raw: str | None) -> list[int]:
+    normalized = str(page_range_raw or "").strip()
+    if not normalized:
+        return []
+
+    pages: set[int] = set()
+    for chunk in re.split(r"\s*,\s*", normalized):
+        if not chunk:
+            continue
+        if "-" in chunk:
+            start_raw, end_raw = chunk.split("-", 1)
+            start = int(start_raw.strip())
+            end = int(end_raw.strip())
+            if start <= 0 or end <= 0:
+                raise ValueError("Page numbers must be positive.")
+            if end < start:
+                start, end = end, start
+            for value in range(start, min(end, start + 49) + 1):
+                pages.add(value)
+        else:
+            value = int(chunk)
+            if value <= 0:
+                raise ValueError("Page numbers must be positive.")
+            pages.add(value)
+
+    return sorted(pages)[:200]
+
+
+def _extract_segment_page_number(segment: dict) -> int | None:
+    metadata = segment.get("metadata") if isinstance(segment.get("metadata"), dict) else {}
+    candidate_keys = (
+        "page",
+        "page_number",
+        "source_page",
+        "source_page_number",
+        "page_no",
+    )
+    for key in candidate_keys:
+        raw_value = metadata.get(key)
+        try:
+            page_number = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if page_number > 0:
+            return page_number
+    raw_page_index = metadata.get("page_index")
+    try:
+        page_index = int(raw_page_index)
+    except (TypeError, ValueError):
+        return None
+    return page_index + 1 if page_index >= 0 else None
+
+
+def _load_document_study_source(
+    *,
+    user_id,
+    document_id: str,
+    conversation_id: str | None = None,
+    page_range: str | None = None,
+) -> dict:
+    normalized_document_id = str(document_id or "").strip()
+    normalized_conversation_id = str(conversation_id or "").strip() or None
+    if not user_id or not normalized_document_id:
+        raise ValueError("A document is required.")
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if normalized_conversation_id:
+                cur.execute(
+                    """
+                    SELECT d.original_filename
+                    FROM documents d
+                    JOIN conversation_documents cd ON cd.document_id = d.document_id
+                    JOIN conversations c ON c.conversation_id = cd.conversation_id
+                    WHERE d.document_id = %s::uuid
+                      AND cd.conversation_id = %s::uuid
+                      AND c.user_id = %s
+                      AND d.is_deleted = FALSE
+                    LIMIT 1
+                    """,
+                    (normalized_document_id, normalized_conversation_id, user_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT d.original_filename
+                    FROM documents d
+                    WHERE d.document_id = %s::uuid
+                      AND d.user_id = %s
+                      AND d.is_deleted = FALSE
+                    LIMIT 1
+                    """,
+                    (normalized_document_id, user_id),
+                )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Document not found.")
+
+            extraction_payload = fetch_document_extraction(
+                cur,
+                document_id=normalized_document_id,
+                conversation_id=normalized_conversation_id,
+            ) or {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+    summary_payload = get_document_summary(
+        user_id,
+        normalized_document_id,
+        conversation_id=normalized_conversation_id,
+    ) or {}
+    selected_pages = _parse_page_range(page_range)
+    selected_page_set = set(selected_pages)
+
+    document_name = str(row[0] or "").strip() or "Document"
+    segments = extraction_payload.get("segments") if isinstance(extraction_payload.get("segments"), list) else []
+    segment_lines: list[str] = []
+    matched_page_count = 0
+    for segment in segments:
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        page_number = _extract_segment_page_number(segment)
+        if selected_page_set and page_number and page_number not in selected_page_set:
+            continue
+        if selected_page_set and page_number in selected_page_set:
+            matched_page_count += 1
+        prefix = f"[Page {page_number}] " if page_number else ""
+        segment_lines.append(f"{prefix}{text}")
+        if len(segment_lines) >= 80:
+            break
+
+    if selected_page_set and not matched_page_count and segment_lines:
+        segment_lines = segment_lines[:40]
+
+    summary_text = str(summary_payload.get("summary_text") or "").strip()
+    text_parts = []
+    if summary_text:
+        text_parts.append(f"Document summary:\n{summary_text}")
+    if segment_lines:
+        text_parts.append("Document excerpts:\n" + "\n\n".join(segment_lines))
+    source_text = "\n\n".join(text_parts).strip()
+    if not source_text:
+        raise ValueError("Document text is not ready yet. Try again after parsing finishes.")
+
+    return {
+        "document_id": normalized_document_id,
+        "document_name": document_name,
+        "conversation_id": normalized_conversation_id,
+        "page_range": str(page_range or "").strip(),
+        "source_text": source_text[:24000],
+    }
+
+
+def _study_aids_table_ready(cur) -> bool:
+    return _relation_exists(cur, "study_aids")
+
+
+def save_study_aid(
+    *,
+    user_id,
+    aid_type: str,
+    title: str,
+    payload_json: dict,
+    conversation_id: str | None = None,
+    document_id: str | None = None,
+    source_requirements: str = "",
+    page_range: str = "",
+) -> dict | None:
+    if not user_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if not _study_aids_table_ready(cur):
+                return None
+            cur.execute(
+                """
+                INSERT INTO study_aids (
+                    user_id,
+                    conversation_id,
+                    document_id,
+                    aid_type,
+                    title,
+                    source_requirements,
+                    page_range,
+                    payload_json
+                )
+                VALUES (%s, %s::uuid, %s::uuid, %s, %s, %s, %s, %s::jsonb)
+                RETURNING study_aid_id::text, created_at
+                """,
+                (
+                    user_id,
+                    conversation_id or None,
+                    document_id or None,
+                    aid_type,
+                    str(title or "").strip(),
+                    str(source_requirements or "").strip(),
+                    str(page_range or "").strip(),
+                    Json(payload_json or {}),
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        return {
+            "study_aid_id": str(row[0] or ""),
+            "created_at": row[1].isoformat() if row and row[1] else None,
+        }
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        logger.exception("Unable to save study aid aid_type=%s document_id=%s conversation_id=%s", aid_type, document_id, conversation_id)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_study_aid(user_id, study_aid_id: str, *, aid_type: str | None = None) -> dict | None:
+    if not user_id or not study_aid_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if not _study_aids_table_ready(cur):
+                return None
+            query = """
+                SELECT
+                    study_aid_id::text,
+                    user_id::text,
+                    conversation_id::text,
+                    document_id::text,
+                    aid_type,
+                    title,
+                    source_requirements,
+                    page_range,
+                    payload_json,
+                    created_at,
+                    updated_at
+                FROM study_aids
+                WHERE study_aid_id = %s::uuid
+                  AND user_id = %s
+            """
+            params: list = [study_aid_id, user_id]
+            if aid_type:
+                query += " AND aid_type = %s"
+                params.append(aid_type)
+            query += " LIMIT 1"
+            cur.execute(query, tuple(params))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "study_aid_id": str(row[0] or ""),
+            "user_id": str(row[1] or ""),
+            "conversation_id": str(row[2] or "") if row[2] else "",
+            "document_id": str(row[3] or "") if row[3] else "",
+            "aid_type": str(row[4] or ""),
+            "title": str(row[5] or ""),
+            "source_requirements": str(row[6] or ""),
+            "page_range": str(row[7] or ""),
+            "payload_json": row[8] if isinstance(row[8], dict) else {},
+            "created_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+    except Exception:
+        logger.exception("Unable to load study aid study_aid_id=%s", study_aid_id)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def list_study_aids(user_id, *, aid_type: str, limit: int = 50) -> list[dict]:
+    if not user_id:
+        return []
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if not _study_aids_table_ready(cur):
+                return []
+            cur.execute(
+                """
+                SELECT
+                    study_aid_id::text,
+                    title,
+                    document_id::text,
+                    conversation_id::text,
+                    created_at,
+                    updated_at
+                FROM study_aids
+                WHERE user_id = %s
+                  AND aid_type = %s
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT %s
+                """,
+                (user_id, aid_type, max(1, int(limit))),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "study_aid_id": str(row[0] or ""),
+                "title": str(row[1] or "").strip() or ("Untitled Flashcards" if aid_type == "flashcards" else "Untitled Mind Map"),
+                "document_id": str(row[2] or "") if row[2] else "",
+                "conversation_id": str(row[3] or "") if row[3] else "",
+                "created_at": row[4].isoformat() if row[4] else None,
+                "updated_at": row[5].isoformat() if row[5] else None,
+            }
+            for row in rows
+        ]
+    except Exception:
+        logger.exception("Unable to list study aids aid_type=%s", aid_type)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_study_aid(
+    *,
+    user_id,
+    study_aid_id: str,
+    title: str,
+    payload_json: dict,
+    source_requirements: str = "",
+    page_range: str = "",
+) -> dict | None:
+    if not user_id or not study_aid_id:
+        return None
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if not _study_aids_table_ready(cur):
+                return None
+            cur.execute(
+                """
+                UPDATE study_aids
+                SET title = %s,
+                    source_requirements = %s,
+                    page_range = %s,
+                    payload_json = %s::jsonb,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE study_aid_id = %s::uuid
+                  AND user_id = %s
+                RETURNING study_aid_id::text, updated_at
+                """,
+                (
+                    str(title or "").strip(),
+                    str(source_requirements or "").strip(),
+                    str(page_range or "").strip(),
+                    Json(payload_json or {}),
+                    study_aid_id,
+                    user_id,
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        if not row:
+            return None
+        return {"study_aid_id": str(row[0] or ""), "updated_at": row[1].isoformat() if row[1] else None}
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        logger.exception("Unable to update study aid study_aid_id=%s", study_aid_id)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _generate_flashcards_with_ai(
+    *,
+    topic: str = "",
+    count: int,
+    document_source: dict | None = None,
+    requirements: str = "",
+) -> dict:
+    normalized_requirements = str(requirements or "").strip()
+    if document_source:
+        prompt = (
+            "Generate a study flashcard deck using the document material below.\n"
+            "Return only valid JSON that matches the provided schema.\n"
+            f"Create exactly {count} cards.\n"
+            "Each card must have a concise question or term on the front and a clear, accurate explanation on the back.\n"
+            "Avoid duplicates, filler, markdown, numbering, and commentary.\n"
+            "Keep fronts short and backs informative but compact.\n"
+            f"Document name: {document_source['document_name']}\n"
+            f"Page range: {document_source.get('page_range') or 'all available pages'}\n"
+            f"Additional requirements: {normalized_requirements or 'None'}\n\n"
+            f"{document_source['source_text']}"
+        )
+    else:
+        prompt = (
+            "Generate a study flashcard deck for the topic below.\n"
+            "Return only valid JSON that matches the provided schema.\n"
+            f"Create exactly {count} cards.\n"
+            "Each card must have a concise question or term on the front and a clear, accurate explanation on the back.\n"
+            "Avoid duplicates, filler, markdown, numbering, and commentary.\n"
+            "Keep fronts short and backs informative but compact.\n"
+            f"Additional requirements: {normalized_requirements or 'None'}\n"
+            f"Topic:\n{topic.strip()}"
+        )
+
+    parsed, model_name = _request_gemini_structured_output(
+        prompt=prompt,
+        response_schema=FLASHCARD_GENERATION_RESPONSE_SCHEMA,
+        max_output_tokens=max(1024, min(8192, count * 220)),
+        temperature=0.5,
+    )
+    cards = []
+    for item in parsed.get("cards") or []:
+        front = str((item or {}).get("front") or "").strip()
+        back = str((item or {}).get("back") or "").strip()
+        if front and back:
+            cards.append({"front": front, "back": back})
+
+    if not cards:
+        raise ValueError("AI returned no valid flashcards.")
+
+    deck_title = str(parsed.get("deck_title") or "").strip() or "AI Flashcards"
+    return {
+        "deck_title": deck_title,
+        "cards": cards[:count],
+        "model": model_name,
+    }
+
+
+def _generate_mindmap_with_ai(
+    *,
+    document_source: dict,
+    requirements: str = "",
+) -> dict:
+    normalized_requirements = str(requirements or "").strip()
+    prompt = (
+        "Generate a concise study mind map using the document material below.\n"
+        "Return only valid JSON that matches the provided schema.\n"
+        "Create one root node, 4 to 7 major branches, and useful sub-branches where relevant.\n"
+        "Node labels must stay short, clear, and study-oriented. Avoid sentences where a short label works.\n"
+        "Do not include markdown or commentary.\n"
+        f"Document name: {document_source['document_name']}\n"
+        f"Page range: {document_source.get('page_range') or 'all available pages'}\n"
+        f"Additional requirements: {normalized_requirements or 'None'}\n\n"
+        f"{document_source['source_text']}"
+    )
+    parsed, model_name = _request_gemini_structured_output(
+        prompt=prompt,
+        response_schema=MINDMAP_GENERATION_RESPONSE_SCHEMA,
+        max_output_tokens=4096,
+        temperature=0.45,
+    )
+    raw_nodes = parsed.get("nodes") if isinstance(parsed.get("nodes"), list) else []
+    nodes: list[dict] = []
+    seen_ids: set[str] = set()
+    for item in raw_nodes:
+        node_id = str((item or {}).get("id") or "").strip()
+        parent_id_raw = (item or {}).get("parentId")
+        parent_id = str(parent_id_raw).strip() if parent_id_raw is not None else None
+        text = str((item or {}).get("text") or "").strip()
+        if not node_id or not text or node_id in seen_ids:
+            continue
+        seen_ids.add(node_id)
+        nodes.append({"id": node_id, "parentId": parent_id or None, "text": text[:80]})
+
+    if not nodes:
+        raise ValueError("AI returned no valid mind map nodes.")
+
+    if not any(node.get("parentId") is None for node in nodes):
+        nodes[0]["parentId"] = None
+
+    return {
+        "title": str(parsed.get("title") or document_source["document_name"]).strip() or "Mind Map",
+        "nodes": nodes[:80],
+        "model": model_name,
+    }
+
+
 def _embedding_retry_poller_loop() -> None:
     while True:
         try:
@@ -231,6 +906,15 @@ def _embedding_retry_poller_loop() -> None:
         except Exception:
             logger.exception("Embedding retry poller loop failed")
         time.sleep(EMBEDDING_RETRY_POLL_SECONDS)
+
+
+def _summary_retry_poller_loop() -> None:
+    while True:
+        try:
+            _schedule_summary_autorun("retry_poller")
+        except Exception:
+            logger.exception("Summary retry poller loop failed")
+        time.sleep(SUMMARY_RETRY_POLL_SECONDS)
 
 
 def _start_embedding_retry_poller() -> None:
@@ -254,6 +938,30 @@ def _start_embedding_retry_poller() -> None:
         "Started embedding retry poller interval_seconds=%s limit=%s",
         EMBEDDING_RETRY_POLL_SECONDS,
         EMBEDDING_AUTORUN_LIMIT,
+    )
+
+
+def _start_summary_retry_poller() -> None:
+    global summary_retry_poller_started
+
+    if not SUMMARY_AUTORUN_ENABLED:
+        return
+
+    with summary_retry_poller_lock:
+        if summary_retry_poller_started:
+            return
+        summary_retry_poller_started = True
+
+    poller = Thread(
+        target=_summary_retry_poller_loop,
+        name="summary-retry-poller",
+        daemon=True,
+    )
+    poller.start()
+    logger.info(
+        "Started summary retry poller interval_seconds=%s limit=%s",
+        SUMMARY_RETRY_POLL_SECONDS,
+        SUMMARY_AUTORUN_LIMIT,
     )
 
 
@@ -803,6 +1511,7 @@ def _resolve_active_conversation_branch_rows(rows: list) -> list:
 
     user_rows_by_parent: dict[str | None, list] = {}
     assistant_rows_by_user: dict[str, list] = {}
+    prelude_assistant_rows: list = []
     for row in rows:
         role = str(row[3] or "").strip().lower()
         if role == "user":
@@ -810,8 +1519,13 @@ def _resolve_active_conversation_branch_rows(rows: list) -> list:
             user_rows_by_parent.setdefault(parent_id, []).append(row)
         elif role == "assistant" and row[10]:
             assistant_rows_by_user.setdefault(str(row[10]), []).append(row)
+        elif role == "assistant" and not row[10]:
+            prelude_assistant_rows.append(row)
 
-    active_rows: list = []
+    active_rows: list = sorted(
+        prelude_assistant_rows,
+        key=lambda item: (str(item[11] or ""), str(item[0] or "")),
+    )
     visited_user_ids: set[str] = set()
     parent_assistant_id: str | None = None
 
@@ -1019,6 +1733,146 @@ def get_conversation_documents(user_id, conversation_id) -> list:
         return [_serialize_conversation_document(row) for row in rows]
     except Exception:
         return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_document_summary(user_id, document_id, conversation_id=None) -> dict | None:
+    if not user_id or not document_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if conversation_id:
+                cur.execute(
+                    """
+                    SELECT
+                        ds.document_id::text,
+                        ds.conversation_id::text,
+                        ds.status,
+                        ds.summary_text,
+                        ds.title_hint,
+                        ds.summary_payload,
+                        ds.provider_name,
+                        ds.model_name,
+                        ds.token_count,
+                        ds.error_message,
+                        ds.completed_at
+                    FROM document_summaries ds
+                    JOIN conversation_documents cd
+                      ON cd.document_id = ds.document_id
+                    JOIN conversations c
+                      ON c.conversation_id = cd.conversation_id
+                    JOIN documents d
+                      ON d.document_id = ds.document_id
+                    WHERE ds.document_id = %s::uuid
+                      AND cd.conversation_id = %s::uuid
+                      AND c.user_id = %s
+                      AND d.is_deleted = FALSE
+                    LIMIT 1
+                    """,
+                    (document_id, conversation_id, user_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT
+                        ds.document_id::text,
+                        ds.conversation_id::text,
+                        ds.status,
+                        ds.summary_text,
+                        ds.title_hint,
+                        ds.summary_payload,
+                        ds.provider_name,
+                        ds.model_name,
+                        ds.token_count,
+                        ds.error_message,
+                        ds.completed_at
+                    FROM document_summaries ds
+                    JOIN documents d
+                      ON d.document_id = ds.document_id
+                    WHERE ds.document_id = %s::uuid
+                      AND d.user_id = %s
+                      AND d.is_deleted = FALSE
+                    LIMIT 1
+                    """,
+                    (document_id, user_id),
+                )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "document_id": str(row[0] or ""),
+            "conversation_id": str(row[1] or "") if row[1] else None,
+            "status": str(row[2] or ""),
+            "summary_text": row[3] or "",
+            "title_hint": row[4] or "",
+            "summary_payload": row[5] or {},
+            "provider_name": row[6] or "",
+            "model_name": row[7] or "",
+            "token_count": int(row[8] or 0),
+            "error_message": row[9] or "",
+            "completed_at": row[10].isoformat() if row[10] else None,
+        }
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_conversation_summary(user_id, conversation_id) -> dict | None:
+    if not user_id or not conversation_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    cs.conversation_id::text,
+                    cs.status,
+                    cs.document_count,
+                    cs.summary_text,
+                    cs.generated_title,
+                    cs.summary_payload,
+                    cs.provider_name,
+                    cs.model_name,
+                    cs.token_count,
+                    cs.error_message,
+                    cs.completed_at
+                FROM conversation_summaries cs
+                JOIN conversations c
+                  ON c.conversation_id = cs.conversation_id
+                WHERE cs.conversation_id = %s::uuid
+                  AND c.user_id = %s
+                LIMIT 1
+                """,
+                (conversation_id, user_id),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "conversation_id": str(row[0] or ""),
+            "status": str(row[1] or ""),
+            "document_count": int(row[2] or 0),
+            "summary_text": row[3] or "",
+            "generated_title": row[4] or "",
+            "summary_payload": row[5] or {},
+            "provider_name": row[6] or "",
+            "model_name": row[7] or "",
+            "token_count": int(row[8] or 0),
+            "error_message": row[9] or "",
+            "completed_at": row[10].isoformat() if row[10] else None,
+        }
+    except Exception:
+        return None
     finally:
         if conn is not None:
             conn.close()
@@ -1288,6 +2142,85 @@ def _normalize_inline_text(value) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
+DIAGRAM_REVIEW_DESCRIPTION_MAX_CHARS = 2400
+DIAGRAM_REVIEW_FACT_MAX_ITEMS = 12
+DIAGRAM_REVIEW_FACT_MAX_CHARS = 280
+
+
+def _trim_review_text_to_max(value, max_chars: int) -> str:
+    normalized = _normalize_review_text(value)
+    if not normalized or len(normalized) <= max_chars:
+        return normalized
+    clipped = normalized[:max_chars].strip()
+    last_boundary = max(clipped.rfind(" "), clipped.rfind("\n"))
+    if last_boundary > int(max_chars * 0.6):
+        clipped = clipped[:last_boundary]
+    return clipped.strip()
+
+
+def _extract_manual_diagram_json(value) -> dict | None:
+    raw_text = str(value or "").strip()
+    if not raw_text.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(raw_text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if not any(key in parsed for key in ("visual_description", "question_answerable_facts", "summary")):
+        return None
+    return parsed
+
+
+def _normalize_diagram_fact_list(values) -> list[str]:
+    if isinstance(values, list):
+        source_items = values
+    elif isinstance(values, str) and str(values).strip():
+        source_items = [values]
+    else:
+        source_items = []
+
+    facts: list[str] = []
+    seen: set[str] = set()
+    for item in source_items:
+        fact = _trim_review_text_to_max(item, DIAGRAM_REVIEW_FACT_MAX_CHARS)
+        if not fact:
+            continue
+        dedupe_key = fact.casefold()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        facts.append(fact)
+        if len(facts) >= DIAGRAM_REVIEW_FACT_MAX_ITEMS:
+            break
+    return facts
+
+
+def _normalize_diagram_review_fields(visual_description, question_answerable_facts) -> dict:
+    parsed_payload = _extract_manual_diagram_json(visual_description)
+    description_source = visual_description
+    facts_source = question_answerable_facts
+
+    if parsed_payload:
+        description_source = (
+            parsed_payload.get("visual_description")
+            or parsed_payload.get("summary")
+            or visual_description
+        )
+        if not facts_source:
+            facts_source = (
+                parsed_payload.get("question_answerable_facts")
+                or parsed_payload.get("facts")
+                or []
+            )
+
+    return {
+        "visual_description": _trim_review_text_to_max(description_source, DIAGRAM_REVIEW_DESCRIPTION_MAX_CHARS) or None,
+        "question_answerable_facts": _normalize_diagram_fact_list(facts_source),
+    }
+
+
 def _review_block_sort_key(block: dict):
     block_type_rank = {"text": 0, "table": 1, "diagram": 2}
     return (
@@ -1505,14 +2438,20 @@ def _refresh_review_block_content(blocks_by_id: dict[str, dict], diagram_details
             block["caption_text"] = caption or None
         elif block_type == "diagram":
             detail = diagram_details_by_block.get(str(block.get("block_id")))
-            visual_description = _normalize_review_text(
+            normalized_diagram_fields = _normalize_diagram_review_fields(
                 (detail or {}).get("visual_description")
                 or normalized.get("visual_description")
-                or ""
+                or "",
+                (detail or {}).get("question_answerable_facts")
+                or normalized.get("question_answerable_facts")
+                or [],
             )
-            normalized["visual_description"] = visual_description or None
+            visual_description = normalized_diagram_fields["visual_description"]
+            normalized["visual_description"] = visual_description
+            normalized["question_answerable_facts"] = normalized_diagram_fields["question_answerable_facts"]
             if detail is not None:
-                detail["visual_description"] = visual_description or None
+                detail["visual_description"] = visual_description
+                detail["question_answerable_facts"] = normalized_diagram_fields["question_answerable_facts"]
             retrieval_text = _build_diagram_retrieval_text({**block, "normalized_content": normalized}, blocks_by_id, detail)
             caption_text = _normalize_review_text(block.get("caption_text") or normalized.get("caption_text") or block.get("display_text") or "")
             block["caption_text"] = caption_text or None
@@ -1844,11 +2783,15 @@ def _build_parser_review_payload(document_result: dict) -> dict:
                 or ""
             ).strip()
             image_url = f"/uploads/{quote(storage_path, safe='/')}" if storage_path else ""
+            normalized_diagram_fields = _normalize_diagram_review_fields(
+                detail.get("visual_description") or normalized.get("visual_description") or "",
+                detail.get("question_answerable_facts") or normalized.get("question_answerable_facts") or [],
+            )
             item["normalized_content"] = {
                 "diagram_kind": normalized.get("diagram_kind") or detail.get("diagram_kind") or block.get("subtype"),
-                "visual_description": detail.get("visual_description") or normalized.get("visual_description") or "",
+                "visual_description": normalized_diagram_fields["visual_description"] or "",
                 "ocr_text": detail.get("ocr_text") or normalized.get("ocr_text") or [],
-                "question_answerable_facts": detail.get("question_answerable_facts") or [],
+                "question_answerable_facts": normalized_diagram_fields["question_answerable_facts"],
                 "semantic_links": detail.get("semantic_links") or normalized.get("semantic_links") or [],
                 "vision_status": detail.get("vision_status") or normalized.get("vision_status") or "",
                 "vision_confidence": detail.get("vision_confidence"),
@@ -2272,17 +3215,262 @@ def document_parser_results(document_id):
 
 @app.route('/flashcards')
 def flashcards():
-    return render_template('flashcards.html', active_page='study')
+    user_id = session.get("user_id")
+    study_aid_id = (request.args.get("aid_id") or "").strip()
+    conversation_id = (request.args.get("conversation_id") or "").strip()
+    document_id = (request.args.get("document_id") or "").strip()
+    requirements = (request.args.get("requirements") or "").strip()
+    page_range = (request.args.get("page_range") or "").strip()
+    autostart = request.args.get("autostart") == "1"
+    saved_study_aid = get_study_aid(user_id, study_aid_id, aid_type="flashcards") if study_aid_id else None
+    if saved_study_aid:
+        conversation_id = saved_study_aid.get("conversation_id") or conversation_id
+        document_id = saved_study_aid.get("document_id") or document_id
+        requirements = saved_study_aid.get("source_requirements") or requirements
+        page_range = saved_study_aid.get("page_range") or page_range
+        autostart = False
+    conversation_documents = get_conversation_documents(user_id, conversation_id) if conversation_id else []
+    selected_document = next(
+        (doc for doc in conversation_documents if str(doc.get("document_id") or "") == document_id),
+        None,
+    )
+    return render_template(
+        'flashcards.html',
+        active_page='study',
+        study_context={
+            "conversation_id": conversation_id,
+            "document_id": document_id,
+            "document_name": selected_document.get("original_filename") if selected_document else "",
+            "requirements": requirements,
+            "page_range": page_range,
+            "autostart": autostart,
+            "study_aid_id": saved_study_aid.get("study_aid_id") if saved_study_aid else "",
+            "saved_payload": saved_study_aid.get("payload_json") if saved_study_aid else {},
+            "saved_items": list_study_aids(user_id, aid_type="flashcards"),
+            "documents": conversation_documents,
+        },
+    )
 
 
 @app.route('/mindmap')
 def mindmap():
-    return render_template('mindmap.html', active_page='study')
+    user_id = session.get("user_id")
+    study_aid_id = (request.args.get("aid_id") or "").strip()
+    conversation_id = (request.args.get("conversation_id") or "").strip()
+    document_id = (request.args.get("document_id") or "").strip()
+    requirements = (request.args.get("requirements") or "").strip()
+    page_range = (request.args.get("page_range") or "").strip()
+    autostart = request.args.get("autostart") == "1"
+    saved_study_aid = get_study_aid(user_id, study_aid_id, aid_type="mindmap") if study_aid_id else None
+    if saved_study_aid:
+        conversation_id = saved_study_aid.get("conversation_id") or conversation_id
+        document_id = saved_study_aid.get("document_id") or document_id
+        requirements = saved_study_aid.get("source_requirements") or requirements
+        page_range = saved_study_aid.get("page_range") or page_range
+        autostart = False
+    conversation_documents = get_conversation_documents(user_id, conversation_id) if conversation_id else []
+    selected_document = next(
+        (doc for doc in conversation_documents if str(doc.get("document_id") or "") == document_id),
+        None,
+    )
+    return render_template(
+        'mindmap.html',
+        active_page='study',
+        study_context={
+            "conversation_id": conversation_id,
+            "document_id": document_id,
+            "document_name": selected_document.get("original_filename") if selected_document else "",
+            "requirements": requirements,
+            "page_range": page_range,
+            "autostart": autostart,
+            "study_aid_id": saved_study_aid.get("study_aid_id") if saved_study_aid else "",
+            "saved_payload": saved_study_aid.get("payload_json") if saved_study_aid else {},
+            "saved_items": list_study_aids(user_id, aid_type="mindmap"),
+            "documents": conversation_documents,
+        },
+    )
 
 
 # ===========================================================================
 # 8. AUTH API ROUTES
 # ===========================================================================
+
+@app.route('/api/flashcards/generate', methods=['POST'])
+def generate_flashcards():
+    user_id = session.get("user_id")
+    data = request.get_json(silent=True) or {}
+    topic = str(data.get('topic') or '').strip()
+    document_id = str(data.get('document_id') or '').strip()
+    conversation_id = str(data.get('conversation_id') or '').strip() or None
+    requirements = str(data.get('requirements') or '').strip()
+    page_range = str(data.get('page_range') or '').strip()
+    count = data.get('count')
+
+    try:
+        count = max(3, min(25, int(count or 10)))
+    except (TypeError, ValueError):
+        count = 10
+
+    if not topic and not document_id:
+        return jsonify({'error': 'A topic or document is required.'}), 400
+
+    try:
+        document_source = None
+        if document_id:
+            if not user_id:
+                return jsonify({'error': 'You must be logged in.'}), 401
+            document_source = _load_document_study_source(
+                user_id=user_id,
+                document_id=document_id,
+                conversation_id=conversation_id,
+                page_range=page_range,
+            )
+        payload = _generate_flashcards_with_ai(
+            topic=topic,
+            count=count,
+            document_source=document_source,
+            requirements=requirements,
+        )
+        saved_study_aid = save_study_aid(
+            user_id=user_id,
+            aid_type="flashcards",
+            title=payload["deck_title"],
+            payload_json={
+                "deck_title": payload["deck_title"],
+                "cards": payload["cards"],
+            },
+            conversation_id=conversation_id,
+            document_id=document_id,
+            source_requirements=requirements,
+            page_range=page_range,
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 503
+    except json.JSONDecodeError:
+        logger.exception("Flashcard generation returned invalid JSON")
+        return jsonify({'error': 'AI returned an invalid response.'}), 502
+    except Exception as exc:
+        logger.exception("Unexpected flashcard generation failure")
+        return jsonify({'error': f'Unable to generate flashcards right now. {exc}'}), 500
+
+    return jsonify({
+        'deck_title': payload['deck_title'],
+        'cards': payload['cards'],
+        'model': payload['model'],
+        'study_aid_id': saved_study_aid.get('study_aid_id') if saved_study_aid else '',
+    })
+
+
+@app.route('/api/mindmap/generate', methods=['POST'])
+def generate_mindmap():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    data = request.get_json(silent=True) or {}
+    document_id = str(data.get('document_id') or '').strip()
+    conversation_id = str(data.get('conversation_id') or '').strip() or None
+    requirements = str(data.get('requirements') or '').strip()
+    page_range = str(data.get('page_range') or '').strip()
+
+    if not document_id:
+        return jsonify({'error': 'Document is required.'}), 400
+
+    try:
+        document_source = _load_document_study_source(
+            user_id=user_id,
+            document_id=document_id,
+            conversation_id=conversation_id,
+            page_range=page_range,
+        )
+        payload = _generate_mindmap_with_ai(
+            document_source=document_source,
+            requirements=requirements,
+        )
+        saved_study_aid = save_study_aid(
+            user_id=user_id,
+            aid_type="mindmap",
+            title=payload["title"],
+            payload_json={
+                "title": payload["title"],
+                "nodes": payload["nodes"],
+            },
+            conversation_id=conversation_id,
+            document_id=document_id,
+            source_requirements=requirements,
+            page_range=page_range,
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 503
+    except json.JSONDecodeError:
+        logger.exception("Mind map generation returned invalid JSON")
+        return jsonify({'error': 'AI returned an invalid response.'}), 502
+    except Exception as exc:
+        logger.exception("Unexpected mind map generation failure")
+        return jsonify({'error': f'Unable to generate a mind map right now. {exc}'}), 500
+
+    return jsonify({
+        'title': payload['title'],
+        'nodes': payload['nodes'],
+        'model': payload['model'],
+        'study_aid_id': saved_study_aid.get('study_aid_id') if saved_study_aid else '',
+    })
+
+
+@app.route('/api/study-aids/<study_aid_id>', methods=['GET'])
+def api_study_aid_detail(study_aid_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    payload = get_study_aid(user_id, (study_aid_id or "").strip())
+    if not payload:
+        return jsonify({'error': 'Study aid not found.'}), 404
+    return jsonify(payload), 200
+
+
+@app.route('/api/study-aids', methods=['POST'])
+def api_create_study_aid():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    data = request.get_json(silent=True) or {}
+    aid_type = str(data.get('aid_type') or '').strip()
+    title = str(data.get('title') or '').strip()
+    payload_json = data.get('payload_json') if isinstance(data.get('payload_json'), dict) else {}
+    result = save_study_aid(
+        user_id=user_id,
+        aid_type=aid_type,
+        title=title,
+        payload_json=payload_json,
+        conversation_id=str(data.get('conversation_id') or '').strip() or None,
+        document_id=str(data.get('document_id') or '').strip() or None,
+        source_requirements=str(data.get('source_requirements') or '').strip(),
+        page_range=str(data.get('page_range') or '').strip(),
+    )
+    if not result:
+        return jsonify({'error': 'Unable to save study aid.'}), 500
+    return jsonify(result), 201
+
+
+@app.route('/api/study-aids/<study_aid_id>', methods=['PUT'])
+def api_update_study_aid(study_aid_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    data = request.get_json(silent=True) or {}
+    payload_json = data.get('payload_json') if isinstance(data.get('payload_json'), dict) else {}
+    result = update_study_aid(
+        user_id=user_id,
+        study_aid_id=(study_aid_id or '').strip(),
+        title=str(data.get('title') or '').strip(),
+        payload_json=payload_json,
+        source_requirements=str(data.get('source_requirements') or '').strip(),
+        page_range=str(data.get('page_range') or '').strip(),
+    )
+    if not result:
+        return jsonify({'error': 'Unable to update study aid.'}), 404
+    return jsonify(result), 200
 
 @app.route('/api/auth/signup', methods=['POST'])
 def signup():
@@ -3484,6 +4672,7 @@ def _run_document_parse_job(job: dict) -> None:
             _maybe_refresh_conversation_title(cur, str(conversation_id or ""))
         conn.commit()
         _schedule_embedding_autorun(f"document_parse:{document_id}")
+        _schedule_summary_autorun(f"document_parse:{document_id}")
     except Exception as exc:
         logger.exception("Background parse failed for document_id=%s", document_id)
         if conn is not None:
@@ -3705,6 +4894,36 @@ def api_conversation_documents(conversation_id):
         "conversation_id": conversation_id,
         "documents": documents,
     }), 200
+
+
+@app.route('/api/documents/<document_id>/summary', methods=['GET'])
+def api_document_summary(document_id):
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+
+    conversation_id = (request.args.get("conversation_id") or "").strip() or None
+    summary_payload = get_document_summary(user_id, document_id, conversation_id=conversation_id)
+    if not summary_payload:
+        return jsonify({'error': 'Document summary not found.'}), 404
+    return jsonify(summary_payload), 200
+
+
+@app.route('/api/conversations/<conversation_id>/summary', methods=['GET'])
+def api_conversation_summary(conversation_id):
+    user_id = session.get("user_id")
+    conversation_id = (conversation_id or "").strip()
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+    if not conversation_exists_for_user(user_id, conversation_id):
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    summary_payload = get_conversation_summary(user_id, conversation_id)
+    if not summary_payload:
+        return jsonify({'error': 'Conversation summary not found.'}), 404
+    return jsonify(summary_payload), 200
 
 
 @app.route('/api/conversations/<conversation_id>/retrieve', methods=['POST'])
@@ -4024,9 +5243,17 @@ def api_save_document_parser_review(document_id):
                 or existing_block.get("display_text")
                 or ""
             )
-            visual_description = _normalize_review_text(edited_normalized.get("visual_description"))
+            normalized_diagram_fields = _normalize_diagram_review_fields(
+                edited_normalized.get("visual_description"),
+                edited_normalized.get("question_answerable_facts") or [],
+            )
+            visual_description = normalized_diagram_fields["visual_description"]
             current_diagram_detail = dict(diagram_details_by_block.get(block_id) or {})
-            current_visual_description = _normalize_review_text(normalized.get("visual_description"))
+            current_normalized_diagram_fields = _normalize_diagram_review_fields(
+                current_diagram_detail.get("visual_description") or normalized.get("visual_description") or "",
+                current_diagram_detail.get("question_answerable_facts") or normalized.get("question_answerable_facts") or [],
+            )
+            current_visual_description = current_normalized_diagram_fields["visual_description"]
             current_caption_text = _normalize_review_text(
                 existing_block.get("caption_text") or existing_block.get("display_text") or ""
             )
@@ -4036,9 +5263,7 @@ def api_save_document_parser_review(document_id):
             current_semantic_links = current_diagram_detail.get("semantic_links") or normalized.get("semantic_links") or []
             if not isinstance(current_semantic_links, list):
                 current_semantic_links = []
-            current_question_answerable_facts = current_diagram_detail.get("question_answerable_facts") or []
-            if not isinstance(current_question_answerable_facts, list):
-                current_question_answerable_facts = []
+            current_question_answerable_facts = current_normalized_diagram_fields["question_answerable_facts"]
             current_storage_path = str(current_diagram_detail.get("storage_path") or edited_normalized.get("storage_path") or "")
             next_ocr_text = edited_normalized.get("ocr_text") or []
             if not isinstance(next_ocr_text, list):
@@ -4046,9 +5271,7 @@ def api_save_document_parser_review(document_id):
             next_semantic_links = edited_normalized.get("semantic_links") or []
             if not isinstance(next_semantic_links, list):
                 next_semantic_links = []
-            next_question_answerable_facts = edited_normalized.get("question_answerable_facts") or []
-            if not isinstance(next_question_answerable_facts, list):
-                next_question_answerable_facts = []
+            next_question_answerable_facts = normalized_diagram_fields["question_answerable_facts"]
             next_storage_path = str(edited_normalized.get("storage_path") or "")
             if (
                 caption_text == current_caption_text
@@ -4066,7 +5289,8 @@ def api_save_document_parser_review(document_id):
                 "updated_from": "document_parser_results",
             }
             existing_block["source_metadata"] = source_metadata
-            normalized["visual_description"] = visual_description or None
+            normalized["visual_description"] = visual_description
+            normalized["question_answerable_facts"] = next_question_answerable_facts
             existing_block["caption_text"] = caption_text or None
             existing_block["display_text"] = caption_text or existing_block.get("display_text")
 
@@ -4081,7 +5305,8 @@ def api_save_document_parser_review(document_id):
                         "storage_path": edited_normalized.get("storage_path") or "",
                         "vision_status": "completed",
                     }
-            diagram_detail["visual_description"] = visual_description or None
+            diagram_detail["visual_description"] = visual_description
+            diagram_detail["question_answerable_facts"] = next_question_answerable_facts
             diagram_detail["vision_status"] = "completed"
             diagram_details_by_block[block_id] = diagram_detail
         else:
@@ -4266,8 +5491,16 @@ def api_save_document_parser_review(document_id):
                     document_id,
                 ),
             )
+            enqueue_document_summary_job(
+                cur,
+                document_id=str(document_id),
+                conversation_id=conversation_id,
+                parser_version=(parser_result.get("parser_version") or "1.0.0"),
+                document_blocks=sorted_blocks,
+            )
         conn.commit()
         _schedule_embedding_autorun(f"parser_review:{document_id}")
+        _schedule_summary_autorun(f"parser_review:{document_id}")
     except Exception:
         if conn is not None:
             conn.rollback()
@@ -4532,4 +5765,5 @@ if __name__ == '__main__':
     debug_mode = True
     if not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         _start_embedding_retry_poller()
+        _start_summary_retry_poller()
     app.run(debug=debug_mode)

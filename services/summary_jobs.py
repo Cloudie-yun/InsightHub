@@ -12,6 +12,7 @@ CONVERSATION_SUMMARY_INPUT_VERSION = "conversation_summary_input_v1"
 PROCESSING_STATUS_RETRIEVAL_PREPARED = "retrieval_prepared"
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_COMPLETED = "completed"
+JOB_STATUS_RETRYING = "retrying"
 
 
 def _relation_exists(cur, relation_name: str) -> bool:
@@ -134,6 +135,9 @@ def enqueue_document_summary_job(
     if content_version_col:
         dedupe_conditions.append(f"{content_version_col} = %s")
         dedupe_params.append(content_version)
+    if status_col:
+        dedupe_conditions.append(f"{status_col} IN (%s, %s, %s, %s)")
+        dedupe_params.extend([JOB_STATUS_QUEUED, "processing", JOB_STATUS_RETRYING, JOB_STATUS_COMPLETED])
 
     cur.execute(
         f"SELECT 1 FROM document_summary_jobs WHERE {' AND '.join(dedupe_conditions)} LIMIT 1",
@@ -227,8 +231,8 @@ def enqueue_conversation_summary_recompute(
     dedupe_conditions = [f"{conversation_id_col} = %s"]
     dedupe_params: list[Any] = [conversation_id]
     if status_col:
-        dedupe_conditions.append(f"{status_col} IN (%s, %s)")
-        dedupe_params.extend([JOB_STATUS_QUEUED, "processing"])
+        dedupe_conditions.append(f"{status_col} IN (%s, %s, %s)")
+        dedupe_params.extend([JOB_STATUS_QUEUED, "processing", JOB_STATUS_RETRYING])
 
     cur.execute(
         f"SELECT 1 FROM conversation_summary_jobs WHERE {' AND '.join(dedupe_conditions)} LIMIT 1",

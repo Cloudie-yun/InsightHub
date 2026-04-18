@@ -27,7 +27,13 @@ except ImportError:  # pragma: no cover - optional until dependency is installed
     HttpOptions = None
     Part = None
 
+from services.gemini_credentials import (
+    GeminiApiCredential,
+    build_quota_project_id_for_credential,
+    load_gemini_api_credentials,
+)
 from services.quota_router import (
+    PROVIDER_SELECTION_EXHAUST_MODELS_FIRST,
     TASK_TYPE_DIAGRAM_VISION,
     get_quota_project_id,
     execute_with_shared_quota_router,
@@ -64,7 +70,7 @@ def is_vertex_ai_enabled() -> bool:
 def get_diagram_vision_provider_order(*, has_gemini_api_key: bool | None = None) -> list[str]:
     providers: list[str] = []
     if has_gemini_api_key is None:
-        has_gemini_api_key = bool(str(os.environ.get("GEMINI_API_KEY") or "").strip())
+        has_gemini_api_key = bool(load_gemini_api_credentials())
     if has_gemini_api_key:
         providers.append("gemini")
     if is_vertex_ai_enabled():
@@ -230,6 +236,45 @@ DIAGRAM_RESPONSE_SCHEMA = {
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     },
 }
+
+
+_VERTEX_SCHEMA_TYPE_MAP = {
+    "string": "STRING",
+    "number": "NUMBER",
+    "integer": "INTEGER",
+    "boolean": "BOOLEAN",
+    "array": "ARRAY",
+    "object": "OBJECT",
+    "null": "NULL",
+}
+
+
+def _build_vertex_schema(schema: Any) -> Any:
+    if isinstance(schema, dict):
+        converted: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key == "type":
+                if isinstance(value, list):
+                    normalized_types = [str(item or "").strip().lower() for item in value if str(item or "").strip()]
+                    non_null_types = [item for item in normalized_types if item != "null"]
+                    if len(non_null_types) == 1 and len(non_null_types) != len(normalized_types):
+                        converted["type"] = _VERTEX_SCHEMA_TYPE_MAP.get(non_null_types[0], non_null_types[0].upper())
+                        converted["nullable"] = True
+                        continue
+                    converted["type"] = [_VERTEX_SCHEMA_TYPE_MAP.get(item, item.upper()) for item in normalized_types]
+                    continue
+                if isinstance(value, str):
+                    normalized = value.strip().lower()
+                    converted["type"] = _VERTEX_SCHEMA_TYPE_MAP.get(normalized, normalized.upper())
+                    continue
+            converted[key] = _build_vertex_schema(value)
+        return converted
+    if isinstance(schema, list):
+        return [_build_vertex_schema(item) for item in schema]
+    return schema
+
+
+VERTEX_DIAGRAM_RESPONSE_SCHEMA = _build_vertex_schema(DIAGRAM_RESPONSE_SCHEMA)
 
 
 def _is_truthy_env(value: str | None) -> bool:
@@ -876,7 +921,7 @@ class VertexDiagramVisionService:
             ],
             "config": {
                 "response_mime_type": "application/json",
-                "response_schema": DIAGRAM_RESPONSE_SCHEMA,
+                "response_schema": VERTEX_DIAGRAM_RESPONSE_SCHEMA,
                 "temperature": 0.1,
                 "top_p": 0.95,
                 "max_output_tokens": GEMINI_VISION_MAX_OUTPUT_TOKENS,
@@ -897,7 +942,7 @@ class VertexDiagramVisionService:
                 ],
                 config=GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=DIAGRAM_RESPONSE_SCHEMA,
+                    response_schema=VERTEX_DIAGRAM_RESPONSE_SCHEMA,
                     temperature=0.1,
                     top_p=0.95,
                     max_output_tokens=GEMINI_VISION_MAX_OUTPUT_TOKENS,
@@ -1376,11 +1421,16 @@ def run_diagram_analysis_for_document(
     force_analyze: bool = False,
     prompt_override: str = "",
 ) -> dict[str, Any]:
-    api_key = api_key or os.environ.get("GEMINI_API_KEY")
-    provider_order = get_diagram_vision_provider_order(has_gemini_api_key=bool(str(api_key or "").strip()))
+    explicit_api_key = str(api_key or "").strip()
+    gemini_credentials = load_gemini_api_credentials()
+    if explicit_api_key:
+        gemini_credentials = [credential for credential in gemini_credentials if credential.api_key == explicit_api_key] or []
+        if not gemini_credentials:
+            gemini_credentials = [GeminiApiCredential(alias="gemini_key_inline", api_key=explicit_api_key)]
+    provider_order = get_diagram_vision_provider_order(has_gemini_api_key=bool(gemini_credentials or explicit_api_key))
     if not provider_order:
         raise RuntimeError(
-            "Diagram analysis requires GEMINI_API_KEY or Vertex AI to be enabled with ADC and project configuration"
+            "Diagram analysis requires GEMINI_API_KEY or GEMINI_API_KEYS, or Vertex AI to be enabled with ADC and project configuration"
         )
 
     project_id = get_quota_project_id()
@@ -1418,21 +1468,54 @@ def run_diagram_analysis_for_document(
         try:
             default_model = _get_default_gemini_model()
             try:
-                routed_result = execute_with_shared_quota_router(
-                    TASK_TYPE_DIAGRAM_VISION,
-                    provider_order=provider_order,
-                    fallback_model=default_model,
-                    project_id=project_id,
-                    max_model_attempts=_get_max_diagram_vision_model_attempts(),
-                    execute_provider=lambda model_name, provider_name: _execute_diagram_provider_attempt(
-                        item=item,
-                        provider_name=provider_name,
-                        model_name=model_name,
-                        api_key=api_key,
-                        prompt_override=prompt_override,
-                    ),
-                    should_retry_with_another_model=_should_retry_with_another_model,
-                )
+                routed_result = None
+                last_error: Exception | None = None
+                filtered_provider_order = [provider for provider in provider_order if provider == "gemini"]
+                for credential in gemini_credentials:
+                    try:
+                        routed_result = execute_with_shared_quota_router(
+                            TASK_TYPE_DIAGRAM_VISION,
+                            provider_order=filtered_provider_order,
+                            fallback_model=default_model,
+                            project_id=build_quota_project_id_for_credential(project_id, credential.alias),
+                            max_model_attempts=_get_max_diagram_vision_model_attempts(),
+                            provider_selection_strategy=PROVIDER_SELECTION_EXHAUST_MODELS_FIRST,
+                            execute_provider=lambda model_name, provider_name, api_key=credential.api_key: _execute_diagram_provider_attempt(
+                                item=item,
+                                provider_name=provider_name,
+                                model_name=model_name,
+                                api_key=api_key,
+                                prompt_override=prompt_override,
+                            ),
+                            should_retry_with_another_model=_should_retry_with_another_model,
+                        )
+                        break
+                    except Exception as exc:
+                        last_error = exc
+
+                if routed_result is None and "vertex_ai" in provider_order:
+                    try:
+                        routed_result = execute_with_shared_quota_router(
+                            TASK_TYPE_DIAGRAM_VISION,
+                            provider_order=["vertex_ai"],
+                            fallback_model=default_model,
+                            project_id=project_id,
+                            max_model_attempts=_get_max_diagram_vision_model_attempts(),
+                            provider_selection_strategy=PROVIDER_SELECTION_EXHAUST_MODELS_FIRST,
+                            execute_provider=lambda model_name, provider_name: _execute_diagram_provider_attempt(
+                                item=item,
+                                provider_name=provider_name,
+                                model_name=model_name,
+                                api_key="",
+                                prompt_override=prompt_override,
+                            ),
+                            should_retry_with_another_model=_should_retry_with_another_model,
+                        )
+                    except Exception as exc:
+                        last_error = exc
+
+                if routed_result is None and last_error is not None:
+                    raise last_error
             except Exception as exc:
                 if "No compatible model is currently available" in str(exc):
                     all_models_exhausted_for_block = True

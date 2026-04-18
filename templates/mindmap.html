@@ -4,28 +4,43 @@
 <div class="flex flex-col h-full" style="font-family: 'DM Sans', sans-serif; user-select: none;">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-  <!-- Header -->
+  <!-- ═══ Header ═══ -->
   <div class="px-6 py-3 border-b border-gray-200 bg-white flex justify-between items-center z-30 shadow-sm" style="flex-shrink:0;">
-    <div class="flex items-center gap-2 text-sm text-gray-500">
-      <a href="/chat" class="hover:text-purple-600 transition-colors flex items-center gap-1">
-        <i class="fa-solid fa-arrow-left text-xs"></i> Back
-      </a>
-      <span class="text-gray-300">/</span>
-      <span id="map-title" class="text-purple-700 font-semibold cursor-pointer hover:text-purple-500" title="Click to rename" onclick="renameMap()">
-        Untitled Mind Map
-      </span>
-    </div>
-    <div class="flex items-center gap-2">
-      <div class="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded px-2 py-1 hidden md:flex items-center gap-3">
+	    <div class="flex items-center gap-2 text-sm text-gray-500">
+	      <a href="{% if study_context.conversation_id %}/chat?conversation_id={{ study_context.conversation_id }}{% else %}/dashboard{% endif %}" class="hover:text-purple-600 transition-colors flex items-center gap-1">
+	        <i class="fa-solid fa-arrow-left text-xs"></i> {% if study_context.conversation_id %}Back{% else %}Dashboard{% endif %}
+	      </a>
+	      <span class="text-gray-300">/</span>
+	      <span id="map-title" class="text-purple-700 font-semibold cursor-pointer hover:text-purple-500" title="Click to rename" onclick="renameMap()">
+	        Untitled Mind Map
+	      </span>
+	      <select id="saved-maps-select" onchange="openSavedMap(this.value)" class="ml-3 max-w-64 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600">
+	        <option value="">Saved maps</option>
+	        {% for item in (study_context.saved_items or []) %}
+	        <option value="{{ item.study_aid_id }}" {% if study_context.study_aid_id == item.study_aid_id %}selected{% endif %}>{{ item.title }}</option>
+	        {% endfor %}
+	      </select>
+	      <button onclick="startNewMap()" class="rounded-lg border border-purple-200 px-3 py-1.5 text-sm font-medium text-purple-700 hover:bg-purple-50">New</button>
+	    </div>
+	    <div class="flex items-center gap-2">
+      <div class="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded px-2 py-1 hidden lg:flex items-center gap-3">
         <span><kbd class="font-mono bg-white border rounded px-1">Enter</kbd> sibling</span>
         <span><kbd class="font-mono bg-white border rounded px-1">Tab</kbd> child</span>
         <span><kbd class="font-mono bg-white border rounded px-1">Del</kbd> delete</span>
         <span><kbd class="font-mono bg-white border rounded px-1">Ctrl+Scroll</kbd> zoom</span>
-        <span><kbd class="font-mono bg-white border rounded px-1">Space+Drag</kbd> pan</span>
       </div>
-      <button onclick="downloadJSON()" class="h-8 px-3 bg-white border border-gray-200 rounded text-gray-500 hover:border-purple-400 hover:text-purple-600 text-xs transition-colors flex items-center gap-1">
-        <i class="fa-solid fa-download text-xs"></i> Export
-      </button>
+	      <button onclick="openAIPanel()" class="h-8 px-3 bg-purple-50 border border-purple-300 rounded text-purple-700 hover:bg-purple-100 text-xs transition-colors flex items-center gap-1.5 font-medium">
+	        <i class="fa-solid fa-wand-magic-sparkles text-xs"></i> Generate with AI
+	      </button>
+	      <button onclick="saveMapToLocalStorage()" class="h-8 px-3 bg-white border border-gray-200 rounded text-gray-500 hover:border-purple-400 hover:text-purple-600 text-xs transition-colors flex items-center gap-1">
+	        <i class="fa-solid fa-floppy-disk text-xs"></i> Save
+	      </button>
+	      <button onclick="downloadJSON()" class="h-8 px-3 bg-white border border-gray-200 rounded text-gray-500 hover:border-purple-400 hover:text-purple-600 text-xs transition-colors flex items-center gap-1">
+	        <i class="fa-solid fa-file-code text-xs"></i> JSON
+	      </button>
+	      <button onclick="downloadImage()" class="h-8 px-3 bg-white border border-gray-200 rounded text-gray-500 hover:border-purple-400 hover:text-purple-600 text-xs transition-colors flex items-center gap-1">
+	        <i class="fa-solid fa-image text-xs"></i> Image
+	      </button>
       <button onclick="loadJSON()" class="h-8 px-3 bg-white border border-gray-200 rounded text-gray-500 hover:border-purple-400 hover:text-purple-600 text-xs transition-colors flex items-center gap-1">
         <i class="fa-solid fa-upload text-xs"></i> Import
       </button>
@@ -35,502 +50,1227 @@
     </div>
   </div>
 
-  <!-- Canvas wrapper -->
-  <div id="canvas-wrap" class="flex-1 relative overflow-hidden" style="cursor: default;">
-
-    <!-- Whiteboard dot background canvas -->
+  <!-- ═══ Canvas ═══ -->
+  <div id="canvas-wrap" class="flex-1 relative overflow-hidden" style="cursor:default; background:#f5f2ff;">
     <canvas id="dot-bg" class="absolute inset-0 pointer-events-none" style="z-index:0;"></canvas>
-
-    <!-- Marquee selection box -->
     <div id="marquee" style="display:none;position:absolute;border:1.5px solid #a96af4;background:rgba(169,106,244,0.07);border-radius:3px;pointer-events:none;z-index:25;"></div>
-
-    <!-- SVG connectors -->
     <svg id="connections-svg" class="absolute inset-0 pointer-events-none" style="overflow:visible;z-index:5;width:100%;height:100%;transform-origin:0 0;"></svg>
-
-    <!-- Nodes -->
     <div id="nodes-container" class="absolute" style="top:0;left:0;z-index:10;transform-origin:0 0;"></div>
 
     <!-- Zoom controls -->
     <div class="absolute bottom-6 right-6 flex flex-col bg-white rounded-xl shadow-lg overflow-hidden border border-gray-200 z-30">
-      <button onclick="doZoom(0.12, null)" class="p-2.5 hover:bg-purple-50 text-gray-600 hover:text-purple-600 transition-colors text-sm"><i class="fa-solid fa-plus"></i></button>
+      <button onclick="doZoom(0.12,null)" class="p-2.5 hover:bg-purple-50 text-gray-600 hover:text-purple-600 transition-colors text-sm"><i class="fa-solid fa-plus"></i></button>
       <div id="zoom-label" class="px-2 py-1 text-xs text-center border-t border-b border-gray-100 font-bold text-gray-400 min-w-[48px]">100%</div>
-      <button onclick="doZoom(-0.12, null)" class="p-2.5 hover:bg-purple-50 text-gray-600 hover:text-purple-600 transition-colors text-sm"><i class="fa-solid fa-minus"></i></button>
+      <button onclick="doZoom(-0.12,null)" class="p-2.5 hover:bg-purple-50 text-gray-600 hover:text-purple-600 transition-colors text-sm"><i class="fa-solid fa-minus"></i></button>
     </div>
 
-    <!-- Fit + selection count -->
-    <div class="absolute bottom-6 left-6 z-30 flex gap-2 items-center">
-      <button onclick="fitView()" class="bg-white border border-gray-200 rounded-xl shadow px-3 py-2 text-xs text-gray-500 hover:text-purple-600 hover:border-purple-300 transition-colors">
-        <i class="fa-solid fa-maximize mr-1"></i> Fit
-      </button>
-      <span id="sel-count" class="text-xs text-purple-500 font-medium hidden bg-white border border-purple-200 rounded-xl shadow px-3 py-2"></span>
+	  <!-- Bottom-left: Fit + sel count -->
+	  <div class="absolute bottom-6 left-6 z-30 flex gap-2 items-center">
+	    <button onclick="fitView()" class="bg-white border border-gray-200 rounded-xl shadow px-3 py-2 text-xs text-gray-500 hover:text-purple-600 hover:border-purple-300 transition-colors">
+	      <i class="fa-solid fa-maximize mr-1"></i> Fit
+	    </button>
+	    <span id="sel-count" class="text-xs text-purple-500 font-medium hidden bg-white border border-purple-200 rounded-xl shadow px-3 py-2"></span>
+	  </div>
+
+	  <div class="absolute top-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-2xl border border-purple-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur-sm">
+	    <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-purple-500">Width</span>
+	    <input id="node-width-input" type="number" min="110" max="520" step="10" value="220" class="w-20 rounded-lg border border-purple-200 bg-purple-50 px-2 py-1 text-xs text-purple-900 outline-none focus:border-purple-400">
+	    <button onclick="applyWidthToSelected()" class="rounded-lg border border-purple-200 px-2.5 py-1 text-xs font-medium text-purple-700 transition hover:bg-purple-50">Selected</button>
+	    <button onclick="applyWidthToAll()" class="rounded-lg border border-purple-200 px-2.5 py-1 text-xs font-medium text-purple-700 transition hover:bg-purple-50">All</button>
+	    <button onclick="autoFitSelectedWidths()" class="rounded-lg border border-purple-200 px-2.5 py-1 text-xs font-medium text-purple-700 transition hover:bg-purple-50">Auto Fit</button>
+	    <button onclick="autoTidySelectedSubtree()" class="rounded-lg border border-purple-200 px-2.5 py-1 text-xs font-medium text-purple-700 transition hover:bg-purple-50">Tidy Branch</button>
+	    <button onclick="autoTidyMap()" class="rounded-lg bg-purple-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-purple-700">Auto Tidy</button>
+	  </div>
+	</div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     AI GENERATION PANEL (slide-in drawer)
+════════════════════════════════════════ -->
+<div id="ai-overlay" onclick="closeAIPanel()" style="display:none;position:fixed;inset:0;background:rgba(45,15,82,0.18);z-index:100;backdrop-filter:blur(1px);"></div>
+
+<div id="ai-panel" style="display:none;position:fixed;right:0;top:0;height:100%;width:420px;background:#fff;z-index:101;box-shadow:-4px 0 32px rgba(98,35,170,0.13);border-left:1px solid #eedcff;flex-direction:column;font-family:'DM Sans',sans-serif;">
+  <!-- Panel header -->
+  <div style="padding:20px 24px 16px;border-bottom:1px solid #f0e8ff;display:flex;align-items:center;justify-content:space-between;">
+    <div>
+      <div style="font-weight:700;font-size:15px;color:#2d0f52;display:flex;align-items:center;gap:8px;">
+        <span style="width:28px;height:28px;background:#6223aa;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;">
+          <i class="fa-solid fa-wand-magic-sparkles" style="color:#fff;font-size:12px;"></i>
+        </span>
+        AI Mind Map Generator
+      </div>
+      <div style="font-size:12px;color:#9147e8;margin-top:2px;">Powered by Claude</div>
     </div>
+    <button onclick="closeAIPanel()" style="width:32px;height:32px;border:1px solid #eedcff;border-radius:8px;background:#fdf8ff;color:#9147e8;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+
+  <!-- Panel body -->
+  <div style="flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:18px;">
+
+    <div style="display:none;">
+      <label style="font-size:12px;font-weight:600;color:#481a7d;display:block;margin-bottom:6px;">Source document</label>
+      <select id="ai-document"
+        style="width:100%;padding:10px 12px;border:1.5px solid #eedcff;border-radius:10px;font-size:13.5px;color:#2d0f52;outline:none;font-family:inherit;background:#fdf8ff;box-sizing:border-box;"
+        onfocus="this.style.borderColor='#a96af4'" onblur="this.style.borderColor='#eedcff'">
+        <option value="">Select a document</option>
+        {% for doc in (study_context.documents or []) %}
+        {% if doc.parser_status != "pending" %}
+        <option value="{{ doc.document_id }}" {% if study_context.document_id == doc.document_id %}selected{% endif %}>{{ doc.original_filename }}</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="display:none;">
+      <label style="font-size:12px;font-weight:600;color:#481a7d;display:block;margin-bottom:6px;">Page range</label>
+      <input id="ai-page-range" type="text" value="{{ study_context.page_range or '' }}" placeholder="Optional, e.g. 1-5, 8, 10-12"
+        style="width:100%;padding:10px 12px;border:1.5px solid #eedcff;border-radius:10px;font-size:13.5px;color:#2d0f52;outline:none;font-family:inherit;background:#fdf8ff;box-sizing:border-box;"
+        onfocus="this.style.borderColor='#a96af4'" onblur="this.style.borderColor='#eedcff'"
+        onkeydown="if(event.key==='Enter')generateMap()">
+    </div>
+
+    <div>
+      <label style="font-size:12px;font-weight:600;color:#481a7d;display:block;margin-bottom:6px;">Extra requirements</label>
+      <textarea id="ai-requirements" rows="4" placeholder="Optional, e.g. focus on exam topics, key concepts, or implementation details."
+        style="width:100%;padding:10px 12px;border:1.5px solid #eedcff;border-radius:10px;font-size:13px;color:#2d0f52;outline:none;font-family:inherit;resize:vertical;background:#fdf8ff;box-sizing:border-box;line-height:1.5;"
+        onfocus="this.style.borderColor='#a96af4'" onblur="this.style.borderColor='#eedcff'">{{ study_context.requirements or '' }}</textarea>
+      <div style="font-size:11px;color:#a96af4;margin-top:4px;">The core mind map prompt is automatic. Use this only for extra constraints.</div>
+    </div>
+
+    <!-- Topic input -->
+    <div style="display:none;">
+      <label style="font-size:12px;font-weight:600;color:#481a7d;display:block;margin-bottom:6px;">Topic / Subject</label>
+      <input id="ai-topic" type="text" placeholder="e.g. Machine Learning, Climate Change, Product Strategy…"
+        style="width:100%;padding:10px 12px;border:1.5px solid #eedcff;border-radius:10px;font-size:13.5px;color:#2d0f52;outline:none;font-family:inherit;background:#fdf8ff;box-sizing:border-box;"
+        onfocus="this.style.borderColor='#a96af4'" onblur="this.style.borderColor='#eedcff'"
+        onkeydown="if(event.key==='Enter')generateMap()">
+    </div>
+
+    <!-- Style selector -->
+    <div style="display:none;">
+      <label style="font-size:12px;font-weight:600;color:#481a7d;display:block;margin-bottom:8px;">Map Style</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <label id="style-overview" class="ai-style-opt selected-style" onclick="pickStyle('overview')">
+          <i class="fa-solid fa-sitemap" style="font-size:16px;margin-bottom:4px;"></i>
+          <span style="font-size:12px;font-weight:600;">Overview</span>
+          <span style="font-size:10px;opacity:0.7;">Broad topics, 2 levels</span>
+        </label>
+        <label id="style-deep" class="ai-style-opt" onclick="pickStyle('deep')">
+          <i class="fa-solid fa-layer-group" style="font-size:16px;margin-bottom:4px;"></i>
+          <span style="font-size:12px;font-weight:600;">Deep Dive</span>
+          <span style="font-size:10px;opacity:0.7;">Detailed, 3+ levels</span>
+        </label>
+        <label id="style-howto" class="ai-style-opt" onclick="pickStyle('howto')">
+          <i class="fa-solid fa-list-check" style="font-size:16px;margin-bottom:4px;"></i>
+          <span style="font-size:12px;font-weight:600;">How-To</span>
+          <span style="font-size:10px;opacity:0.7;">Steps & actions</span>
+        </label>
+        <label id="style-pros" class="ai-style-opt" onclick="pickStyle('pros')">
+          <i class="fa-solid fa-scale-balanced" style="font-size:16px;margin-bottom:4px;"></i>
+          <span style="font-size:12px;font-weight:600;">Pros & Cons</span>
+          <span style="font-size:10px;opacity:0.7;">Compare & contrast</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Custom prompt (advanced) -->
+    <div style="display:none;">
+      <button onclick="toggleAdvanced()" id="adv-toggle" style="font-size:12px;color:#9147e8;background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;gap:4px;font-family:inherit;font-weight:600;">
+        <i id="adv-icon" class="fa-solid fa-chevron-right" style="font-size:10px;transition:transform 0.2s;"></i>
+        Custom prompt (advanced)
+      </button>
+      <div id="adv-body" style="display:none;margin-top:10px;">
+        <textarea id="ai-custom-prompt" rows="4" placeholder="Optionally override the system prompt. E.g: 'Focus on technical implementation details. Use concise 2-3 word labels per node.'"
+          style="width:100%;padding:10px 12px;border:1.5px solid #eedcff;border-radius:10px;font-size:13px;color:#2d0f52;outline:none;font-family:inherit;resize:vertical;background:#fdf8ff;box-sizing:border-box;line-height:1.5;"
+          onfocus="this.style.borderColor='#a96af4'" onblur="this.style.borderColor='#eedcff'"></textarea>
+        <div style="font-size:11px;color:#a96af4;margin-top:4px;">Leave blank to use the auto-generated prompt for the selected style.</div>
+      </div>
+    </div>
+
+    <!-- Replace / Extend toggle -->
+    <div style="background:#fdf8ff;border:1.5px solid #eedcff;border-radius:10px;padding:12px 14px;">
+      <div style="font-size:12px;font-weight:600;color:#481a7d;margin-bottom:8px;">Apply to current map</div>
+      <div style="display:flex;gap:8px;">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px;color:#481a7d;">
+          <input type="radio" name="ai-mode" value="replace" checked style="accent-color:#6223aa;"> Replace entire map
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px;color:#481a7d;">
+          <input type="radio" name="ai-mode" value="extend"> Extend selected node
+        </label>
+      </div>
+    </div>
+
+    <!-- Status / error message -->
+    <div id="ai-status" style="display:none;padding:10px 12px;border-radius:10px;font-size:12.5px;"></div>
+
+    <!-- Generate button -->
+    <button id="ai-gen-btn" onclick="generateMap()"
+      style="width:100%;padding:12px;background:#6223aa;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;transition:background 0.15s;">
+      <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Mind Map
+    </button>
+
+    <!-- Preview JSON (collapsible) -->
+    <div id="ai-preview-wrap" style="display:none;">
+      <div style="font-size:12px;font-weight:600;color:#481a7d;margin-bottom:6px;">Preview (raw JSON)</div>
+      <pre id="ai-preview" style="background:#fdf8ff;border:1px solid #eedcff;border-radius:8px;padding:10px;font-size:10.5px;color:#481a7d;overflow-x:auto;max-height:180px;overflow-y:auto;white-space:pre-wrap;"></pre>
+    </div>
+  </div>
+
+  <!-- Panel footer -->
+  <div style="padding:14px 24px;border-top:1px solid #f0e8ff;font-size:11px;color:#c493fc;text-align:center;">
+    AI generation uses your selected document as source material. Results are fully editable after generation.
   </div>
 </div>
 
+<!-- ═══ Styles ═══ -->
 <style>
-  .mm-node {
-    position: absolute;
-    cursor: pointer;
-  }
-  .mm-node.selected > .node-box {
-    box-shadow: 0 0 0 2.5px #a96af4, 0 4px 18px rgba(169,106,244,0.22);
-  }
-  .mm-node:hover > .node-box {
-    box-shadow: 0 2px 14px rgba(169,106,244,0.18);
-  }
-  .node-box {
-    border-radius: 10px;
-    border: 2px solid #eedcff;
-    background: #fff;
-    padding: 8px 16px;
-    min-width: 110px;
-    max-width: 220px;
-    font-size: 13.5px;
-    font-weight: 500;
-    color: #2d0f52;
-    text-align: center;
-    word-break: break-word;
-    line-height: 1.45;
-    position: relative;
-    box-shadow: 0 1px 6px rgba(169,106,244,0.08);
-  }
-  .node-box.root {
-    background: #6223aa;
-    border-color: #6223aa;
-    color: #fff;
-    font-weight: 700;
-    font-size: 15px;
-    padding: 12px 22px;
-    border-radius: 14px;
-    box-shadow: 0 4px 20px rgba(98,35,170,0.28);
-  }
-  .node-box.depth-1 { border-left: 3px solid #a96af4; }
-  .node-box.depth-2 { border-left: 3px solid #c493fc; }
-  .node-box.depth-3 { border-left: 3px solid #ddbeff; }
-  .node-box.depth-4plus { border-left: 3px solid #eedcff; }
-
+  .mm-node { position:absolute; cursor:pointer; }
+  .mm-node.selected > .node-box { box-shadow:0 0 0 2.5px #a96af4, 0 4px 18px rgba(169,106,244,0.22); }
+  .mm-node:hover > .node-box { box-shadow:0 2px 14px rgba(169,106,244,0.18); }
+	  .node-box {
+	    border-radius:10px; border:2px solid #eedcff; background:#fff;
+	    padding:8px 16px; min-width:110px; max-width:520px;
+	    font-size:13.5px; font-weight:500; color:#2d0f52;
+	    text-align:center; word-break:break-word; line-height:1.45;
+	    position:relative; box-shadow:0 1px 6px rgba(169,106,244,0.08);
+	    width:220px; box-sizing:border-box;
+	  }
+	  .node-box.root {
+	    background:#6223aa; border-color:#6223aa; color:#fff;
+	    font-weight:700; font-size:15px; padding:12px 22px;
+	    border-radius:14px; box-shadow:0 4px 20px rgba(98,35,170,0.28);
+	  }
+  .node-box.depth-1 { border-left:3px solid #a96af4; }
+  .node-box.depth-2 { border-left:3px solid #c493fc; }
+  .node-box.depth-3 { border-left:3px solid #ddbeff; }
+  .node-box.depth-4plus { border-left:3px solid #eedcff; }
   .node-inline-edit {
-    background: transparent;
-    border: none;
-    outline: none;
-    font-family: inherit;
-    font-size: inherit;
-    font-weight: inherit;
-    color: inherit;
-    width: 100%;
-    resize: none;
-    overflow: hidden;
-    line-height: 1.45;
-    padding: 0; margin: 0;
-    text-align: center;
-    display: block;
+    background:transparent; border:none; outline:none;
+    font-family:inherit; font-size:inherit; font-weight:inherit;
+    color:inherit; width:100%; resize:none; overflow:hidden;
+    line-height:1.45; padding:0; margin:0; text-align:center; display:block;
   }
-  .add-child-btn {
-    position: absolute;
-    right: -20px; top: 50%;
-    transform: translateY(-50%);
-    width: 18px; height: 18px;
-    border-radius: 50%;
-    background: #a96af4;
-    color: #fff; font-size: 12px;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; opacity: 0;
-    transition: opacity 0.15s;
-    z-index: 6; border: none;
-    box-shadow: 0 1px 5px rgba(169,106,244,0.35);
-    line-height: 1;
+	  .add-child-btn {
+    position:absolute; right:-20px; top:50%; transform:translateY(-50%);
+    width:18px; height:18px; border-radius:50%; background:#a96af4;
+    color:#fff; font-size:12px; display:flex; align-items:center;
+    justify-content:center; cursor:pointer; opacity:0;
+    transition:opacity 0.15s; z-index:6; border:none;
+    box-shadow:0 1px 5px rgba(169,106,244,0.35); line-height:1;
+	  }
+	  .mm-node:hover .add-child-btn { opacity:1; }
+	  .node-resize-handle {
+	    position:absolute; top:10px; right:-9px; width:12px; height:calc(100% - 20px);
+	    border-radius:999px; background:linear-gradient(180deg, #c493fc 0%, #a96af4 100%);
+	    cursor:ew-resize; opacity:0; transition:opacity 0.15s; box-shadow:0 1px 6px rgba(169,106,244,0.25);
+	  }
+	  .mm-node.selected .node-resize-handle,
+	  .mm-node:hover .node-resize-handle { opacity:1; }
+	  .conn-path { stroke:#c493fc; stroke-width:1.5; fill:none; }
+
+  /* AI panel style opts */
+  .ai-style-opt {
+    display:flex; flex-direction:column; align-items:center;
+    padding:12px 8px; border:1.5px solid #eedcff; border-radius:10px;
+    cursor:pointer; color:#481a7d; transition:all 0.15s; text-align:center;
+    background:#fdf8ff;
   }
-  .mm-node:hover .add-child-btn { opacity: 1; }
-  .conn-path { stroke: #c493fc; stroke-width: 1.5; fill: none; }
+  .ai-style-opt:hover { border-color:#a96af4; background:#f7eeff; }
+  .ai-style-opt.selected-style { border-color:#6223aa; background:#f0e6ff; color:#6223aa; }
+
+  /* Spinning loader */
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .spin { animation:spin 0.8s linear infinite; display:inline-block; }
+
+  /* AI panel open/close */
+  #ai-panel { transition: transform 0.25s cubic-bezier(.4,0,.2,1); }
+  #ai-panel.open { display:flex !important; }
 </style>
 
+<!-- ═══ Script ═══ -->
 <script>
 // ══════════ State ══════════
-let scale = 1, panX = 0, panY = 0;
+let scale=1, panX=0, panY=0;
 let selectedIds = new Set();
-let editingId = null, nodeCounter = 0;
-let nodes = {};
-let spaceDown = false, isPanning = false, panStart = {};
-let isDraggingNodes = false, dragStart = {}, dragSnap = {};
-let isMarquee = false, marqueeStart = {};
+let editingId=null, nodeCounter=0;
+let nodes={};
+let spaceDown=false, isPanning=false, panStart={};
+let isDraggingNodes=false, dragStart={}, dragSnap={};
+let isMarquee=false, marqueeStart={};
+// Flag to suppress global keydown after inline-edit fires action
+let suppressNextEnter=false, suppressNextTab=false;
+let aiMapStyle='overview';
+const NODE_MIN_WIDTH = 110;
+const NODE_MAX_WIDTH = 520;
+const DEFAULT_NODE_WIDTH = 220;
+const ROOT_NODE_WIDTH = 260;
 
 const wrap      = document.getElementById('canvas-wrap');
 const container = document.getElementById('nodes-container');
 const svgEl     = document.getElementById('connections-svg');
 const marqueeEl = document.getElementById('marquee');
 const dotBg     = document.getElementById('dot-bg');
+const MINDMAP_STORAGE_KEY = 'mindmap_state_v1';
+const STUDY_CONTEXT = {{ (study_context or {}) | tojson }};
 
 // ══════════ Dot background ══════════
 function drawDots() {
-  const ctx = dotBg.getContext('2d');
-  const W = wrap.clientWidth, H = wrap.clientHeight;
-  dotBg.width = W; dotBg.height = H;
-  ctx.clearRect(0, 0, W, H);
-  const sp = 26, r = 1.3;
-  const ox = ((panX % sp) + sp) % sp, oy = ((panY % sp) + sp) % sp;
-  ctx.fillStyle = '#e9d7ff';
-  for (let x = ox - sp; x < W + sp; x += sp)
-    for (let y = oy - sp; y < H + sp; y += sp) {
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  const ctx=dotBg.getContext('2d');
+  const W=wrap.clientWidth, H=wrap.clientHeight;
+  dotBg.width=W; dotBg.height=H;
+  ctx.clearRect(0,0,W,H);
+  const sp=26, r=1.3;
+  const ox=((panX%sp)+sp)%sp, oy=((panY%sp)+sp)%sp;
+  ctx.fillStyle='#c4b0e0';
+  for(let x=ox-sp;x<W+sp;x+=sp)
+    for(let y=oy-sp;y<H+sp;y+=sp){
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
     }
 }
 window.addEventListener('resize', drawDots);
 
 // ══════════ Init ══════════
 function init() {
-  const rootId = createNode(null, 'Central Idea', null, null, 0);
-  setTimeout(() => {
-    const box = document.getElementById('box-' + rootId);
-    const bw = box ? box.offsetWidth : 160, bh = box ? box.offsetHeight : 44;
-    nodes[rootId].x = wrap.clientWidth / 2 - bw / 2;
-    nodes[rootId].y = wrap.clientHeight / 2 - bh / 2;
-    nodes[rootId].el.style.transform = `translate(${nodes[rootId].x}px, ${nodes[rootId].y}px)`;
-    selectOnly(rootId);
-    renderConnections();
-  }, 30);
+  const savedPayload = STUDY_CONTEXT.saved_payload || {};
+  if (Array.isArray(savedPayload.nodes) && savedPayload.nodes.length) {
+    applyFullMap(
+      {
+        title: savedPayload.title || STUDY_CONTEXT.document_name || 'Mind Map',
+        nodes: savedPayload.nodes.map((node, index) => ({
+          id: String(node.id || `${index + 1}`),
+          parentId: node.parentId ?? null,
+          text: String(node.text || ''),
+          width: clampNodeWidth(node.width || DEFAULT_NODE_WIDTH),
+        })),
+      },
+      savedPayload.title || STUDY_CONTEXT.document_name || 'Mind Map',
+    );
+    return;
+  }
+  const saved = localStorage.getItem(MINDMAP_STORAGE_KEY);
+  if (saved && !STUDY_CONTEXT.autostart) {
+    try {
+      importData(JSON.parse(saved));
+      fitView();
+      if (STUDY_CONTEXT.document_id && STUDY_CONTEXT.document_name) {
+        document.getElementById('map-title').textContent = `${STUDY_CONTEXT.document_name} Mind Map`;
+      }
+      if (STUDY_CONTEXT.document_id && document.getElementById('ai-document')) {
+        document.getElementById('ai-document').value = STUDY_CONTEXT.document_id;
+      }
+      return;
+    } catch (_) {}
+  }
+  const rootId=createNode(null, STUDY_CONTEXT.document_name || 'Central Idea', null, null, 0);
+  setTimeout(()=>{
+    const box=document.getElementById('box-'+rootId);
+    const bw=box?box.offsetWidth:160, bh=box?box.offsetHeight:44;
+    nodes[rootId].x=wrap.clientWidth/2-bw/2;
+    nodes[rootId].y=wrap.clientHeight/2-bh/2;
+    nodes[rootId].el.style.transform=`translate(${nodes[rootId].x}px,${nodes[rootId].y}px)`;
+    selectOnly(rootId); renderConnections();
+    if (STUDY_CONTEXT.document_id && document.getElementById('ai-document')) {
+      document.getElementById('ai-document').value = STUDY_CONTEXT.document_id;
+    }
+  },30);
 }
 
 // ══════════ Node creation ══════════
-function createNode(parentId, text = 'New Topic', x = null, y = null, depth = null) {
-  const id = 'n' + (++nodeCounter);
-  const parent = parentId ? nodes[parentId] : null;
-  if (depth === null) depth = parent ? parent.depth + 1 : 0;
-  if (x === null || y === null) { const p = calcChildPos(parentId); x = p.x; y = p.y; }
-  const node = { id, parentId, children: [], text, x, y, depth, el: null };
-  nodes[id] = node;
-  if (parent) parent.children.push(id);
+function createNode(parentId, text='New Topic', x=null, y=null, depth=null){
+  const id='n'+(++nodeCounter);
+  const parent=parentId?nodes[parentId]:null;
+  if(depth===null) depth=parent?parent.depth+1:0;
+  if(x===null||y===null){const p=calcChildPos(parentId);x=p.x;y=p.y;}
+  const node={id,parentId,children:[],text,x,y,depth,width:depth===0?ROOT_NODE_WIDTH:DEFAULT_NODE_WIDTH,el:null};
+  nodes[id]=node;
+  if(parent) parent.children.push(id);
   buildNodeEl(node);
   return id;
 }
 
-function calcChildPos(parentId) {
-  if (!parentId) return { x: 400, y: 300 };
-  const p = nodes[parentId], n = p.children.length;
-  return { x: p.x + 230, y: p.y - (n * 56) / 2 + n * 56 };
+function calcChildPos(parentId){
+  if(!parentId) return{x:400,y:300};
+  const p=nodes[parentId],n=p.children.length;
+  return{x:p.x+getNodeBoxWidth(p)+80, y:p.y-(n*56)/2+n*56};
 }
 
-function buildNodeEl(node) {
-  const div = document.createElement('div');
-  div.className = 'mm-node'; div.id = 'node-' + node.id;
-  div.style.transform = `translate(${node.x}px, ${node.y}px)`;
-  const dc = node.depth === 0 ? 'root' : node.depth === 1 ? 'depth-1' : node.depth === 2 ? 'depth-2' : node.depth === 3 ? 'depth-3' : 'depth-4plus';
-  div.innerHTML = `<div class="node-box ${dc}" id="box-${node.id}">
-    <span class="node-text" id="text-${node.id}">${escapeHTML(node.text)}</span>
-    ${node.depth < 6 ? `<button class="add-child-btn" onmousedown="event.stopPropagation()" onclick="event.stopPropagation();addChild('${node.id}')">+</button>` : ''}
-  </div>`;
+function clampNodeWidth(width){
+  return Math.max(NODE_MIN_WIDTH, Math.min(NODE_MAX_WIDTH, Number(width) || DEFAULT_NODE_WIDTH));
+}
+
+function getNodeBoxWidth(nodeOrId){
+  const node = typeof nodeOrId === 'string' ? nodes[nodeOrId] : nodeOrId;
+  if(!node) return DEFAULT_NODE_WIDTH;
+  const box=document.getElementById('box-'+node.id);
+  return box ? box.offsetWidth : clampNodeWidth(node.width);
+}
+
+function getNodeBoxHeight(nodeOrId){
+  const node = typeof nodeOrId === 'string' ? nodes[nodeOrId] : nodeOrId;
+  if(!node) return 40;
+  const box=document.getElementById('box-'+node.id);
+  return box ? box.offsetHeight : 40;
+}
+
+function applyNodeWidth(nodeId, width, options={}){
+  const node=nodes[nodeId];
+  if(!node) return;
+  const nextWidth=clampNodeWidth(width);
+  node.width=nextWidth;
+  const box=document.getElementById('box-'+nodeId);
+  if(box) box.style.width=`${nextWidth}px`;
+  if(!options.skipTidy){
+    renderConnections();
+    syncWidthInput();
+  }
+}
+
+function syncWidthInput(){
+  const input=document.getElementById('node-width-input');
+  if(!input) return;
+  const primary=[...selectedIds][0];
+  if(primary && nodes[primary]){
+    input.value=String(clampNodeWidth(nodes[primary].width));
+  } else {
+    input.value=String(DEFAULT_NODE_WIDTH);
+  }
+}
+
+function buildNodeEl(node){
+  const div=document.createElement('div');
+  div.className='mm-node'; div.id='node-'+node.id;
+  div.style.transform=`translate(${node.x}px,${node.y}px)`;
+  const dc=node.depth===0?'root':node.depth===1?'depth-1':node.depth===2?'depth-2':node.depth===3?'depth-3':'depth-4plus';
+  div.innerHTML=`<div class="node-box ${dc}" id="box-${node.id}">
+	    <span class="node-text" id="text-${node.id}">${escapeHTML(node.text)}</span>
+	    ${node.depth<6?`<button class="add-child-btn" onmousedown="event.stopPropagation()" onclick="event.stopPropagation();addChild('${node.id}')">+</button>`:''}
+	    <span class="node-resize-handle" data-resize-node="${node.id}" onmousedown="event.stopPropagation();startNodeResize(event,'${node.id}')"></span>
+	  </div>`;
   div.addEventListener('mousedown', onNodeMousedown);
-  div.addEventListener('dblclick', (e) => { e.stopPropagation(); startEdit(node.id); });
+  div.addEventListener('dblclick', (e)=>{e.stopPropagation(); startEdit(node.id);});
   container.appendChild(div);
-  node.el = div;
+  node.el=div;
+  applyNodeWidth(node.id, node.width, { skipTidy: true });
 }
 
-// ══════════ Editing ══════════
-function startEdit(id) {
-  if (editingId) finishEdit(editingId);
-  editingId = id;
-  const node = nodes[id];
-  const span = document.getElementById('text-' + id);
-  const ta = document.createElement('textarea');
-  ta.className = 'node-inline-edit'; ta.value = node.text; ta.rows = 1; ta.id = 'edit-' + id;
-  const resize = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+// ══════════ Inline editing ══════════
+function startEdit(id){
+  if(editingId) finishEdit(editingId);
+  editingId=id;
+  const node=nodes[id];
+  const span=document.getElementById('text-'+id);
+  const ta=document.createElement('textarea');
+  ta.className='node-inline-edit'; ta.value=node.text; ta.rows=1; ta.id='edit-'+id;
+  const resize=()=>{ta.style.height='auto';ta.style.height=ta.scrollHeight+'px';};
   ta.addEventListener('input', resize);
   span.replaceWith(ta); ta.focus(); ta.select(); resize();
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finishEdit(id); if (node.parentId) addSibling(id); }
-    else if (e.key === 'Tab') { e.preventDefault(); finishEdit(id); addChild(id); }
-    else if (e.key === 'Escape') finishEdit(id);
+
+  ta.addEventListener('keydown',(e)=>{
+    if(e.key==='Enter'&&!e.shiftKey){
+      e.preventDefault();
+      e.stopPropagation(); // ← prevent bubble to document keydown
+      suppressNextEnter=true;
+      finishEdit(id);
+      if(node.parentId) addSibling(id);
+      // reset flag after event loop
+      setTimeout(()=>{ suppressNextEnter=false; },0);
+    } else if(e.key==='Tab'){
+      e.preventDefault();
+      e.stopPropagation();
+      suppressNextTab=true;
+      finishEdit(id);
+      addChild(id);
+      setTimeout(()=>{ suppressNextTab=false; },0);
+    } else if(e.key==='Escape'){
+      e.stopPropagation();
+      finishEdit(id);
+    }
   });
-  ta.addEventListener('blur', () => finishEdit(id));
+  // blur saves but does NOT add sibling — only Enter does that
+  ta.addEventListener('blur',()=>finishEdit(id));
 }
 
-function finishEdit(id) {
-  if (editingId !== id) return; editingId = null;
-  const node = nodes[id], ta = document.getElementById('edit-' + id);
-  if (!ta) return;
-  node.text = ta.value.trim() || 'Node';
-  const span = document.createElement('span');
-  span.className = 'node-text'; span.id = 'text-' + id; span.textContent = node.text;
+function finishEdit(id){
+  if(editingId!==id) return; editingId=null;
+  const node=nodes[id], ta=document.getElementById('edit-'+id);
+  if(!ta) return;
+  node.text=ta.value.trim()||'Node';
+  const span=document.createElement('span');
+  span.className='node-text'; span.id='text-'+id; span.textContent=node.text;
   ta.replaceWith(span);
+  renderConnections();
+  syncWidthInput();
 }
 
 // ══════════ Tree ops ══════════
-function addChild(parentId) {
-  const newId = createNode(parentId); redist(parentId); renderConnections();
-  selectOnly(newId); setTimeout(() => startEdit(newId), 40);
+function addChild(parentId){
+  const newId=createNode(parentId); redist(parentId); renderConnections();
+  selectOnly(newId); setTimeout(()=>startEdit(newId),40);
 }
-function addSibling(id) {
-  const node = nodes[id];
-  if (!node.parentId) { addChild(id); return; }
-  const newId = createNode(node.parentId); redist(node.parentId); renderConnections();
-  selectOnly(newId); setTimeout(() => startEdit(newId), 40);
+function addSibling(id){
+  const node=nodes[id];
+  if(!node.parentId){addChild(id);return;}
+  const newId=createNode(node.parentId); redist(node.parentId); renderConnections();
+  selectOnly(newId); setTimeout(()=>startEdit(newId),40);
 }
-function deleteSelected() {
-  [...selectedIds].forEach(id => {
-    if (!nodes[id] || nodes[id].depth === 0) return;
-    const par = nodes[id].parentId;
-    if (par && nodes[par]) nodes[par].children = nodes[par].children.filter(c => c !== id);
-    getAllDesc(id).concat(id).forEach(nid => { nodes[nid]?.el?.remove(); delete nodes[nid]; });
-    if (par) redist(par);
+function deleteSelected(){
+  [...selectedIds].forEach(id=>{
+    if(!nodes[id]||nodes[id].depth===0) return;
+    const par=nodes[id].parentId;
+    if(par&&nodes[par]) nodes[par].children=nodes[par].children.filter(c=>c!==id);
+    getAllDesc(id).concat(id).forEach(nid=>{nodes[nid]?.el?.remove();delete nodes[nid];});
+    if(par) redist(par);
   });
   selectedIds.clear(); updateSelCount(); renderConnections();
 }
-function getAllDesc(id) {
-  const r = [], q = [...(nodes[id]?.children||[])];
-  while (q.length) { const c = q.shift(); r.push(c); if (nodes[c]) q.push(...nodes[c].children); }
+function getAllDesc(id){
+  const r=[],q=[...(nodes[id]?.children||[])];
+  while(q.length){const c=q.shift();r.push(c);if(nodes[c])q.push(...nodes[c].children);}
   return r;
 }
-function redist(pid) {
-  const p = nodes[pid]; if (!p) return;
-  const n = p.children.length, rowH = 56, colW = 230;
-  p.children.forEach((cid, i) => {
-    const c = nodes[cid]; if (!c) return;
-    c.x = p.x + colW; c.y = p.y - ((n-1)*rowH)/2 + i*rowH;
-    if (c.el) c.el.style.transform = `translate(${c.x}px, ${c.y}px)`;
-    if (c.children.length) redist(cid);
+function redist(pid){
+  const p=nodes[pid];if(!p)return;
+  const n=p.children.length,rowH=56,colW=getNodeBoxWidth(p)+80;
+  p.children.forEach((cid,i)=>{
+    const c=nodes[cid];if(!c)return;
+    c.x=p.x+colW; c.y=p.y-((n-1)*rowH)/2+i*rowH;
+    if(c.el) c.el.style.transform=`translate(${c.x}px,${c.y}px)`;
+    if(c.children.length) redist(cid);
   });
 }
 
 // ══════════ Selection ══════════
-function selectOnly(id) {
-  selectedIds.forEach(sid => nodes[sid]?.el?.classList.remove('selected'));
+function selectOnly(id){
+  selectedIds.forEach(sid=>nodes[sid]?.el?.classList.remove('selected'));
   selectedIds.clear();
-  if (id && nodes[id]) { selectedIds.add(id); nodes[id].el.classList.add('selected'); }
+  if(id&&nodes[id]){selectedIds.add(id);nodes[id].el.classList.add('selected');}
   updateSelCount();
+  syncWidthInput();
 }
-function clearSelection() {
-  selectedIds.forEach(id => nodes[id]?.el?.classList.remove('selected'));
-  selectedIds.clear(); updateSelCount();
+function clearSelection(){
+  selectedIds.forEach(id=>nodes[id]?.el?.classList.remove('selected'));
+  selectedIds.clear(); updateSelCount(); syncWidthInput();
 }
-function updateSelCount() {
-  const el = document.getElementById('sel-count');
-  if (selectedIds.size > 1) { el.textContent = selectedIds.size + ' selected'; el.classList.remove('hidden'); }
+function updateSelCount(){
+  const el=document.getElementById('sel-count');
+  if(selectedIds.size>1){el.textContent=selectedIds.size+' selected';el.classList.remove('hidden');}
+  else if(selectedIds.size===1){el.textContent='1 selected';el.classList.remove('hidden');}
   else el.classList.add('hidden');
 }
 
 // ══════════ Connections ══════════
-function renderConnections() {
-  svgEl.innerHTML = '';
-  Object.values(nodes).forEach(node => {
-    if (!node.parentId || !nodes[node.parentId]) return;
-    drawCurve(nodes[node.parentId], node);
+function renderConnections(){
+  svgEl.innerHTML='';
+  Object.values(nodes).forEach(node=>{
+    if(!node.parentId||!nodes[node.parentId])return;
+    drawCurve(nodes[node.parentId],node);
   });
 }
-function nodeRight(n) {
-  const el = document.getElementById('box-'+n.id);
-  const w = el?el.offsetWidth:130, h = el?el.offsetHeight:40;
-  return { x: n.x+w, y: n.y+h/2 };
+function nodeRight(n){
+  const el=document.getElementById('box-'+n.id);
+  const w=el?el.offsetWidth:130,h=el?el.offsetHeight:40;
+  return{x:n.x+w,y:n.y+h/2};
 }
-function nodeLeft(n) {
-  const el = document.getElementById('box-'+n.id);
-  return { x: n.x, y: n.y+(el?el.offsetHeight:40)/2 };
+function nodeLeft(n){
+  const el=document.getElementById('box-'+n.id);
+  return{x:n.x,y:n.y+(el?el.offsetHeight:40)/2};
 }
-function drawCurve(parent, child) {
-  const f = nodeRight(parent), t = nodeLeft(child), cx = (f.x+t.x)/2;
-  const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+function drawCurve(parent,child){
+  const f=nodeRight(parent),t=nodeLeft(child),cx=(f.x+t.x)/2;
+  const path=document.createElementNS('http://www.w3.org/2000/svg','path');
   path.setAttribute('class','conn-path');
   path.setAttribute('d',`M ${f.x} ${f.y} C ${cx} ${f.y}, ${cx} ${t.y}, ${t.x} ${t.y}`);
   svgEl.appendChild(path);
 }
 
+function startNodeResize(event, nodeId){
+  if(editingId || !nodes[nodeId]) return;
+  const node=nodes[nodeId];
+  const startX=event.clientX;
+  const startWidth=getNodeBoxWidth(node);
+  const onMove=(moveEvent)=>{
+    const delta=(moveEvent.clientX-startX)/scale;
+    applyNodeWidth(nodeId, startWidth + delta, { skipTidy: true });
+    renderConnections();
+    syncWidthInput();
+  };
+  const onUp=()=>{
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    renderConnections();
+    syncWidthInput();
+  };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+}
+
 // ══════════ Node drag ══════════
-function onNodeMousedown(e) {
-  if (e.button !== 0 || editingId || spaceDown) return;
+function onNodeMousedown(e){
+  if(e.button!==0||editingId||spaceDown)return;
   e.stopPropagation();
-  const id = e.currentTarget.id.replace('node-','');
-  if (!nodes[id]) return;
-  if (e.ctrlKey || e.metaKey || e.shiftKey) {
-    if (selectedIds.has(id)) { selectedIds.delete(id); nodes[id].el.classList.remove('selected'); }
-    else { selectedIds.add(id); nodes[id].el.classList.add('selected'); }
+  const id=e.currentTarget.id.replace('node-','');
+  if(!nodes[id])return;
+  if(e.ctrlKey||e.metaKey||e.shiftKey){
+    if(selectedIds.has(id)){selectedIds.delete(id);nodes[id].el.classList.remove('selected');}
+    else{selectedIds.add(id);nodes[id].el.classList.add('selected');}
     updateSelCount();
   } else {
-    if (!selectedIds.has(id)) selectOnly(id);
+    if(!selectedIds.has(id)) selectOnly(id);
   }
-  isDraggingNodes = true;
-  dragStart = { mx: e.clientX, my: e.clientY };
-  dragSnap = {};
-  selectedIds.forEach(sid => { dragSnap[sid] = { sx: nodes[sid].x, sy: nodes[sid].y }; });
-  let moved = false;
-  const onMove = (me) => {
-    if (!isDraggingNodes) return;
-    const dx = (me.clientX - dragStart.mx) / scale, dy = (me.clientY - dragStart.my) / scale;
-    if (!moved && (Math.abs(dx)>2||Math.abs(dy)>2)) moved = true;
-    if (!moved) return;
-    selectedIds.forEach(sid => {
-      if (!nodes[sid]||!dragSnap[sid]) return;
-      nodes[sid].x = dragSnap[sid].sx + dx; nodes[sid].y = dragSnap[sid].sy + dy;
-      nodes[sid].el.style.transform = `translate(${nodes[sid].x}px, ${nodes[sid].y}px)`;
+  isDraggingNodes=true;
+  dragStart={mx:e.clientX,my:e.clientY}; dragSnap={};
+  selectedIds.forEach(sid=>{dragSnap[sid]={sx:nodes[sid].x,sy:nodes[sid].y};});
+  let moved=false;
+  const onMove=(me)=>{
+    if(!isDraggingNodes)return;
+    const dx=(me.clientX-dragStart.mx)/scale, dy=(me.clientY-dragStart.my)/scale;
+    if(!moved&&(Math.abs(dx)>2||Math.abs(dy)>2)) moved=true;
+    if(!moved)return;
+    selectedIds.forEach(sid=>{
+      if(!nodes[sid]||!dragSnap[sid])return;
+      nodes[sid].x=dragSnap[sid].sx+dx; nodes[sid].y=dragSnap[sid].sy+dy;
+      nodes[sid].el.style.transform=`translate(${nodes[sid].x}px,${nodes[sid].y}px)`;
     }); renderConnections();
   };
-  const onUp = () => { isDraggingNodes = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+  const onUp=()=>{isDraggingNodes=false;window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp);};
+  window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp);
 }
 
-// ══════════ Canvas mousedown → pan or marquee ══════════
-wrap.addEventListener('mousedown', (e) => {
-  if (editingId) return;
-  if (e.target.closest('.mm-node')) return;
-  if (e.button === 1) { e.preventDefault(); startPan(e); return; }
-  if (e.button !== 0) return;
+// ══════════ Canvas → pan or marquee ══════════
+wrap.addEventListener('mousedown',(e)=>{
+  if(editingId)return;
+  if(e.target.closest('.mm-node'))return;
+  if(e.button===1){e.preventDefault();startPan(e);return;}
+  if(e.button!==0)return;
+  if(spaceDown){startPan(e);return;}
 
-  if (spaceDown) { startPan(e); return; }
-
-  // Marquee or click-to-deselect
-  const rect = wrap.getBoundingClientRect();
-  marqueeStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  let decided = false;
-
-  const onMove = (me) => {
-    const cx = me.clientX - rect.left, cy = me.clientY - rect.top;
-    const dx = cx - marqueeStart.x, dy = cy - marqueeStart.y;
-    if (!decided && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
-      decided = true; isMarquee = true; clearSelection();
-    }
-    if (!isMarquee) return;
-    const mx = Math.min(marqueeStart.x, cx), my = Math.min(marqueeStart.y, cy);
-    const mw = Math.abs(dx), mh = Math.abs(dy);
-    marqueeEl.style.cssText = `display:block;left:${mx}px;top:${my}px;width:${mw}px;height:${mh}px;position:absolute;border:1.5px solid #a96af4;background:rgba(169,106,244,0.07);border-radius:3px;pointer-events:none;z-index:25;`;
+  const rect=wrap.getBoundingClientRect();
+  marqueeStart={x:e.clientX-rect.left,y:e.clientY-rect.top};
+  let decided=false;
+  const onMove=(me)=>{
+    const cx=me.clientX-rect.left,cy=me.clientY-rect.top;
+    const dx=cx-marqueeStart.x,dy=cy-marqueeStart.y;
+    if(!decided&&(Math.abs(dx)>5||Math.abs(dy)>5)){decided=true;isMarquee=true;clearSelection();}
+    if(!isMarquee)return;
+    const mx=Math.min(marqueeStart.x,cx),my=Math.min(marqueeStart.y,cy);
+    const mw=Math.abs(dx),mh=Math.abs(dy);
+    marqueeEl.style.cssText=`display:block;left:${mx}px;top:${my}px;width:${mw}px;height:${mh}px;position:absolute;border:1.5px solid #a96af4;background:rgba(169,106,244,0.07);border-radius:3px;pointer-events:none;z-index:25;`;
     clearSelection();
-    Object.values(nodes).forEach(node => {
-      const nel = document.getElementById('box-'+node.id);
-      if (!nel) return;
-      const nr = nel.getBoundingClientRect();
-      const nx = nr.left - rect.left, ny = nr.top - rect.top;
-      if (nx < mx+mw && nx+nr.width > mx && ny < my+mh && ny+nr.height > my) {
-        selectedIds.add(node.id); node.el.classList.add('selected');
-      }
+    Object.values(nodes).forEach(node=>{
+      const nel=document.getElementById('box-'+node.id);if(!nel)return;
+      const nr=nel.getBoundingClientRect();
+      const nx=nr.left-rect.left,ny=nr.top-rect.top;
+      if(nx<mx+mw&&nx+nr.width>mx&&ny<my+mh&&ny+nr.height>my){selectedIds.add(node.id);node.el.classList.add('selected');}
     }); updateSelCount();
   };
-  const onUp = () => {
-    if (!decided) clearSelection();
-    isMarquee = false; marqueeEl.style.display = 'none';
-    window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
+  const onUp=()=>{
+    if(!decided)clearSelection();
+    isMarquee=false; marqueeEl.style.display='none';
+    window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp);
   };
-  window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+  window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp);
 });
 
-function startPan(e) {
-  isPanning = true;
-  panStart = { x: e.clientX - panX, y: e.clientY - panY };
-  wrap.style.cursor = 'grabbing';
-  const onMove = (me) => {
-    if (!isPanning) return;
-    panX = me.clientX - panStart.x; panY = me.clientY - panStart.y;
+function startPan(e){
+  isPanning=true;
+  panStart={x:e.clientX-panX,y:e.clientY-panY};
+  wrap.style.cursor='grabbing';
+  const onMove=(me)=>{
+    if(!isPanning)return;
+    panX=me.clientX-panStart.x; panY=me.clientY-panStart.y;
     applyTransform(); drawDots();
   };
-  const onUp = () => {
-    isPanning = false; wrap.style.cursor = spaceDown ? 'grab' : 'default';
-    window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
+  const onUp=()=>{
+    isPanning=false; wrap.style.cursor=spaceDown?'grab':'default';
+    window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp);
   };
-  window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+  window.addEventListener('mousemove',onMove); window.addEventListener('mouseup',onUp);
 }
 
-// ══════════ Scroll: normal = pan, Ctrl = zoom ══════════
-wrap.addEventListener('wheel', (e) => {
+// ══════════ Scroll / Zoom ══════════
+wrap.addEventListener('wheel',(e)=>{
   e.preventDefault();
-  if (e.ctrlKey || e.metaKey) {
-    const rect = wrap.getBoundingClientRect();
-    doZoom(e.deltaY > 0 ? -0.09 : 0.09, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+  if(e.ctrlKey||e.metaKey){
+    const rect=wrap.getBoundingClientRect();
+    doZoom(e.deltaY>0?-0.09:0.09,{x:e.clientX-rect.left,y:e.clientY-rect.top});
   } else {
-    panX -= e.deltaX; panY -= e.deltaY;
+    panX-=e.deltaX; panY-=e.deltaY;
     applyTransform(); drawDots();
   }
-}, { passive: false });
+},{passive:false});
 
-// ══════════ Zoom ══════════
-function doZoom(delta, pivot) {
-  const ns = Math.max(0.2, Math.min(3, scale + delta));
-  if (pivot) {
-    panX = pivot.x - (pivot.x - panX) * (ns / scale);
-    panY = pivot.y - (pivot.y - panY) * (ns / scale);
-  } else {
-    const cx = wrap.clientWidth/2, cy = wrap.clientHeight/2;
-    panX = cx - (cx - panX) * (ns / scale);
-    panY = cy - (cy - panY) * (ns / scale);
-  }
-  scale = ns; applyTransform(); drawDots();
-  document.getElementById('zoom-label').textContent = Math.round(scale*100)+'%';
+function doZoom(delta,pivot){
+  const ns=Math.max(0.2,Math.min(3,scale+delta));
+  if(pivot){panX=pivot.x-(pivot.x-panX)*(ns/scale); panY=pivot.y-(pivot.y-panY)*(ns/scale);}
+  else{const cx=wrap.clientWidth/2,cy=wrap.clientHeight/2; panX=cx-(cx-panX)*(ns/scale); panY=cy-(cy-panY)*(ns/scale);}
+  scale=ns; applyTransform(); drawDots();
+  document.getElementById('zoom-label').textContent=Math.round(scale*100)+'%';
 }
 
-function applyTransform() {
-  const t = `translate(${panX}px,${panY}px) scale(${scale})`;
-  container.style.transform = t; svgEl.style.transform = t;
+function applyTransform(){
+  const t=`translate(${panX}px,${panY}px) scale(${scale})`;
+  container.style.transform=t; svgEl.style.transform=t;
 }
 
-function fitView() {
-  const vals = Object.values(nodes); if (!vals.length) return;
+function fitView(){
+  const vals=Object.values(nodes);if(!vals.length)return;
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-  vals.forEach(n => {
-    const el = document.getElementById('box-'+n.id);
+  vals.forEach(n=>{
+    const el=document.getElementById('box-'+n.id);
     const w=el?el.offsetWidth:130,h=el?el.offsetHeight:40;
     minX=Math.min(minX,n.x);minY=Math.min(minY,n.y);
     maxX=Math.max(maxX,n.x+w);maxY=Math.max(maxY,n.y+h);
   });
   const pad=80,W=wrap.clientWidth,H=wrap.clientHeight;
-  scale = Math.min(W/(maxX-minX+pad*2), H/(maxY-minY+pad*2), 1.5);
-  panX = (W - (maxX+minX)*scale)/2; panY = (H - (maxY+minY)*scale)/2;
+  scale=Math.min(W/(maxX-minX+pad*2),H/(maxY-minY+pad*2),1.5);
+  panX=(W-(maxX+minX)*scale)/2; panY=(H-(maxY+minY)*scale)/2;
   applyTransform(); drawDots();
-  document.getElementById('zoom-label').textContent = Math.round(scale*100)+'%';
+  document.getElementById('zoom-label').textContent=Math.round(scale*100)+'%';
 }
 
-// ══════════ Keyboard ══════════
-document.addEventListener('keydown', (e) => {
-  if (e.key === ' ') { spaceDown = true; if (!editingId) wrap.style.cursor = 'grab'; }
-  if (editingId) return;
-  const primary = [...selectedIds][0];
-  if (e.key === 'Enter' && primary) { e.preventDefault(); addSibling(primary); }
-  else if (e.key === 'Tab' && primary) { e.preventDefault(); addChild(primary); }
-  else if ((e.key==='Delete'||e.key==='Backspace') && selectedIds.size) {
-    if (e.target.tagName!=='INPUT'&&e.target.tagName!=='TEXTAREA') { e.preventDefault(); deleteSelected(); }
-  }
-  else if (e.key==='F2' && primary) { e.preventDefault(); startEdit(primary); }
-  else if (e.key==='Escape') clearSelection();
-  else if (e.key==='ArrowUp'&&primary) { e.preventDefault(); navSib(primary,-1); }
-  else if (e.key==='ArrowDown'&&primary) { e.preventDefault(); navSib(primary,1); }
-  else if (e.key==='ArrowRight'&&primary) { e.preventDefault(); const n=nodes[primary]; if(n?.children.length) selectOnly(n.children[0]); }
-  else if (e.key==='ArrowLeft'&&primary) { e.preventDefault(); const n=nodes[primary]; if(n?.parentId) selectOnly(n.parentId); }
-  else if (e.key==='a'&&(e.ctrlKey||e.metaKey)) { e.preventDefault(); Object.keys(nodes).forEach(id=>{ selectedIds.add(id); nodes[id].el.classList.add('selected'); }); updateSelCount(); }
+function applyWidthToSelected(){
+  if(!selectedIds.size) return;
+  const width=clampNodeWidth(document.getElementById('node-width-input').value);
+  selectedIds.forEach((id)=>applyNodeWidth(id, width, { skipTidy: true }));
+  renderConnections();
+  syncWidthInput();
+}
+
+function applyWidthToAll(){
+  const width=clampNodeWidth(document.getElementById('node-width-input').value);
+  Object.keys(nodes).forEach((id)=>{
+    const node=nodes[id];
+    applyNodeWidth(id, node.depth===0 ? Math.max(width, ROOT_NODE_WIDTH) : width, { skipTidy: true });
+  });
+  renderConnections();
+  syncWidthInput();
+}
+
+function estimateTextWidth(text){
+  const value=String(text||'').trim();
+  if(!value) return DEFAULT_NODE_WIDTH;
+  const longestWord=Math.max(...value.split(/\s+/).map((item)=>item.length), 6);
+  const estimated=Math.max(DEFAULT_NODE_WIDTH, Math.min(NODE_MAX_WIDTH, 40 + longestWord * 11));
+  return clampNodeWidth(estimated);
+}
+
+function autoFitSelectedWidths(){
+  const targetIds=selectedIds.size ? [...selectedIds] : Object.keys(nodes);
+  targetIds.forEach((id)=>{
+    const node=nodes[id];
+    if(!node) return;
+    const width=estimateTextWidth(node.text);
+    applyNodeWidth(id, node.depth===0 ? Math.max(width, ROOT_NODE_WIDTH) : width, { skipTidy: true });
+  });
+  renderConnections();
+  syncWidthInput();
+}
+
+function measureSubtreeHeight(nodeId){
+  const node=nodes[nodeId];
+  if(!node) return 0;
+  const selfHeight=getNodeBoxHeight(node);
+  if(!node.children.length) return selfHeight;
+  const childGap=28;
+  const childrenHeight=node.children.reduce((sum, childId, index)=>{
+    return sum + measureSubtreeHeight(childId) + (index > 0 ? childGap : 0);
+  }, 0);
+  return Math.max(selfHeight, childrenHeight);
+}
+
+function placeSubtree(nodeId, x, centerY){
+  const node=nodes[nodeId];
+  if(!node) return;
+  const selfHeight=getNodeBoxHeight(node);
+  node.x=x;
+  node.y=centerY - selfHeight / 2;
+  if(node.el) node.el.style.transform=`translate(${node.x}px,${node.y}px)`;
+  if(!node.children.length) return;
+
+  const childGap=28;
+  const childHeights=node.children.map((childId)=>measureSubtreeHeight(childId));
+  const totalHeight=childHeights.reduce((sum,height)=>sum+height,0) + childGap * Math.max(0, childHeights.length - 1);
+  let currentTop=centerY - totalHeight / 2;
+  const childX=x + getNodeBoxWidth(node) + 90;
+
+  node.children.forEach((childId, index)=>{
+    const childHeight=childHeights[index];
+    placeSubtree(childId, childX, currentTop + childHeight / 2);
+    currentTop += childHeight + childGap;
+  });
+}
+
+function autoTidyMap(){
+  const root=Object.values(nodes).find((node)=>!node.parentId);
+  if(!root) return;
+  placeSubtree(root.id, 120, wrap.clientHeight / 2);
+  renderConnections();
+  fitView();
+}
+
+function autoTidySelectedSubtree(){
+  const selectedId=[...selectedIds][0];
+  const root=selectedId && nodes[selectedId] ? nodes[selectedId] : Object.values(nodes).find((node)=>!node.parentId);
+  if(!root) return;
+  const centerY=root.y + getNodeBoxHeight(root) / 2;
+  placeSubtree(root.id, root.x, centerY);
+  renderConnections();
+  fitView();
+}
+
+// ══════════ Keyboard (global) ══════════
+document.addEventListener('keydown',(e)=>{
+  if(e.key===' '){spaceDown=true;if(!editingId)wrap.style.cursor='grab';}
+  if(editingId) return; // all inline editing handled in startEdit
+
+  const primary=[...selectedIds][0];
+  if(e.key==='Enter'&&primary){
+    if(suppressNextEnter){suppressNextEnter=false;return;}
+    e.preventDefault(); addSibling(primary);
+  } else if(e.key==='Tab'&&primary){
+    if(suppressNextTab){suppressNextTab=false;return;}
+    e.preventDefault(); addChild(primary);
+  } else if((e.key==='Delete'||e.key==='Backspace')&&selectedIds.size){
+    if(e.target.tagName!=='INPUT'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();deleteSelected();}
+  } else if(e.key==='F2'&&primary){e.preventDefault();startEdit(primary);}
+  else if(e.key==='Escape'){clearSelection();}
+  else if(e.key==='ArrowUp'&&primary){e.preventDefault();navSib(primary,-1);}
+  else if(e.key==='ArrowDown'&&primary){e.preventDefault();navSib(primary,1);}
+  else if(e.key==='ArrowRight'&&primary){e.preventDefault();const n=nodes[primary];if(n?.children.length)selectOnly(n.children[0]);}
+  else if(e.key==='ArrowLeft'&&primary){e.preventDefault();const n=nodes[primary];if(n?.parentId)selectOnly(n.parentId);}
+  else if(e.key==='a'&&(e.ctrlKey||e.metaKey)){e.preventDefault();Object.keys(nodes).forEach(id=>{selectedIds.add(id);nodes[id].el.classList.add('selected');});updateSelCount();}
 });
-document.addEventListener('keyup', (e) => { if (e.key===' ') { spaceDown=false; wrap.style.cursor='default'; } });
+document.addEventListener('keyup',(e)=>{if(e.key===' '){spaceDown=false;wrap.style.cursor='default';}});
 
-function navSib(id, dir) {
-  const node = nodes[id]; if (!node?.parentId) return;
-  const s = nodes[node.parentId].children, next = s[s.indexOf(id)+dir];
-  if (next) selectOnly(next);
+function navSib(id,dir){
+  const node=nodes[id];if(!node?.parentId)return;
+  const s=nodes[node.parentId].children,next=s[s.indexOf(id)+dir];
+  if(next)selectOnly(next);
 }
 
-// ══════════ Export/Import ══════════
-function downloadJSON() {
-  const data = { title: document.getElementById('map-title').textContent, nodes: Object.values(nodes).map(n=>({id:n.id,parentId:n.parentId,children:n.children,text:n.text,x:n.x,y:n.y,depth:n.depth})) };
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
-  a.download = 'mindmap.json'; a.click();
+// ══════════ Export / Import ══════════
+function downloadJSON(){
+  const data={title:document.getElementById('map-title').textContent,nodes:Object.values(nodes).map(n=>({id:n.id,parentId:n.parentId,children:n.children,text:n.text,x:n.x,y:n.y,depth:n.depth,width:n.width}))};
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+  a.download='mindmap.json'; a.click();
 }
-function loadJSON() {
-  const inp = document.createElement('input'); inp.type='file'; inp.accept='.json';
-  inp.onchange = e => { const r=new FileReader(); r.onload=ev=>{ try{importData(JSON.parse(ev.target.result));}catch{alert('Invalid JSON');} }; r.readAsText(e.target.files[0]); };
+function saveMapToLocalStorage(){
+  const data={title:document.getElementById('map-title').textContent,nodes:Object.values(nodes).map(n=>({id:n.id,parentId:n.parentId,children:n.children,text:n.text,x:n.x,y:n.y,depth:n.depth,width:n.width}))};
+  localStorage.setItem(MINDMAP_STORAGE_KEY, JSON.stringify(data));
+  setAIStatus('<i class="fa-solid fa-circle-check mr-1"></i>Mind map saved to your browser.','success');
+  saveMapToServer();
+}
+function downloadImage(){
+  const vals=Object.values(nodes);if(!vals.length)return;
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  vals.forEach(n=>{
+    const el=document.getElementById('box-'+n.id);
+    const w=el?el.offsetWidth:130,h=el?el.offsetHeight:40;
+    minX=Math.min(minX,n.x);minY=Math.min(minY,n.y);
+    maxX=Math.max(maxX,n.x+w);maxY=Math.max(maxY,n.y+h);
+  });
+  const pad=60, width=Math.ceil(maxX-minX+pad*2), height=Math.ceil(maxY-minY+pad*2);
+  let svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="100%" height="100%" fill="#f5f2ff"/>`;
+  Object.values(nodes).forEach(n=>{
+    if(!n.parentId||!nodes[n.parentId]) return;
+    const parent=nodes[n.parentId];
+    const pel=document.getElementById('box-'+parent.id), nel=document.getElementById('box-'+n.id);
+    const pw=pel?pel.offsetWidth:130, ph=pel?pel.offsetHeight:40, nw=nel?nel.offsetWidth:130, nh=nel?nel.offsetHeight:40;
+    const x1=parent.x-minX+pad+pw, y1=parent.y-minY+pad+ph/2;
+    const x2=n.x-minX+pad, y2=n.y-minY+pad+nh/2;
+    const mx=(x1+x2)/2;
+    svg += `<path d="M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}" stroke="#c493fc" stroke-width="2" fill="none"/>`;
+  });
+  Object.values(nodes).forEach(n=>{
+    const el=document.getElementById('box-'+n.id);
+    const w=el?el.offsetWidth:130,h=el?el.offsetHeight:40;
+    const x=n.x-minX+pad,y=n.y-minY+pad;
+    const fill=n.depth===0?'#6223aa':'#ffffff';
+    const stroke=n.depth===0?'#6223aa':'#eedcff';
+    const textColor=n.depth===0?'#ffffff':'#2d0f52';
+    svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${n.depth===0?14:10}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
+    svg += `<text x="${x + w/2}" y="${y + h/2}" dominant-baseline="middle" text-anchor="middle" fill="${textColor}" font-family="Arial" font-size="${n.depth===0?15:13.5}" font-weight="${n.depth===0?700:500}">${escapeHTML(n.text)}</text>`;
+  });
+  svg += `</svg>`;
+  const blob = new Blob([svg], { type:'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href=url;
+  link.download=(document.getElementById('map-title').textContent || 'mindmap').replace(/\s+/g,'_') + '.svg';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+function loadJSON(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.json';
+  inp.onchange=e=>{const r=new FileReader();r.onload=ev=>{try{importData(JSON.parse(ev.target.result));}catch{alert('Invalid JSON');}};r.readAsText(e.target.files[0]);};
   inp.click();
 }
-function importData(data) {
-  container.innerHTML=''; svgEl.innerHTML=''; nodes={}; nodeCounter=0; selectedIds.clear();
-  if (data.title) document.getElementById('map-title').textContent = data.title;
-  data.nodes.forEach(n=>{ nodeCounter=Math.max(nodeCounter,parseInt(n.id.replace('n',''))||0); nodes[n.id]={...n,el:null}; });
-  Object.values(nodes).forEach(n=>buildNodeEl(n)); renderConnections();
-  const root = Object.values(nodes).find(n=>!n.parentId); if (root) selectOnly(root.id);
+function importData(data){
+  container.innerHTML='';svgEl.innerHTML='';nodes={};nodeCounter=0;selectedIds.clear();
+  if(data.title)document.getElementById('map-title').textContent=data.title;
+  data.nodes.forEach(n=>{nodeCounter=Math.max(nodeCounter,parseInt(String(n.id).replace('n',''))||0);nodes[n.id]={...n,width:clampNodeWidth(n.width || (n.depth===0?ROOT_NODE_WIDTH:DEFAULT_NODE_WIDTH)),el:null};});
+  Object.values(nodes).forEach(n=>buildNodeEl(n));renderConnections();
+  const root=Object.values(nodes).find(n=>!n.parentId);if(root)selectOnly(root.id);
 }
-function resetMap() {
-  if (!confirm('Start fresh?')) return;
-  container.innerHTML=''; svgEl.innerHTML=''; nodes={}; nodeCounter=0; selectedIds.clear();
+function resetMap(){
+  if(!confirm('Start fresh?'))return;
+  container.innerHTML='';svgEl.innerHTML='';nodes={};nodeCounter=0;selectedIds.clear();
   document.getElementById('map-title').textContent='Untitled Mind Map';
-  scale=1; panX=0; panY=0; applyTransform(); init();
+  scale=1;panX=0;panY=0;applyTransform();init();
 }
-function renameMap() {
-  const n = prompt('Map title:', document.getElementById('map-title').textContent);
-  if (n) document.getElementById('map-title').textContent = n;
+function renameMap(){
+  const n=prompt('Map title:',document.getElementById('map-title').textContent);
+  if(n)document.getElementById('map-title').textContent=n;
 }
-function escapeHTML(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escapeHTML(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+async function saveMapToServer(){
+  const title=document.getElementById('map-title').textContent || 'Mind Map';
+  const payload={
+    title,
+    source_requirements: STUDY_CONTEXT.requirements || '',
+    page_range: STUDY_CONTEXT.page_range || '',
+    payload_json: {
+      title,
+      nodes: Object.values(nodes).map(n=>({id:n.id,parentId:n.parentId,children:n.children,text:n.text,x:n.x,y:n.y,depth:n.depth,width:n.width}))
+    }
+  };
+  const targetId=STUDY_CONTEXT.study_aid_id || '';
+  const requestUrl=targetId ? `/api/study-aids/${encodeURIComponent(targetId)}` : '/api/study-aids';
+  const method=targetId ? 'PUT' : 'POST';
+  if(!targetId){
+    payload.aid_type='mindmap';
+    payload.conversation_id=STUDY_CONTEXT.conversation_id || '';
+    payload.document_id=STUDY_CONTEXT.document_id || '';
+  }
+  try{
+    const response=await fetch(requestUrl,{
+      method,
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify(payload),
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(result.error || 'Save failed.');
+    if(result.study_aid_id) STUDY_CONTEXT.study_aid_id=result.study_aid_id;
+  }catch(_){}
+}
+
+function openSavedMap(studyAidId){
+  if(!studyAidId) return;
+  const params=new URLSearchParams(window.location.search);
+  params.set('aid_id', studyAidId);
+  window.location.href=`/mindmap?${params.toString()}`;
+}
+
+function startNewMap(){
+  const params=new URLSearchParams(window.location.search);
+  params.delete('aid_id');
+  params.delete('autostart');
+  window.location.href=`/mindmap${params.toString() ? `?${params.toString()}` : ''}`;
+}
+
+// ══════════════════════════════════════
+//  AI GENERATION
+// ══════════════════════════════════════
+function openAIPanel(){
+  document.getElementById('ai-overlay').style.display='block';
+  const panel=document.getElementById('ai-panel');
+  panel.style.display='flex';
+  const documentInput=document.getElementById('ai-document');
+  if(STUDY_CONTEXT.document_id && documentInput) documentInput.value = STUDY_CONTEXT.document_id;
+  setTimeout(()=>documentInput?.focus(),100);
+}
+function closeAIPanel(){
+  document.getElementById('ai-overlay').style.display='none';
+  document.getElementById('ai-panel').style.display='none';
+  setAIStatus('','');
+}
+
+function pickStyle(s){
+  aiMapStyle=s;
+  document.querySelectorAll('.ai-style-opt').forEach(el=>el.classList.remove('selected-style'));
+  document.getElementById('style-'+s).classList.add('selected-style');
+}
+
+function toggleAdvanced(){
+  const body=document.getElementById('adv-body');
+  const icon=document.getElementById('adv-icon');
+  const open=body.style.display==='block';
+  body.style.display=open?'none':'block';
+  icon.style.transform=open?'rotate(0deg)':'rotate(90deg)';
+}
+
+function setAIStatus(msg,type){
+  const el=document.getElementById('ai-status');
+  if(!msg){el.style.display='none';return;}
+  el.style.display='block';
+  const colors={info:'#f0e6ff:#6223aa',error:'#fff0f0:#cc3333',success:'#f0fff4:#166534'};
+  const [bg,color]=(colors[type]||colors.info).split(':');
+  el.style.background=bg; el.style.color=color; el.style.border=`1px solid ${color}33`;
+  el.innerHTML=msg;
+}
+
+function buildSystemPrompt(){
+  const custom=document.getElementById('ai-custom-prompt').value.trim();
+  if(custom) return custom;
+  const stylePrompts={
+    overview:`You create concise overview mind maps with 4-6 main branches, each with 2-3 sub-topics. Keep node labels short (2-5 words).`,
+    deep:`You create detailed mind maps with 4-6 main branches, each with 3-5 sub-topics, and sub-sub-topics where relevant. Keep labels concise.`,
+    howto:`You create step-by-step how-to mind maps. Main branches are phases/steps, children are actions or tips. Use action verbs.`,
+    pros:`You create pros & cons comparison mind maps. Main branches: Advantages, Disadvantages, Key Considerations. Use short factual labels.`
+  };
+  return (stylePrompts[aiMapStyle]||stylePrompts.overview)+`
+
+CRITICAL: Respond ONLY with a valid JSON object. No markdown, no explanation, no backticks.
+The JSON schema is:
+{
+  "title": "string — the root/central topic label",
+  "nodes": [
+    { "id": "1", "parentId": null, "text": "Root label" },
+    { "id": "2", "parentId": "1", "text": "Branch label" },
+    { "id": "3", "parentId": "2", "text": "Sub-topic" }
+  ]
+}
+Rules:
+- IDs are simple integers as strings: "1", "2", "3" …
+- Root node has parentId: null
+- All other nodes reference a valid parent ID
+- text values are short (2-6 words max per node)
+- Return ONLY the JSON object, nothing else.`;
+}
+
+async function generateMapLegacyDisabled(){
+  const topic=document.getElementById('ai-topic').value.trim();
+  if(!topic){setAIStatus('<i class="fa-solid fa-circle-exclamation mr-1"></i>Please enter a topic first.','error');return;}
+
+  const btn=document.getElementById('ai-gen-btn');
+  btn.disabled=true;
+  btn.innerHTML='<i class="fa-solid fa-circle-notch spin mr-2"></i>Generating…';
+  setAIStatus('<i class="fa-solid fa-circle-notch spin mr-2"></i>Asking Claude to build your mind map…','info');
+  document.getElementById('ai-preview-wrap').style.display='none';
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1000,
+        system: buildSystemPrompt(),
+        messages:[{role:'user',content:`Create a mind map about: ${topic}`}]
+      })
+    });
+
+    if(!response.ok){
+      const err=await response.json().catch(()=>({}));
+      throw new Error(err?.error?.message||`API error ${response.status}`);
+    }
+
+    const data=await response.json();
+    const rawText=data.content.map(b=>b.type==='text'?b.text:'').join('');
+
+    // Strip any accidental markdown fences
+    const cleaned=rawText.replace(/```json|```/g,'').trim();
+    let parsed;
+    try { parsed=JSON.parse(cleaned); }
+    catch(pe){
+      document.getElementById('ai-preview-wrap').style.display='block';
+      document.getElementById('ai-preview').textContent=rawText;
+      throw new Error('Claude returned invalid JSON. See preview below.');
+    }
+
+    if(!parsed.nodes||!Array.isArray(parsed.nodes)) throw new Error('Unexpected response shape from Claude.');
+
+    // Show preview
+    document.getElementById('ai-preview-wrap').style.display='block';
+    document.getElementById('ai-preview').textContent=JSON.stringify(parsed,null,2);
+
+    // Apply to map
+    const mode=document.querySelector('input[name="ai-mode"]:checked').value;
+    if(mode==='replace'){
+      applyFullMap(parsed, topic);
+    } else {
+      // Extend: attach under selected node
+      const anchor=[...selectedIds][0]||Object.values(nodes).find(n=>!n.parentId)?.id;
+      if(anchor) extendNode(anchor, parsed);
+      else applyFullMap(parsed, topic);
+    }
+
+    setAIStatus('<i class="fa-solid fa-circle-check mr-1"></i>Mind map generated! You can edit any node.','success');
+    btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>Regenerate';
+
+  } catch(err){
+    setAIStatus(`<i class="fa-solid fa-circle-exclamation mr-1"></i>${err.message}`,'error');
+    btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>Generate Mind Map';
+  }
+
+  btn.disabled=false;
+}
+
+function generateMap(){
+  const documentId=document.getElementById('ai-document').value.trim();
+  const pageRange=document.getElementById('ai-page-range').value.trim();
+  const requirements=document.getElementById('ai-requirements').value.trim();
+  if(!documentId){setAIStatus('<i class="fa-solid fa-circle-exclamation mr-1"></i>Select a source document first.','error');return;}
+
+  const btn=document.getElementById('ai-gen-btn');
+  btn.disabled=true;
+  btn.innerHTML='<i class="fa-solid fa-circle-notch spin mr-2"></i>Generating...';
+  setAIStatus('<i class="fa-solid fa-circle-notch spin mr-2"></i>Building a mind map from your document...','info');
+  document.getElementById('ai-preview-wrap').style.display='none';
+
+  fetch('/api/mindmap/generate',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    credentials:'same-origin',
+    body:JSON.stringify({
+      document_id: documentId,
+      conversation_id: STUDY_CONTEXT.conversation_id || '',
+      page_range: pageRange,
+      requirements,
+    })
+  })
+    .then(async (response) => {
+      const parsed = await response.json().catch(() => ({}));
+      if(!response.ok){
+        throw new Error(parsed?.error||`API error ${response.status}`);
+      }
+      if(!parsed.nodes||!Array.isArray(parsed.nodes)) throw new Error('Unexpected response shape from the server.');
+
+      document.getElementById('ai-preview-wrap').style.display='block';
+      document.getElementById('ai-preview').textContent=JSON.stringify(parsed,null,2);
+
+      const mode=document.querySelector('input[name="ai-mode"]:checked').value;
+      if(mode==='replace'){
+        applyFullMap(parsed, parsed.title || (STUDY_CONTEXT.document_name || 'Mind Map'));
+      } else {
+        const anchor=[...selectedIds][0]||Object.values(nodes).find(n=>!n.parentId)?.id;
+        if(anchor) extendNode(anchor, parsed);
+        else applyFullMap(parsed, parsed.title || (STUDY_CONTEXT.document_name || 'Mind Map'));
+      }
+
+      setAIStatus('<i class="fa-solid fa-circle-check mr-1"></i>Mind map generated! You can edit any node.','success');
+      if (parsed.study_aid_id) {
+        STUDY_CONTEXT.study_aid_id = parsed.study_aid_id;
+      }
+      btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>Regenerate';
+    })
+    .catch((err) => {
+      setAIStatus(`<i class="fa-solid fa-circle-exclamation mr-1"></i>${err.message}`,'error');
+      btn.innerHTML='<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>Generate Mind Map';
+    })
+    .finally(() => {
+      btn.disabled=false;
+    });
+}
+
+function applyFullMap(parsed, topic){
+  container.innerHTML=''; svgEl.innerHTML='';
+  nodes={}; nodeCounter=0; selectedIds.clear();
+
+  // Update map title
+  document.getElementById('map-title').textContent=parsed.title||topic;
+
+  // Build an id-remap table (Claude uses "1","2"… we use "n1","n2"…)
+  const remap={};
+  parsed.nodes.forEach(n=>{
+    const newId='n'+(++nodeCounter);
+    remap[n.id]=newId;
+  });
+
+  // Place root at center
+  const rootData=parsed.nodes.find(n=>n.parentId===null);
+  const W=wrap.clientWidth, H=wrap.clientHeight;
+
+  parsed.nodes.forEach(n=>{
+    const id=remap[n.id];
+    const parentId=n.parentId?remap[n.parentId]:null;
+    const depth=getDepth(n,parsed.nodes);
+    const node={id,parentId,children:[],text:n.text,x:0,y:0,depth,width:clampNodeWidth(n.width || (depth===0?ROOT_NODE_WIDTH:DEFAULT_NODE_WIDTH)),el:null};
+    nodes[id]=node;
+    if(parentId&&nodes[parentId]) nodes[parentId].children.push(id);
+    buildNodeEl(node);
+  });
+
+  // Position: lay out tree
+  const rootId=remap[rootData.id];
+  nodes[rootId].x=W/2-90; nodes[rootId].y=H/2-22;
+  layoutTree(rootId);
+
+  const root=Object.values(nodes).find(n=>!n.parentId);
+  if(root) selectOnly(root.id);
+  setTimeout(()=>{renderConnections();fitView();},60);
+}
+
+function extendNode(anchorId, parsed){
+  // Find root of parsed tree, attach its children under anchor
+  const rootData=parsed.nodes.find(n=>n.parentId===null);
+  const remap={};
+  parsed.nodes.forEach(n=>{
+    if(n.parentId===null) return; // skip root
+    const newId='n'+(++nodeCounter);
+    remap[n.id]=newId;
+  });
+  // root's direct children get parented to anchor
+  parsed.nodes.filter(n=>n.parentId===rootData.id).forEach(n=>{
+    const id=remap[n.id];
+    const depth=nodes[anchorId].depth+1;
+    const pos=calcChildPos(anchorId);
+    const node={id,parentId:anchorId,children:[],text:n.text,x:pos.x,y:pos.y,depth,width:clampNodeWidth(n.width || DEFAULT_NODE_WIDTH),el:null};
+    nodes[id]=node;
+    nodes[anchorId].children.push(id);
+    buildNodeEl(node);
+    // attach sub-children
+    attachSubtree(n.id, id, parsed, remap);
+  });
+  redist(anchorId);
+  renderConnections();
+}
+
+function attachSubtree(oldParentId, newParentId, parsed, remap){
+  parsed.nodes.filter(n=>n.parentId===oldParentId).forEach(n=>{
+    if(!remap[n.id]){remap[n.id]='n'+(++nodeCounter);}
+    const id=remap[n.id];
+    const depth=nodes[newParentId].depth+1;
+    const pos=calcChildPos(newParentId);
+    const node={id,parentId:newParentId,children:[],text:n.text,x:pos.x,y:pos.y,depth,width:clampNodeWidth(n.width || DEFAULT_NODE_WIDTH),el:null};
+    nodes[id]=node;
+    nodes[newParentId].children.push(id);
+    buildNodeEl(node);
+    attachSubtree(n.id, id, parsed, remap);
+  });
+}
+
+function getDepth(n, allNodes, cache={}){
+  if(cache[n.id]!==undefined) return cache[n.id];
+  if(n.parentId===null){cache[n.id]=0;return 0;}
+  const parent=allNodes.find(p=>p.id===n.parentId);
+  const d=parent?getDepth(parent,allNodes,cache)+1:1;
+  cache[n.id]=d; return d;
+}
+
+function layoutTree(rootId){
+  // Simple recursive layout: BFS, place children to the right
+  const colW=230, rowH=62;
+  function place(id, x, y){
+    const node=nodes[id];
+    node.x=x; node.y=y;
+    if(node.el) node.el.style.transform=`translate(${x}px,${y}px)`;
+    const n=node.children.length;
+    if(!n) return;
+    const startY=y-((n-1)*rowH)/2;
+    node.children.forEach((cid,i)=>place(cid, x+colW, startY+i*rowH));
+  }
+  const root=nodes[rootId];
+  place(rootId, root.x, root.y);
+}
 
 // ══════════ Boot ══════════
-window.addEventListener('DOMContentLoaded', () => { drawDots(); init(); });
-window.addEventListener('load', () => { drawDots(); renderConnections(); });
+window.addEventListener('DOMContentLoaded',()=>{drawDots();init();});
+window.addEventListener('load',()=>{drawDots();renderConnections();});
 </script>
 {% endblock %}

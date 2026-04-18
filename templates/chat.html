@@ -173,13 +173,13 @@
                     </div>
                     <div id="study-aid-body" class="tool-section-body flex-1 overflow-y-auto p-3 space-y-3">
                         <div id="study-aid-detailed-list" class="space-y-3">
-                            <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="w-full flex items-center text-center justify-center gap-3 p-3 bg-gray-50 border border-brand-100 rounded-full text-sm text-brand-800 hover:bg-brand-50 hover:text-brand-600 hover:font-medium transition duration-200 ease-in-out">
+                            <button onclick="openStudyModal()" class="w-full flex items-center text-center justify-center gap-3 p-3 bg-gray-50 border border-brand-100 rounded-full text-sm text-brand-800 hover:bg-brand-50 hover:text-brand-600 hover:font-medium transition duration-200 ease-in-out">
                                 <i class="fa-solid fa-wand-magic-sparkles"></i>
                                 Generate Study Aid
                             </button>
                         </div>
                         <div id="study-aid-icon-list" class="hidden flex items-center justify-center py-2">
-                            <button onclick="document.getElementById('studyModal').classList.remove('hidden')" class="h-10 w-10 rounded-lg hover:bg-gray-100 text-brand-600" title="Generate Study Aid">
+                            <button onclick="openStudyModal()" class="h-10 w-10 rounded-lg hover:bg-gray-100 text-brand-600" title="Generate Study Aid">
                                 <i class="fa-solid fa-wand-magic-sparkles"></i>
                             </button>
                         </div>
@@ -518,24 +518,51 @@
         </div>
 
         <!-- Modal Content -->
-        <div class="p-8">
-            <h4 class="font-bold text-gray-800 mb-3">Source Content</h4>
-            <div class="bg-gray-50 rounded-lg p-4 text-sm text-gray-600 leading-relaxed border-l-4 border-brand-500 mb-8"></div>
+        <div class="p-8 space-y-6">
+            <div>
+                <h4 class="font-bold text-gray-800 mb-3">Generate From Document</h4>
+                <div class="bg-gray-50 rounded-xl p-4 border border-gray-200 space-y-4">
+                    <div>
+                        <label for="study-document-select" class="block text-sm font-medium text-gray-700 mb-2">Source document</label>
+                        <select id="study-document-select" class="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                            <option value="">Select a document</option>
+                            {% for doc in conversation_documents %}
+                            {% if doc.parser_status != "pending" %}
+                            <option value="{{ doc.document_id }}">{{ doc.original_filename }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                        <p id="study-document-help" class="mt-2 text-xs text-gray-500">Choose a parsed document. If you already selected one in Sources, it will be prefilled here.</p>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="study-page-range" class="block text-sm font-medium text-gray-700 mb-2">Page range</label>
+                            <input id="study-page-range" type="text" placeholder="Optional, e.g. 1-5, 8, 10-12" class="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                        </div>
+                        <div>
+                            <label for="study-requirements" class="block text-sm font-medium text-gray-700 mb-2">Extra requirements</label>
+                            <input id="study-requirements" type="text" placeholder="Optional, e.g. focus on key formulas or exam topics" class="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-700 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="study-modal-error" class="hidden rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"></div>
 
             <div class="grid grid-cols-2 gap-6">
-                <a href="/mindmap" class="border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-brand-500 hover:bg-brand-50 hover:shadow-md transition-all group">
+                <button type="button" onclick="openStudyAidPage('/mindmap')" class="border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-brand-500 hover:bg-brand-50 hover:shadow-md transition-all group text-left">
                     <div class="h-10 w-10 bg-black rounded-lg text-white flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
                         <i class="fa-solid fa-diagram-project"></i>
                     </div>
                     <span class="font-bold text-gray-700 group-hover:text-brand-700">Mind Map</span>
-                </a>
+                </button>
                 
-                <a href="/flashcards" class="border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-red-500 hover:bg-red-50 hover:shadow-md transition-all group">
+                <button type="button" onclick="openStudyAidPage('/flashcards')" class="border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-red-500 hover:bg-red-50 hover:shadow-md transition-all group text-left">
                     <div class="h-10 w-10 bg-red-400 rounded-lg text-white flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
                         <i class="fa-solid fa-clone"></i>
                     </div>
                     <span class="font-bold text-gray-700 group-hover:text-red-700">Flash Cards</span>
-                </a>
+                </button>
             </div>
         </div>
     </div>
@@ -547,4 +574,56 @@
 <script src="{{ url_for('static', filename='script/chat/messages.js') }}"></script>
 <script src="{{ url_for('static', filename='script/chat/prompt-rail.js') }}"></script>
 <script src="{{ url_for('static', filename='script/chat.js') }}"></script>
+<script>
+function openStudyModal() {
+    const modal = document.getElementById('studyModal');
+    const selectEl = document.getElementById('study-document-select');
+    const errorEl = document.getElementById('study-modal-error');
+    const selectedButton = document.querySelector('[data-source-select-btn="true"][data-selected="true"]');
+    const selectedArticle = selectedButton ? selectedButton.closest('[data-doc-id]') : null;
+    const selectedDocId = selectedArticle ? String(selectedArticle.dataset.docId || '').trim() : '';
+
+    if (errorEl) {
+        errorEl.classList.add('hidden');
+        errorEl.textContent = '';
+    }
+    if (selectEl && selectedDocId) {
+        selectEl.value = selectedDocId;
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function openStudyAidPage(path) {
+    const modal = document.getElementById('studyModal');
+    const selectEl = document.getElementById('study-document-select');
+    const pageRangeEl = document.getElementById('study-page-range');
+    const requirementsEl = document.getElementById('study-requirements');
+    const errorEl = document.getElementById('study-modal-error');
+    const documentId = selectEl ? String(selectEl.value || '').trim() : '';
+    const conversationId = String(window.__CURRENT_CONVERSATION_ID__ || '').trim();
+
+    if (errorEl) {
+        errorEl.classList.add('hidden');
+        errorEl.textContent = '';
+    }
+
+    if (!documentId) {
+        if (errorEl) {
+            errorEl.textContent = 'Select a parsed document first.';
+            errorEl.classList.remove('hidden');
+        }
+        return;
+    }
+
+    const params = new URLSearchParams();
+    params.set('document_id', documentId);
+    if (conversationId) params.set('conversation_id', conversationId);
+    if (pageRangeEl && pageRangeEl.value.trim()) params.set('page_range', pageRangeEl.value.trim());
+    if (requirementsEl && requirementsEl.value.trim()) params.set('requirements', requirementsEl.value.trim());
+
+    modal.classList.add('hidden');
+    window.location.href = `${path}?${params.toString()}`;
+}
+</script>
 {% endblock %}

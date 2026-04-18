@@ -14,6 +14,9 @@ TASK_TYPE_EMBEDDING = "embedding"
 TASK_TYPE_DIAGRAM_VISION = "diagram_vision"
 TASK_TYPE_TEXT = "text"
 
+PROVIDER_SELECTION_INTERLEAVED = "interleaved"
+PROVIDER_SELECTION_EXHAUST_MODELS_FIRST = "exhaust_models_first"
+
 WINDOW_TYPE_RPM = "rpm"
 WINDOW_TYPE_RPD = "rpd"
 WINDOW_TYPE_TPM = "tpm"
@@ -135,6 +138,7 @@ def execute_with_shared_quota_router(
     project_id: str | None = None,
     max_model_attempts: int | None = None,
     should_retry_with_another_model: Callable[[Exception], bool] | None = None,
+    provider_selection_strategy: str = PROVIDER_SELECTION_INTERLEAVED,
 ) -> RoutedModelExecutionResult:
     project_id = project_id or get_quota_project_id()
     configured_models = get_task_models(task_type, fallback_model=fallback_model)
@@ -145,6 +149,18 @@ def execute_with_shared_quota_router(
         max_model_attempts or len(configured_models),
         max(1, len(configured_models)),
     )
+    provider_selection_strategy = str(provider_selection_strategy or PROVIDER_SELECTION_INTERLEAVED).strip().lower()
+
+    if provider_selection_strategy == PROVIDER_SELECTION_EXHAUST_MODELS_FIRST:
+        return _execute_with_model_first_provider_fallback(
+            task_type,
+            provider_order=provider_order,
+            execute_provider=execute_provider,
+            fallback_model=fallback_model,
+            project_id=project_id,
+            max_attempts=max_attempts,
+            should_retry_with_another_model=should_retry_with_another_model,
+        )
 
     while len(attempted_models) < max_attempts:
         try:
@@ -223,6 +239,159 @@ def execute_with_shared_quota_router(
     if last_error is not None:
         raise last_error
     raise QuotaRouterError(f"No compatible model is currently available for task_type={task_type}.")
+
+
+def _execute_with_model_first_provider_fallback(
+    task_type: str,
+    *,
+    provider_order: list[str],
+    execute_provider: Callable[[str, str], dict[str, Any]],
+    fallback_model: str | None,
+    project_id: str,
+    max_attempts: int,
+    should_retry_with_another_model: Callable[[Exception], bool] | None,
+) -> RoutedModelExecutionResult:
+    attempted_models: list[str] = []
+    attempt_errors: list[str] = []
+    last_error: Exception | None = None
+    configured_models = get_task_models(task_type, fallback_model=fallback_model)
+
+    while len(attempted_models) < max_attempts:
+        try:
+            selected_model = pick_available_model(
+                task_type,
+                project_id=project_id,
+                fallback_model=fallback_model,
+                excluded_models=attempted_models,
+            )
+        except QuotaRouterError:
+            break
+
+        attempted_models.append(selected_model)
+        for provider_name in provider_order:
+            if provider_name != "gemini":
+                continue
+            try:
+                return _execute_quota_routed_provider_attempt(
+                    project_id=project_id,
+                    selected_model=selected_model,
+                    provider_name=provider_name,
+                    execute_provider=execute_provider,
+                    attempted_models=attempted_models,
+                    attempt_errors=attempt_errors,
+                )
+            except Exception as exc:
+                last_error = exc
+                should_retry = _should_continue_after_attempt(
+                    exc,
+                    selected_model=selected_model,
+                    provider_name=provider_name,
+                    project_id=project_id,
+                    attempt_errors=attempt_errors,
+                    should_retry_with_another_model=should_retry_with_another_model,
+                )
+                if not should_retry:
+                    raise
+
+    for provider_name in provider_order:
+        if provider_name == "gemini":
+            continue
+        for selected_model in configured_models[:max_attempts]:
+            try:
+                return _execute_quota_routed_provider_attempt(
+                    project_id=project_id,
+                    selected_model=selected_model,
+                    provider_name=provider_name,
+                    execute_provider=execute_provider,
+                    attempted_models=attempted_models,
+                    attempt_errors=attempt_errors,
+                )
+            except Exception as exc:
+                last_error = exc
+                should_retry = _should_continue_after_attempt(
+                    exc,
+                    selected_model=selected_model,
+                    provider_name=provider_name,
+                    project_id=project_id,
+                    attempt_errors=attempt_errors,
+                    should_retry_with_another_model=should_retry_with_another_model,
+                )
+                if not should_retry:
+                    raise
+                continue
+
+    if last_error is not None:
+        raise last_error
+    raise QuotaRouterError(f"No compatible model is currently available for task_type={task_type}.")
+
+
+def _execute_quota_routed_provider_attempt(
+    *,
+    project_id: str,
+    selected_model: str,
+    provider_name: str,
+    execute_provider: Callable[[str, str], dict[str, Any]],
+    attempted_models: list[str],
+    attempt_errors: list[str],
+) -> RoutedModelExecutionResult:
+    execution_payload = execute_provider(selected_model, provider_name) or {}
+    response_headers = execution_payload.get("response_headers") or {}
+    token_count = execution_payload.get("token_count")
+
+    if provider_name == "gemini":
+        record_model_success(
+            project_id=project_id,
+            model_name=selected_model,
+            request_count=1,
+            token_count=token_count if isinstance(token_count, int) else None,
+            response_headers=response_headers,
+        )
+
+    return RoutedModelExecutionResult(
+        model_name=selected_model,
+        provider_name=provider_name,
+        provider_model_name=str(
+            execution_payload.get("provider_model_name")
+            or selected_model
+        ).strip() or selected_model,
+        payload=execution_payload.get("payload"),
+        response_headers=response_headers,
+        token_count=token_count if isinstance(token_count, int) else None,
+        attempted_models=list(attempted_models),
+        attempt_errors=list(attempt_errors),
+    )
+
+
+def _should_continue_after_attempt(
+    exc: Exception,
+    *,
+    selected_model: str,
+    provider_name: str,
+    project_id: str,
+    attempt_errors: list[str],
+    should_retry_with_another_model: Callable[[Exception], bool] | None,
+) -> bool:
+    details = _extract_exception_details(exc)
+    quota_error_code = classify_quota_error(
+        status_code=_extract_exception_status_code(exc),
+        message=str(exc),
+        details=details,
+    )
+    if provider_name == "gemini" and quota_error_code:
+        record_quota_failure(
+            project_id=project_id,
+            model_name=selected_model,
+            error_code=quota_error_code,
+            retry_after_seconds=_extract_exception_retry_after_seconds(exc),
+            response_headers=extract_response_headers(details),
+        )
+
+    should_retry = bool(quota_error_code)
+    if not should_retry and should_retry_with_another_model is not None:
+        should_retry = bool(should_retry_with_another_model(exc))
+    if should_retry:
+        attempt_errors.append(f"{selected_model}/{provider_name}: {exc}")
+    return should_retry
 
 
 def pick_available_model(
