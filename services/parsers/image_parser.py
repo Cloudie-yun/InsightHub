@@ -24,11 +24,23 @@ def _build_caption_from_name(filename: str) -> str:
     return cleaned
 
 
+def _build_upload_relative_path(source_path: Path) -> str:
+    normalized_parts = source_path.resolve(strict=False).parts
+    for index, part in enumerate(normalized_parts):
+        if part.lower() != "uploads":
+            continue
+        relative_parts = normalized_parts[index + 1:]
+        if relative_parts:
+            return "/".join(relative_parts)
+    return source_path.name
+
+
 def parse_image_document(file_path, *, original_filename: str | None = None) -> dict:
     source_path = Path(file_path)
     original_name = str(original_filename or source_path.name)
     mime_type = mimetypes.guess_type(original_name)[0] or mimetypes.guess_type(str(source_path))[0] or "image/png"
     caption_text = _build_caption_from_name(original_name)
+    upload_relative_path = _build_upload_relative_path(source_path)
     metadata = {
         "parser": "image_upload",
         "source_path": str(source_path),
@@ -42,8 +54,8 @@ def parse_image_document(file_path, *, original_filename: str | None = None) -> 
         asset = {
             "asset_id": "image-asset-1",
             "asset_type": "image",
-            "storage_path": str(source_path),
-            "upload_path": "",
+            "storage_path": upload_relative_path,
+            "upload_path": upload_relative_path,
             "mime_type": mime_type,
             "byte_size": file_size,
             "content_hash": content_hash,

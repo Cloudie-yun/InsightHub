@@ -365,6 +365,7 @@ let initialParserDocument = {{ parser_document|tojson }};
     const copyDiagramImageFeedbackTimers = new Map();
     const conversationId = {{ request.args.get('conversation_id')|tojson }};
     const selectedDiagramIds = new Set();
+    const invalidDiagramJsonBlockIds = new Set();
     let linkedHighlightTimer = null;
     let previewHighlightTimer = null;
     const previewState = {
@@ -728,28 +729,38 @@ let initialParserDocument = {{ parser_document|tojson }};
         return [
             "You are analyzing a diagram from an academic or technical document.",
             "",
-            "Produce a structured description with the following sections:",
+            "Return ONLY valid JSON using this exact schema:",
+            "{",
+            '  "visual_description": "string",',
+            '  "question_answerable_facts": ["fact 1", "fact 2"]',
+            "}",
             "",
-            "**Summary**",
-            "Write 2-4 factual sentences explaining what this diagram shows, its purpose, and what domain it belongs to (e.g., biology, systems architecture, statistics).",
-            "",
-            "**Figure Type**",
-            "Identify the diagram type (e.g., flowchart, network graph, bar chart, schematic, conceptual model, phylogenetic tree).",
-            "",
-            "**Key Components**",
-            "List the most important entities: nodes, labels, axes, legends, regions, or layers. For each, give a one-line description of its role.",
-            "",
-            "**Relationships & Structure**",
-            "Describe the explicit connections shown - arrows, flows, hierarchies, dependencies, comparisons, or sequences. Focus on the clearest and most meaningful ones.",
-            "",
-            "**Key Facts**",
-            "List 3-8 precise, self-contained facts that can directly answer questions about this diagram. Each fact should be standalone and unambiguous.",
+            "Requirements:",
+            '- "visual_description": Write 2-5 factual sentences explaining what the diagram shows.',
+            '- "question_answerable_facts": Provide 3-10 standalone factual strings that can answer user questions directly.',
             "",
             "Rules:",
             "- Only describe what is visible in the diagram.",
             "- Do not invent or infer beyond what the diagram shows.",
             "- Be technically precise and concise. Avoid filler phrases.",
         ].join("\n");
+    };
+    const parseDiagramFactsJson = (rawText) => {
+        const trimmed = String(rawText || "").trim();
+        if (!trimmed) return { ok: true, value: [] };
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (!Array.isArray(parsed)) {
+                return { ok: false, error: "Facts JSON must be an array of strings." };
+            }
+            const normalized = parsed.map((item) => String(item || "").trim()).filter(Boolean);
+            if (normalized.length !== parsed.length) {
+                return { ok: false, error: "Each fact must be a non-empty string." };
+            }
+            return { ok: true, value: normalized };
+        } catch (_error) {
+            return { ok: false, error: "Facts JSON is invalid. Use a JSON array of strings." };
+        }
     };
     const updateCounts = () => {
         const count = { total: 0, text: 0, table: 0, diagram: 0 };
@@ -1033,16 +1044,12 @@ let initialParserDocument = {{ parser_document|tojson }};
         const isSelected = selectedDiagramIds.has(String(block.block_id || ""));
         const caption = block.caption_text || "";
         const description = n.visual_description || "";
+        const questionFacts = Array.isArray(n.question_answerable_facts) ? n.question_answerable_facts.filter(Boolean) : [];
+        const questionFactsJson = JSON.stringify(questionFacts, null, 2);
         const imageUrl = n.image_url || "";
         const ocrText = Array.isArray(n.ocr_text) ? n.ocr_text.filter(Boolean).join(" | ") : "";
         const kind = n.diagram_kind || block.subtype || "diagram";
-        const visionStatus = n.vision_status || "unknown";
-        const visionConfidence = typeof n.vision_confidence === "number" ? n.vision_confidence.toFixed(2) : "n/a";
-        const gateScore = typeof n.vision_gate_score === "number" ? n.vision_gate_score.toFixed(2) : "n/a";
-        const scoringModel = [n.provider_name, n.model_name].filter(Boolean).join(" / ") || "n/a";
-        const promptVersion = n.prompt_version || "n/a";
-        const analyzedAt = n.last_analyzed_at || "n/a";
-        const gateReasons = Array.isArray(n.vision_gate_reasons) ? n.vision_gate_reasons.filter(Boolean) : [];
+        const hasFactsJsonError = invalidDiagramJsonBlockIds.has(String(block.block_id || ""));
         const isEditing = editingBlockIds.has(String(block.block_id || ""));
         return `
             <article data-block-type="diagram" data-review-block-id="${esc(block.block_id)}" class="review-card rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1074,28 +1081,23 @@ let initialParserDocument = {{ parser_document|tojson }};
                 <div class="mt-3 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
                     <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                         ${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(caption || kind)}" class="h-auto max-h-[320px] w-full rounded-2xl border border-slate-200 bg-white object-contain">` : `<div class="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm text-slate-500">No preview image available.</div>`}
-                        <div class="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
-                            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Troubleshooting</p>
-                            <div class="mt-3 grid gap-2 sm:grid-cols-2">
-                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Vision Status</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(visionStatus)}</p></div>
-                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Confidence</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(visionConfidence)}</p></div>
-                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Gate Score</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(gateScore)}</p></div>
-                                <div class="rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Scoring Model</p><p class="mt-1 text-sm font-medium text-slate-800 break-words">${esc(scoringModel)}</p></div>
-                            </div>
-                            <div class="mt-2 rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Prompt Version</p><p class="mt-1 text-sm font-medium text-slate-800">${esc(promptVersion)}</p></div>
-                            <div class="mt-2 rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Last Analyzed</p><p class="mt-1 text-sm font-medium text-slate-800 break-words">${esc(analyzedAt)}</p></div>
-                            ${gateReasons.length ? `<div class="mt-2 rounded-xl bg-slate-50 px-3 py-2"><p class="text-[11px] uppercase tracking-wide text-slate-500">Gate Reasons</p><p class="mt-1 text-sm leading-6 text-slate-700">${esc(gateReasons.join(" | "))}</p></div>` : ""}
-                        </div>
                         ${ocrText ? `<div class="mt-3 rounded-2xl border border-slate-200 bg-white p-3"><p class="text-xs font-semibold uppercase tracking-wide text-slate-500">OCR Text</p><p class="mt-2 text-sm leading-6 text-slate-700">${esc(ocrText)}</p></div>` : ""}
                     </div>
                     <div class="space-y-4">
                         ${isEditing
                             ? `<label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Figure Caption</span><input type="text" data-role="diagram-caption" data-block-id="${esc(block.block_id)}" value="${esc(caption)}" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100"></label>
-                               <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Model Description</span><textarea data-role="diagram-description" data-block-id="${esc(block.block_id)}" class="min-h-[220px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(description)}</textarea></label>`
+                               <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Model Description</span><textarea data-role="diagram-description" data-block-id="${esc(block.block_id)}" class="h-[420px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(description)}</textarea></label>
+                               <label class="block"><span class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Question-Answerable Facts (JSON Array)</span><textarea data-role="diagram-facts-json" data-block-id="${esc(block.block_id)}" class="min-h-[160px] w-full rounded-2xl border ${hasFactsJsonError ? "border-red-300 bg-red-50" : "border-slate-200 bg-slate-50"} px-4 py-3 font-mono text-xs leading-6 text-slate-800 outline-none transition focus:border-brand-300 focus:bg-white focus:ring-2 focus:ring-brand-100">${esc(questionFactsJson)}</textarea><p class="mt-2 text-xs ${hasFactsJsonError ? "text-red-600" : "text-slate-500"}">Use a JSON array of strings, e.g. ["Fact 1", "Fact 2"].</p></label>`
                             : `<div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Reader View</p>
                                    ${caption ? `<p class="mt-3 text-sm font-medium text-slate-900">${esc(caption)}</p>` : ""}
-                                   <div class="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">${esc(description || "No description available yet.")}</div>
+                                   <div class="mt-3 max-h-[420px] overflow-y-auto whitespace-pre-wrap pr-2 text-sm leading-7 text-slate-700">${esc(description || "No description available yet.")}</div>
+                                   ${questionFacts.length
+                                        ? `<div class="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
+                                               <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Question-Answerable Facts</p>
+                                               <ul class="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">${questionFacts.map((fact) => `<li>${esc(fact)}</li>`).join("")}</ul>
+                                           </div>`
+                                        : ""}
                                </div>`}
                         ${renderLinkedBlockPills(block)}
                     </div>
@@ -1163,6 +1165,20 @@ let initialParserDocument = {{ parser_document|tojson }};
             block.caption_text = target.value;
         } else if (role === "diagram-description") {
             n.visual_description = target.value;
+        } else if (role === "diagram-facts-json") {
+            const parseResult = parseDiagramFactsJson(target.value);
+            const blockIdValue = String(block.block_id || "");
+            if (!parseResult.ok) {
+                invalidDiagramJsonBlockIds.add(blockIdValue);
+                target.classList.remove("border-slate-200", "bg-slate-50");
+                target.classList.add("border-red-300", "bg-red-50");
+                setStatus(parseResult.error, true);
+                return;
+            }
+            invalidDiagramJsonBlockIds.delete(blockIdValue);
+            target.classList.remove("border-red-300", "bg-red-50");
+            target.classList.add("border-slate-200", "bg-slate-50");
+            n.question_answerable_facts = parseResult.value;
         } else if (role === "diagram-select") {
             const blockIdValue = String(block.block_id || "");
             if (target.checked) selectedDiagramIds.add(blockIdValue);
@@ -1258,6 +1274,7 @@ let initialParserDocument = {{ parser_document|tojson }};
                     initialParserDocument = payload;
                     parserDocument = payload;
                     selectedDiagramIds.clear();
+                    invalidDiagramJsonBlockIds.clear();
                     updateCounts();
                     renderBlocks();
                 }
@@ -1270,6 +1287,7 @@ let initialParserDocument = {{ parser_document|tojson }};
             initialParserDocument = payload;
             parserDocument = payload;
             selectedDiagramIds.clear();
+            invalidDiagramJsonBlockIds.clear();
             const hasFailures = Array.isArray(payload?.failed_block_ids) && payload.failed_block_ids.length > 0;
             const message = hasFailures ? formatDiagramAnalysisError(payload) : formatDiagramAnalysisSuccess(payload);
             setStatus(message, hasFailures);
@@ -1319,12 +1337,17 @@ let initialParserDocument = {{ parser_document|tojson }};
         parserDocument = JSON.parse(JSON.stringify(initialParserDocument));
         dirtyBlockIds.clear();
         editingBlockIds.clear();
+        invalidDiagramJsonBlockIds.clear();
         setDirty(false);
         setStatus("Review changes reset to the last loaded version.");
         updateCounts();
         renderBlocks();
     });
     saveReviewBtn?.addEventListener("click", async () => {
+        if (invalidDiagramJsonBlockIds.size) {
+            setStatus("Fix invalid diagram facts JSON before saving.", true);
+            return;
+        }
         if (!dirtyBlockIds.size) {
             setStatus("No review changes to save.");
             return;
@@ -1347,6 +1370,7 @@ let initialParserDocument = {{ parser_document|tojson }};
             document.getElementById("last-review-value").textContent = parserDocument?.parser_result?.metadata?.review?.updated_at || "Saved";
             dirtyBlockIds.clear();
             editingBlockIds.clear();
+            invalidDiagramJsonBlockIds.clear();
             setDirty(false);
             setStatus("Reviewed context saved. Future retrieval should use this edited version.");
             updateCounts();

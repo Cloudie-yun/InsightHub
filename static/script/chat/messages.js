@@ -545,7 +545,7 @@
     };
 
     ns.beginMessageEdit = (messageId) => {
-        if (!promptInput || !messageId) return;
+        if (!messageId || state.isSendingMessage) return;
         const messageNode = chatMessageList?.querySelector?.(`[data-message-id="${CSS.escape(messageId)}"][data-message-role="user"]`);
         const contentNode = messageNode?.querySelector?.("[data-copy-content='message']");
         const messageText = String(contentNode?.textContent || "").trim();
@@ -553,14 +553,81 @@
             ns.notify("warning", "Unable to load that message for editing.");
             return;
         }
-        state.pendingReplay = {
-            mode: "edit",
-            targetMessageId: messageId,
-        };
-        promptInput.value = messageText;
-        promptInput.focus();
-        promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
-        ns.setChatSendStatus("Editing an earlier prompt. Send to create a new version from this turn.");
+        ns.closeInlineMessageEdit({ restoreOriginal: true });
+
+        const bubble = contentNode?.closest("div.rounded-2xl");
+        const actionRow = messageNode?.querySelector("[data-edit-message='true']")?.closest("div");
+        if (!(bubble instanceof HTMLElement) || !(contentNode instanceof HTMLElement)) {
+            ns.notify("warning", "Unable to open inline editor for that message.");
+            return;
+        }
+
+        const editorWrap = document.createElement("div");
+        editorWrap.className = "space-y-3";
+        editorWrap.dataset.inlineEditPanel = "true";
+
+        const textarea = document.createElement("textarea");
+        textarea.className = "w-full resize-y rounded-2xl border border-slate-300 bg-white px-3 py-2 text-[15px] leading-8 text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-200";
+        textarea.rows = 7;
+        textarea.value = messageText;
+        textarea.dataset.inlineEditInput = "true";
+        textarea.dataset.messageId = messageId;
+        editorWrap.appendChild(textarea);
+
+        const controls = document.createElement("div");
+        controls.className = "flex items-center justify-end gap-2";
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.dataset.inlineEditCancel = "true";
+        cancelBtn.dataset.messageId = messageId;
+        controls.appendChild(cancelBtn);
+
+        const sendBtn = document.createElement("button");
+        sendBtn.type = "button";
+        sendBtn.className = "rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800";
+        sendBtn.textContent = "Send";
+        sendBtn.dataset.inlineEditSend = "true";
+        sendBtn.dataset.messageId = messageId;
+        controls.appendChild(sendBtn);
+
+        editorWrap.appendChild(controls);
+        contentNode.replaceWith(editorWrap);
+        if (actionRow instanceof HTMLElement) actionRow.classList.add("hidden");
+
+        state.inlineMessageEdit = { messageId, originalText: messageText };
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        ns.setChatSendStatus("Editing in place. Send to regenerate from this turn.");
+    };
+
+    ns.closeInlineMessageEdit = (options = {}) => {
+        const { restoreOriginal = false } = options;
+        const activeMessageId = String(state.inlineMessageEdit?.messageId || "").trim();
+        if (!activeMessageId || !chatMessageList) return;
+        const messageNode = chatMessageList.querySelector(`[data-message-id="${CSS.escape(activeMessageId)}"][data-message-role="user"]`);
+        const panel = messageNode?.querySelector("[data-inline-edit-panel='true']");
+        const textarea = panel?.querySelector("[data-inline-edit-input='true']");
+        if (!(messageNode instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(textarea instanceof HTMLTextAreaElement)) {
+            state.inlineMessageEdit = null;
+            return;
+        }
+
+        const replacement = document.createElement("div");
+        replacement.className = "whitespace-pre-wrap";
+        replacement.dataset.copyContent = "message";
+        const fallbackText = String(textarea.value || "").trim();
+        replacement.textContent = restoreOriginal
+            ? String(state.inlineMessageEdit?.originalText || fallbackText)
+            : fallbackText;
+        panel.replaceWith(replacement);
+
+        const actionRow = messageNode.querySelector("[data-edit-message='true']")?.closest("div");
+        if (actionRow instanceof HTMLElement) actionRow.classList.remove("hidden");
+
+        state.inlineMessageEdit = null;
     };
 
     ns.regenerateAssistantMessage = async (messageId) => {
@@ -604,14 +671,14 @@
         }
     };
 
-    ns.submitChatPrompt = async () => {
+    ns.submitChatPrompt = async (options = {}) => {
         const conversationId = ns.getCurrentConversationId();
         if (!conversationId) {
             ns.notify("warning", "Open a conversation first.");
             return;
         }
 
-        const query = String(promptInput?.value || "").trim();
+        const query = String(options.queryOverride ?? promptInput?.value ?? "").trim();
         if (!query) {
             ns.setChatSendStatus("Enter a question to continue.", true);
             return;
@@ -628,13 +695,23 @@
         ns.removeChatEmptyState();
         ns.setMessageSendingState(true);
 
+        const explicitEditMessageId = String(options.editMessageId || "").trim();
         const pendingReplay = state.pendingReplay;
-        const isEditingReplay = pendingReplay?.mode === "edit" && pendingReplay?.targetMessageId;
+        const replayTargetMessageId = explicitEditMessageId || (pendingReplay?.mode === "edit" ? String(pendingReplay?.targetMessageId || "").trim() : "");
+        const isEditingReplay = Boolean(replayTargetMessageId);
+        const inlineTargetNode = options.inlineTargetNode instanceof HTMLElement ? options.inlineTargetNode : null;
 
-        const optimisticUserNode = ns.createUserMessageNode({ message_text: query });
+        const optimisticUserNode = isEditingReplay ? null : ns.createUserMessageNode({ message_text: query });
         const assistantLoadingNode = ns.createAssistantLoadingNode(ns.getSelectedSourceDocumentLabels());
-        ns.appendMessageNodes([optimisticUserNode, assistantLoadingNode]);
-        if (promptInput) {
+        if (optimisticUserNode) {
+            ns.appendMessageNodes([optimisticUserNode, assistantLoadingNode]);
+        } else if (inlineTargetNode) {
+            inlineTargetNode.insertAdjacentElement("afterend", assistantLoadingNode);
+            ns.updateScrollToBottomButton?.();
+        } else {
+            ns.appendMessageNodes([assistantLoadingNode]);
+        }
+        if (!options.queryOverride && promptInput) {
             promptInput.value = "";
         }
 
@@ -648,7 +725,7 @@
                     query,
                     document_ids: selectedDocumentIds,
                     include_filtered: false,
-                    ...(isEditingReplay ? { edit_message_id: pendingReplay.targetMessageId } : {}),
+                    ...(isEditingReplay ? { edit_message_id: replayTargetMessageId } : {}),
                 }),
             });
             const payload = await response.json().catch(() => ({}));
@@ -658,7 +735,7 @@
 
             if (isEditingReplay) {
                 assistantLoadingNode.remove();
-                optimisticUserNode.remove();
+                optimisticUserNode?.remove();
             }
             if (isEditingReplay && Array.isArray(payload.conversation_messages)) {
                 ns.renderConversationMessages(payload.conversation_messages);
@@ -682,9 +759,10 @@
                 }
             }
             state.pendingReplay = null;
+            state.inlineMessageEdit = null;
             ns.setChatSendStatus("");
         } catch (error) {
-            optimisticUserNode.remove();
+            optimisticUserNode?.remove();
             assistantLoadingNode.remove();
             ns.setChatSendStatus(error.message || "Unable to send your message right now.", true);
             ns.notify("error", error.message || "Unable to send your message right now.");
@@ -733,7 +811,7 @@
             });
         });
 
-        chatMessageList.addEventListener("click", (event) => {
+        chatMessageList.addEventListener("click", async (event) => {
             const editButton = event.target?.closest?.("[data-edit-message='true']");
             if (editButton) {
                 const messageNode = editButton.closest("[data-message-id][data-message-role='user']");
@@ -741,6 +819,32 @@
                 if (messageId) {
                     ns.beginMessageEdit(messageId);
                 }
+                return;
+            }
+
+            const inlineCancelButton = event.target?.closest?.("[data-inline-edit-cancel='true']");
+            if (inlineCancelButton) {
+                ns.closeInlineMessageEdit({ restoreOriginal: true });
+                ns.setChatSendStatus("");
+                return;
+            }
+
+            const inlineSendButton = event.target?.closest?.("[data-inline-edit-send='true']");
+            if (inlineSendButton) {
+                if (state.isSendingMessage) return;
+                const messageId = String(inlineSendButton.dataset.messageId || "").trim();
+                const messageNode = inlineSendButton.closest("[data-message-id][data-message-role='user']");
+                const inlineInput = messageNode?.querySelector?.("[data-inline-edit-input='true']");
+                const query = String(inlineInput?.value || "").trim();
+                if (!messageId || !query) {
+                    ns.setChatSendStatus("Enter a prompt before sending.", true);
+                    return;
+                }
+                await ns.submitChatPrompt({
+                    queryOverride: query,
+                    editMessageId: messageId,
+                    inlineTargetNode: messageNode,
+                });
                 return;
             }
 
