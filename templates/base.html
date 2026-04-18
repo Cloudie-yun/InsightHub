@@ -265,11 +265,19 @@
                     <div data-profile-tab-panel="security" class="hidden space-y-7">
                         <div>
                             <h4 class="text-2xl font-bold text-slate-900">Reset Password</h4>
-                            <p class="mt-1 text-sm text-slate-500">Available for manually created accounts.</p>
+                            <p class="mt-1 text-sm text-slate-500">Available for manually created accounts. Enter your current password to confirm the change.</p>
+                        </div>
+                        <div id="profile-password-unavailable" class="hidden rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                            This account does not currently use a local password, so password changes are unavailable here.
                         </div>
                         <form id="profile-password-form" class="space-y-3">
-                            <label for="profile-new-password-input" class="text-sm font-semibold text-slate-700">New password</label>
+                            <label for="profile-current-password-input" class="block text-left text-sm font-semibold text-slate-700">Current password</label>
+                            <input id="profile-current-password-input" type="password" autocomplete="current-password" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                            <label for="profile-new-password-input" class="block text-left text-sm font-semibold text-slate-700">New password</label>
                             <input id="profile-new-password-input" type="password" autocomplete="new-password" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                            <label for="profile-confirm-password-input" class="block text-left text-sm font-semibold text-slate-700">Confirm new password</label>
+                            <input id="profile-confirm-password-input" type="password" autocomplete="new-password" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                            <p class="text-xs text-slate-500">Use at least 8 characters with uppercase, lowercase, number, and special character.</p>
                             <button id="profile-password-save-btn" type="submit" class="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-70">Update Password</button>
                         </form>
                     </div>

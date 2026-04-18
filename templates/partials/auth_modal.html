@@ -85,7 +85,7 @@
                 <div>
                     <label for="signup-email" class="auth-label block text-base font-semibold mb-2">Email</label>
                     <div class="relative">
-                        <input id="signup-email" type="email" autocomplete="username" class="auth-input w-full peer" data-auth-input>
+                        <input id="signup-email" name="email" type="email" autocomplete="username" class="auth-input w-full peer" data-auth-input>
                         <span class="custom-placeholder auth-placeholder absolute left-4 top-1/2 -translate-y-1/2 text-sm pointer-events-none transition-all duration-200">
                             you@example.com
                         </span>
@@ -95,7 +95,8 @@
                 <div>
                     <label for="signup-password" class="auth-label block text-base font-semibold mb-2">Password</label>
                     <div class="relative">
-                        <input id="signup-password" type="password" autocomplete="new-password" class="auth-input w-full pr-12 peer" data-auth-input>
+                        <input type="email" name="username" id="signup-email-hidden" autocomplete="username" class="hidden">
+                        <input id="signup-password" name="new-password" type="password" autocomplete="new-password" class="auth-input w-full pr-12 peer" data-auth-input>
                         <span class="custom-placeholder password-placeholder auth-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
                             <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
                             <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
@@ -143,7 +144,7 @@
                 <div>
                     <label for="signup-confirm-password" class="auth-label block text-base font-semibold mb-2">Confirm Password</label>
                     <div class="relative">
-                        <input id="signup-confirm-password" type="password" autocomplete="new-password" class="auth-input w-full pr-12 peer" data-auth-input>
+                        <input id="signup-confirm-password" name="confirm-password" type="password" autocomplete="new-password" class="auth-input w-full pr-12 peer" data-auth-input>
                         <span class="custom-placeholder password-placeholder auth-placeholder absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-200 flex items-center gap-1">
                             <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>
                             <i class="fa-solid fa-asterisk text-[7px] text-slate-400"></i>

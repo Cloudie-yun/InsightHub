@@ -45,7 +45,7 @@ class RetrievalService:
     def __init__(self) -> None:
         default_k = max(1, int(os.getenv("RETRIEVAL_DEFAULT_K", "5")))
         max_k = max(default_k, int(os.getenv("RETRIEVAL_MAX_K", "20")))
-        snippet_max = max(120, int(os.getenv("RETRIEVAL_SNIPPET_MAX_CHARS", "450")))
+        snippet_max = max(200, int(os.getenv("RETRIEVAL_SNIPPET_MAX_CHARS", "900")))
         storage_dimension = max(1, int(os.getenv("EMBEDDING_STORAGE_DIMENSION", "1536")))
         candidate_multiplier = max(1, int(os.getenv("RETRIEVAL_HYBRID_CANDIDATE_MULTIPLIER", "3")))
         candidate_floor = max(1, int(os.getenv("RETRIEVAL_HYBRID_CANDIDATE_FLOOR", "15")))
@@ -75,6 +75,15 @@ class RetrievalService:
         self.rrf_k = max(1, int(os.getenv("RETRIEVAL_RRF_K", "60")))
         self.single_document_top_k = max(1, int(os.getenv("RETRIEVAL_SINGLE_DOCUMENT_TOP_K", "10")))
         self.multi_document_top_k_per_doc = max(1, int(os.getenv("RETRIEVAL_MULTI_DOCUMENT_TOP_K_PER_DOC", "5")))
+        self.complex_single_document_top_k = max(
+            self.single_document_top_k,
+            int(os.getenv("RETRIEVAL_COMPLEX_SINGLE_DOCUMENT_TOP_K", "14")),
+        )
+        self.complex_multi_document_top_k_per_doc = max(
+            self.multi_document_top_k_per_doc,
+            int(os.getenv("RETRIEVAL_COMPLEX_MULTI_DOCUMENT_TOP_K_PER_DOC", "6")),
+        )
+        self.source_unit_diversity_limit = max(1, int(os.getenv("RETRIEVAL_SOURCE_UNIT_DIVERSITY_LIMIT", "2")))
 
     def retrieve_conversation_blocks(
         self,
@@ -99,6 +108,7 @@ class RetrievalService:
             requested_document_ids=requested_document_ids,
         )
         result_limits = self._resolve_result_limits(
+            query=normalized_query,
             requested_k=requested_k,
             scoped_document_ids=scoped_document_ids,
         )
@@ -260,6 +270,11 @@ class RetrievalService:
             rows=reranked_rows,
             target_k=parsed_k,
             per_document_limit=per_document_limit,
+            source_unit_limit=self._resolve_result_limits(
+                query=query,
+                requested_k=parsed_k,
+                scoped_document_ids=scoped_document_ids,
+            )["source_unit_limit"],
         )
         payload = self._build_payload(
             query=query,
@@ -273,6 +288,12 @@ class RetrievalService:
                 "sparse_candidate_count": len(sparse_rows),
                 "fused_candidate_count": len(fused_rows),
                 "reranked_candidate_count": len(reranked_rows),
+                "query_scope": self._classify_query_scope(query),
+                "source_unit_diversity_limit": self._resolve_result_limits(
+                    query=query,
+                    requested_k=parsed_k,
+                    scoped_document_ids=scoped_document_ids,
+                )["source_unit_limit"],
                 **reranker_summary,
             },
         )
@@ -313,6 +334,11 @@ class RetrievalService:
             rows=fused_rows,
             target_k=parsed_k,
             per_document_limit=per_document_limit,
+            source_unit_limit=self._resolve_result_limits(
+                query=query,
+                requested_k=parsed_k,
+                scoped_document_ids=scoped_document_ids,
+            )["source_unit_limit"],
         )
         return self._build_payload(
             query=query,
@@ -325,6 +351,12 @@ class RetrievalService:
                 "vector_candidate_count": len(vector_rows),
                 "keyword_candidate_count": len(keyword_rows),
                 "fused_candidate_count": len(fused_rows),
+                "query_scope": self._classify_query_scope(query),
+                "source_unit_diversity_limit": self._resolve_result_limits(
+                    query=query,
+                    requested_k=parsed_k,
+                    scoped_document_ids=scoped_document_ids,
+                )["source_unit_limit"],
             },
         )
 
@@ -523,6 +555,7 @@ class RetrievalService:
             require_embedding=False,
         )
         result_limits = self._resolve_result_limits(
+            query=query,
             requested_k=parsed_k,
             scoped_document_ids=scoped_document_ids,
         )
@@ -540,6 +573,7 @@ class RetrievalService:
             rows=ranked_rows,
             target_k=int(result_limits["target_k"]),
             per_document_limit=result_limits["per_document_limit"],
+            source_unit_limit=result_limits["source_unit_limit"],
         )
         payload = self._build_payload(
             query=query,
@@ -556,27 +590,37 @@ class RetrievalService:
     def _resolve_result_limits(
         self,
         *,
+        query: str,
         requested_k: int,
         scoped_document_ids: list[str],
     ) -> dict[str, int | None]:
         document_count = len(scoped_document_ids or [])
+        query_scope = self._classify_query_scope(query)
         if document_count <= 0:
             return {
                 "target_k": requested_k,
                 "per_document_limit": None,
+                "source_unit_limit": None,
             }
         if document_count == 1:
-            target_k = max(requested_k, self.single_document_top_k)
+            target_floor = self.complex_single_document_top_k if query_scope == "broad" else self.single_document_top_k
+            target_k = max(requested_k, target_floor)
             return {
                 "target_k": target_k,
                 "per_document_limit": target_k,
+                "source_unit_limit": self.source_unit_diversity_limit if query_scope == "broad" else None,
             }
 
-        per_document_limit = self.multi_document_top_k_per_doc
+        per_document_limit = (
+            self.complex_multi_document_top_k_per_doc
+            if query_scope == "broad"
+            else self.multi_document_top_k_per_doc
+        )
         target_k = max(requested_k, document_count * per_document_limit)
         return {
             "target_k": target_k,
             "per_document_limit": per_document_limit,
+            "source_unit_limit": self.source_unit_diversity_limit if query_scope == "broad" else None,
         }
 
     @staticmethod
@@ -585,20 +629,28 @@ class RetrievalService:
         rows: list[dict[str, Any]],
         target_k: int,
         per_document_limit: int | None,
+        source_unit_limit: int | None,
     ) -> list[dict[str, Any]]:
         if not rows:
             return []
-        if not per_document_limit or per_document_limit < 1:
+        if (not per_document_limit or per_document_limit < 1) and (not source_unit_limit or source_unit_limit < 1):
             return rows[:target_k]
 
         limited_rows: list[dict[str, Any]] = []
         document_counts: dict[str, int] = {}
+        source_unit_counts: dict[tuple[str, str], int] = {}
         for row in rows:
             document_id = str(row.get("document_id") or "").strip()
             if document_id:
                 current_count = document_counts.get(document_id, 0)
-                if current_count >= per_document_limit:
+                if per_document_limit and per_document_limit >= 1 and current_count >= per_document_limit:
                     continue
+                source_unit_key = RetrievalService._source_unit_key(row)
+                if source_unit_limit and source_unit_limit >= 1 and source_unit_key:
+                    current_source_unit_count = source_unit_counts.get(source_unit_key, 0)
+                    if current_source_unit_count >= source_unit_limit:
+                        continue
+                    source_unit_counts[source_unit_key] = current_source_unit_count + 1
                 document_counts[document_id] = current_count + 1
             limited_rows.append(row)
             if len(limited_rows) >= target_k:
@@ -873,13 +925,27 @@ class RetrievalService:
         candidate_summary: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         results = [self._serialize_result_row(row) for row in rows or []]
+        unique_document_ids = {
+            str(result.get("document_id") or "").strip()
+            for result in results
+            if str(result.get("document_id") or "").strip()
+        }
+        unique_source_units = {
+            self._source_unit_key(row)
+            for row in (rows or [])
+            if self._source_unit_key(row)
+        }
         return {
             "query": query,
             "k": parsed_k,
             "strategy": strategy,
             "returned_count": len(results),
             "filter_summary": counts,
-            "candidate_summary": candidate_summary or {},
+            "candidate_summary": {
+                **(candidate_summary or {}),
+                "documents_covered": len(unique_document_ids),
+                "source_units_covered": len(unique_source_units),
+            },
             "results": results,
             "include_filtered": include_filtered,
         }
@@ -946,6 +1012,55 @@ class RetrievalService:
         if isinstance(row.get("match_sources"), list):
             payload["match_sources"] = [str(source) for source in row.get("match_sources") if str(source).strip()]
         return payload
+
+    @staticmethod
+    def _classify_query_scope(query: str) -> str:
+        query_text = str(query or "").strip().lower()
+        if not query_text:
+            return "narrow"
+
+        broad_markers = (
+            "list",
+            "explain",
+            "applications",
+            "concepts",
+            "main points",
+            "key points",
+            "all",
+            "overview",
+            "summarize",
+            "summary",
+            "compare",
+            "advantages",
+            "disadvantages",
+            "challenges",
+            "future directions",
+        )
+        if any(marker in query_text for marker in broad_markers):
+            return "broad"
+        if query_text.count("?") > 1:
+            return "broad"
+        if len([part for part in query_text.split() if part]) >= 12:
+            return "broad"
+        return "narrow"
+
+    @staticmethod
+    def _source_unit_key(row: dict[str, Any]) -> tuple[str, str] | None:
+        document_id = str(row.get("document_id") or "").strip()
+        if not document_id:
+            return None
+        source_metadata = row.get("source_metadata") if isinstance(row.get("source_metadata"), dict) else {}
+        unit_value = (
+            source_metadata.get("page")
+            or source_metadata.get("page_number")
+            or source_metadata.get("page_index")
+            or source_metadata.get("slide")
+            or source_metadata.get("slide_number")
+            or source_metadata.get("source_anchor_key")
+        )
+        if unit_value in (None, ""):
+            return None
+        return document_id, str(unit_value).strip()
 
     def _parse_k(self, value: int | str | None) -> int:
         if value in (None, ""):

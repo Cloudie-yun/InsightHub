@@ -29,13 +29,9 @@ except ImportError:  # pragma: no cover - optional until dependency is installed
 
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
-    QuotaRouterError,
-    classify_quota_error,
     get_quota_project_id,
-    get_task_models,
-    pick_available_model,
-    record_model_success,
-    record_quota_failure,
+    execute_with_shared_quota_router,
+    resolve_usage_token_count,
 )
 
 
@@ -727,7 +723,6 @@ class GeminiDiagramVisionService:
         self.prompt_override = str(prompt_override or "").strip()
 
     def request_analysis(self, item: DiagramVisionInput) -> dict[str, Any]:
-        VISION_QUEUE.wait_if_needed()
         resolved_image_path = resolve_image_path(item.image_path)
         image_path = Path(resolved_image_path)
 
@@ -988,6 +983,33 @@ def _build_diagram_vision_service(
             prompt_override=prompt_override,
         )
     raise RuntimeError(f"Unsupported diagram vision provider: {provider_name}")
+
+
+def _execute_diagram_provider_attempt(
+    *,
+    item: DiagramVisionInput,
+    provider_name: str,
+    model_name: str,
+    api_key: str | None,
+    prompt_override: str,
+) -> dict[str, Any]:
+    service = _build_diagram_vision_service(
+        provider_name,
+        api_key=api_key,
+        model=model_name,
+        prompt_override=prompt_override,
+    )
+    analysis_result = service.request_analysis(item)
+    parsed_result = service.parse_analysis_result(analysis_result)
+    return {
+        "payload": parsed_result,
+        "provider_model_name": str(parsed_result.get("model_name") or model_name).strip() or model_name,
+        "response_headers": parsed_result.get("response_headers") or {},
+        "token_count": resolve_usage_token_count(
+            parsed_result.get("raw_response"),
+            candidate_metadata=parsed_result.get("candidate_metadata") or {},
+        ) if provider_name == "gemini" else None,
+    }
 
 
 def save_diagram_analysis(cur, *, block_id: str, image_asset_id: str | None, diagram_kind: str, analysis_result: dict[str, Any]) -> None:
@@ -1394,72 +1416,29 @@ def run_diagram_analysis_for_document(
         selected_model = _get_default_gemini_model()
         all_models_exhausted_for_block = False
         try:
-            fallback_errors: list[str] = []
-            attempted_models: list[str] = []
             default_model = _get_default_gemini_model()
-            ordered_models = get_task_models(TASK_TYPE_DIAGRAM_VISION, fallback_model=default_model)
-            max_attempts = min(_get_max_diagram_vision_model_attempts(), max(1, len(ordered_models)))
-            while True:
-                if len(attempted_models) >= max_attempts:
-                    raise RuntimeError(
-                        "Diagram analysis failed after trying "
-                        f"{len(attempted_models)} model(s): {' | '.join(fallback_errors)}"
-                    )
-                try:
-                    selected_model = pick_available_model(
-                        TASK_TYPE_DIAGRAM_VISION,
-                        project_id=project_id,
-                        fallback_model=default_model,
-                        excluded_models=attempted_models,
-                    )
-                except QuotaRouterError as exc:
+            try:
+                routed_result = execute_with_shared_quota_router(
+                    TASK_TYPE_DIAGRAM_VISION,
+                    provider_order=provider_order,
+                    fallback_model=default_model,
+                    project_id=project_id,
+                    max_model_attempts=_get_max_diagram_vision_model_attempts(),
+                    execute_provider=lambda model_name, provider_name: _execute_diagram_provider_attempt(
+                        item=item,
+                        provider_name=provider_name,
+                        model_name=model_name,
+                        api_key=api_key,
+                        prompt_override=prompt_override,
+                    ),
+                    should_retry_with_another_model=_should_retry_with_another_model,
+                )
+            except Exception as exc:
+                if "No compatible model is currently available" in str(exc):
                     all_models_exhausted_for_block = True
-                    raise RuntimeError(
-                        f"{exc} Last quota failure: {fallback_errors[-1]}" if fallback_errors else str(exc)
-                    ) from exc
-
-                attempted_models.append(selected_model)
-                provider_attempt_failed = True
-                for provider_name in provider_order:
-                    try:
-                        service = _build_diagram_vision_service(
-                            provider_name,
-                            api_key=api_key,
-                            model=selected_model,
-                            prompt_override=prompt_override,
-                        )
-                        result = service.request_analysis(item)
-                        result = service.parse_analysis_result(result)
-                        record_model_success(
-                            project_id=project_id,
-                            model_name=selected_model,
-                            request_count=1,
-                            response_headers=result.get("response_headers") or {},
-                        )
-                        provider_attempt_failed = False
-                        break
-                    except Exception as exc:
-                        quota_error_code = classify_quota_error(
-                            status_code=getattr(exc, "status_code", None),
-                            message=str(exc),
-                            details=getattr(exc, "details", None),
-                        )
-                        if quota_error_code:
-                            record_quota_failure(
-                                project_id=project_id,
-                                model_name=selected_model,
-                                error_code=quota_error_code,
-                                retry_after_seconds=getattr(exc, "retry_after_seconds", None),
-                                response_headers=getattr(exc, "details", {}).get("response_headers", {}) if hasattr(exc, "details") else {},
-                            )
-                        elif not _should_retry_with_another_model(exc):
-                            raise
-                        fallback_errors.append(f"{selected_model}/{provider_name}: {exc}")
-                        continue
-
-                if not provider_attempt_failed:
-                    break
-                continue
+                raise RuntimeError(str(exc)) from exc
+            selected_model = routed_result.model_name
+            result = routed_result.payload if isinstance(routed_result.payload, dict) else None
             save_diagram_analysis(
                 cur,
                 block_id=item.block_id,

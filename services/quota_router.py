@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from db import get_db_connection
@@ -21,7 +21,7 @@ WINDOW_TYPES = (WINDOW_TYPE_RPM, WINDOW_TYPE_RPD, WINDOW_TYPE_TPM)
 
 DEFAULT_GEMINI_EMBED_MODELS = ["gemini-embedding-001", "gemini-embedding-002"]
 DEFAULT_GEMINI_VISION_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
-DEFAULT_GEMINI_TEXT_MODELS = ["gemini-2.5-flash", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]
+DEFAULT_GEMINI_TEXT_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 DEFAULT_RPD_RESET_TIMEZONE = "America/Los_Angeles"
 DEFAULT_QUOTA_DISPLAY_TIMEZONE = "America/Los_Angeles"
 DEFAULT_MODEL_LIMITS = {
@@ -73,6 +73,18 @@ class ModelQuotaLimit:
         }.get(window_type)
 
 
+@dataclass
+class RoutedModelExecutionResult:
+    model_name: str
+    provider_name: str
+    provider_model_name: str
+    payload: Any
+    response_headers: dict[str, Any]
+    token_count: int | None
+    attempted_models: list[str]
+    attempt_errors: list[str]
+
+
 def get_quota_project_id() -> str:
     return (os.environ.get("QUOTA_PROJECT_ID") or "default").strip() or "default"
 
@@ -111,7 +123,106 @@ def get_task_models(task_type: str, *, fallback_model: str | None = None) -> lis
     configured = _parse_model_list(os.environ.get(env_name), default=default_models)
     if fallback_model and fallback_model not in configured:
         configured.append(fallback_model)
-    return configured
+    return _prioritize_task_models(task_type, configured)
+
+
+def execute_with_shared_quota_router(
+    task_type: str,
+    *,
+    provider_order: list[str],
+    execute_provider: Callable[[str, str], dict[str, Any]],
+    fallback_model: str | None = None,
+    project_id: str | None = None,
+    max_model_attempts: int | None = None,
+    should_retry_with_another_model: Callable[[Exception], bool] | None = None,
+) -> RoutedModelExecutionResult:
+    project_id = project_id or get_quota_project_id()
+    configured_models = get_task_models(task_type, fallback_model=fallback_model)
+    attempted_models: list[str] = []
+    attempt_errors: list[str] = []
+    last_error: Exception | None = None
+    max_attempts = min(
+        max_model_attempts or len(configured_models),
+        max(1, len(configured_models)),
+    )
+
+    while len(attempted_models) < max_attempts:
+        try:
+            selected_model = pick_available_model(
+                task_type,
+                project_id=project_id,
+                fallback_model=fallback_model,
+                excluded_models=attempted_models,
+            )
+        except QuotaRouterError:
+            if last_error is not None:
+                raise last_error
+            raise
+
+        attempted_models.append(selected_model)
+        provider_attempt_failed = True
+
+        for provider_name in provider_order:
+            try:
+                execution_payload = execute_provider(selected_model, provider_name) or {}
+                response_headers = execution_payload.get("response_headers") or {}
+                token_count = execution_payload.get("token_count")
+
+                if provider_name == "gemini":
+                    record_model_success(
+                        project_id=project_id,
+                        model_name=selected_model,
+                        request_count=1,
+                        token_count=token_count if isinstance(token_count, int) else None,
+                        response_headers=response_headers,
+                    )
+
+                provider_attempt_failed = False
+                return RoutedModelExecutionResult(
+                    model_name=selected_model,
+                    provider_name=provider_name,
+                    provider_model_name=str(
+                        execution_payload.get("provider_model_name")
+                        or selected_model
+                    ).strip() or selected_model,
+                    payload=execution_payload.get("payload"),
+                    response_headers=response_headers,
+                    token_count=token_count if isinstance(token_count, int) else None,
+                    attempted_models=list(attempted_models),
+                    attempt_errors=list(attempt_errors),
+                )
+            except Exception as exc:
+                last_error = exc
+                details = _extract_exception_details(exc)
+                quota_error_code = classify_quota_error(
+                    status_code=_extract_exception_status_code(exc),
+                    message=str(exc),
+                    details=details,
+                )
+                if provider_name == "gemini" and quota_error_code:
+                    record_quota_failure(
+                        project_id=project_id,
+                        model_name=selected_model,
+                        error_code=quota_error_code,
+                        retry_after_seconds=_extract_exception_retry_after_seconds(exc),
+                        response_headers=extract_response_headers(details),
+                    )
+
+                should_retry = bool(quota_error_code)
+                if not should_retry and should_retry_with_another_model is not None:
+                    should_retry = bool(should_retry_with_another_model(exc))
+                if not should_retry:
+                    raise
+
+                attempt_errors.append(f"{selected_model}/{provider_name}: {exc}")
+                continue
+
+        if not provider_attempt_failed:
+            break
+
+    if last_error is not None:
+        raise last_error
+    raise QuotaRouterError(f"No compatible model is currently available for task_type={task_type}.")
 
 
 def pick_available_model(
@@ -472,6 +583,7 @@ def _parse_reset_value(raw_value: str | None, *, now: datetime) -> datetime | No
 
 def summarize_usage_state(project_id: str | None = None) -> dict[str, Any]:
     project_id = project_id or get_quota_project_id()
+    model_limits = load_model_limits(model_names=list(DEFAULT_MODEL_LIMITS.keys()))
     conn = get_db_connection()
     try:
         with conn, conn.cursor() as cur:
@@ -502,6 +614,11 @@ def summarize_usage_state(project_id: str | None = None) -> dict[str, Any]:
                 "model_name": row[0],
                 "window_type": row[1],
                 "used_count": int(row[2] or 0),
+                "display_used_count": _clamp_used_count_for_display(
+                    used_count=int(row[2] or 0),
+                    limit_value=(model_limits.get(str(row[0] or "")) or ModelQuotaLimit(str(row[0] or ""), "gemini", None, None, None)).limit_for(str(row[1] or "")),
+                ),
+                "limit_value": (model_limits.get(str(row[0] or "")) or ModelQuotaLimit(str(row[0] or ""), "gemini", None, None, None)).limit_for(str(row[1] or "")),
                 "reset_at": row[3].isoformat() if row[3] else None,
                 "reset_at_display": format_quota_timestamp(row[3]),
                 "last_error_at": row[4].isoformat() if row[4] else None,
@@ -518,3 +635,65 @@ def _parse_model_list(raw_value: str | None, *, default: list[str]) -> list[str]
         return list(default)
     models = [item.strip() for item in str(raw_value).split(",") if item.strip()]
     return models or list(default)
+
+
+def _prioritize_task_models(task_type: str, models: list[str]) -> list[str]:
+    normalized_models = [str(model).strip() for model in models if str(model).strip()]
+    if task_type != TASK_TYPE_DIAGRAM_VISION:
+        return normalized_models
+
+    lite_models = [model for model in normalized_models if "lite" in model.lower()]
+    regular_models = [model for model in normalized_models if "lite" not in model.lower()]
+    return lite_models + regular_models
+
+
+def _extract_exception_status_code(exc: Exception) -> int | None:
+    return int(getattr(exc, "status_code", 0) or getattr(exc, "code", 0) or 0) or None
+
+
+def _extract_exception_retry_after_seconds(exc: Exception) -> float | None:
+    value = getattr(exc, "retry_after_seconds", None)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_exception_details(exc: Exception) -> dict[str, Any] | None:
+    details = getattr(exc, "details", None)
+    return details if isinstance(details, dict) else None
+
+
+def extract_usage_metadata(
+    raw_response: dict[str, Any] | None,
+    *,
+    candidate_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    raw_response = raw_response if isinstance(raw_response, dict) else {}
+    usage_metadata = raw_response.get("usageMetadata") or raw_response.get("usage_metadata")
+    if not isinstance(usage_metadata, dict) and isinstance(candidate_metadata, dict):
+        usage_metadata = candidate_metadata.get("usage_metadata") or candidate_metadata.get("usageMetadata")
+    return usage_metadata if isinstance(usage_metadata, dict) else {}
+
+
+def resolve_usage_token_count(
+    raw_response: dict[str, Any] | None,
+    *,
+    candidate_metadata: dict[str, Any] | None = None,
+) -> int:
+    usage_metadata = extract_usage_metadata(raw_response, candidate_metadata=candidate_metadata)
+    total_token_count = usage_metadata.get("totalTokenCount")
+    if isinstance(total_token_count, (int, float)):
+        return max(0, int(total_token_count))
+
+    prompt_token_count = usage_metadata.get("promptTokenCount")
+    candidate_token_count = usage_metadata.get("candidatesTokenCount")
+    if isinstance(prompt_token_count, (int, float)) or isinstance(candidate_token_count, (int, float)):
+        return max(0, int(prompt_token_count or 0) + int(candidate_token_count or 0))
+
+    return 0
+
+
+def _clamp_used_count_for_display(*, used_count: int, limit_value: int | None) -> int:
+    if limit_value is None or limit_value < 0:
+        return max(0, int(used_count or 0))
+    return min(max(0, int(used_count or 0)), int(limit_value))

@@ -61,6 +61,7 @@ from services.quota_router import (
     get_quota_project_id,
     get_task_models,
     get_quota_display_timezone,
+    load_model_limits,
     load_usage_state,
 )
 
@@ -91,7 +92,7 @@ PREVIEW_DIR = UPLOADS_DIR / ".preview"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_UPLOAD_EXTENSIONS = {
-    ".pdf", ".doc", ".docx", ".ppt", ".pptx",
+    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt",
     ".png", ".jpg", ".jpeg", ".webp",
 }
 
@@ -263,6 +264,7 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
     provider_order = get_diagram_vision_provider_order()
     primary_provider = get_primary_diagram_vision_provider()
     usage_state = load_usage_state(project_id=project_id, model_names=ordered_models)
+    model_limits = load_model_limits(model_names=ordered_models)
     now_utc = datetime.now(timezone.utc)
     display_timezone = str(get_quota_display_timezone())
 
@@ -272,10 +274,13 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
 
     for model_name in ordered_models:
         windows = usage_state.get(model_name, {})
+        model_limit = model_limits.get(model_name)
         blocked_windows = [
             {
                 "window_type": window.window_type,
-                "used_count": window.used_count,
+                "used_count": min(window.used_count, limit_value) if limit_value is not None else window.used_count,
+                "raw_used_count": window.used_count,
+                "limit_value": limit_value,
                 "reset_at": window.reset_at.isoformat() if window.reset_at else None,
                 "reset_at_display": format_quota_timestamp(window.reset_at),
                 "last_error_at": window.last_error_at.isoformat() if window.last_error_at else None,
@@ -283,7 +288,11 @@ def _build_diagram_analysis_usage_summary(cur) -> dict:
                 "last_error_code": window.last_error_code,
             }
             for window in windows.values()
-            if window.is_exhausted
+            for limit_value in [model_limit.limit_for(window.window_type) if model_limit else None]
+            if window.is_exhausted or (
+                limit_value is not None
+                and window.used_count >= int(limit_value or 0)
+            )
         ]
         is_available = not blocked_windows
         status_label = "available" if is_available and windows else "untracked"
@@ -722,11 +731,13 @@ def _serialize_conversation_document(row) -> dict:
     }
 
 
-def _serialize_conversation_message(row) -> dict:
+def _serialize_conversation_message(row, version_count: int | None = None) -> dict:
     selected_document_ids = row[5] if isinstance(row[5], list) else []
     retrieval_payload = row[6] if isinstance(row[6], dict) else None
     citations = retrieval_payload.get("citations") if isinstance(retrieval_payload, dict) else []
     citations = citations if isinstance(citations, list) else []
+    family_id = str(row[12]) if len(row) >= 13 and row[12] else str(row[10] or row[0])
+    version_index = int(row[13] or 1) if len(row) >= 14 else 1
     return {
         "message_id":          str(row[0]),
         "conversation_id":     str(row[1]),
@@ -742,7 +753,99 @@ def _serialize_conversation_message(row) -> dict:
         "prompt_version":      row[9] or "",
         "reply_to_message_id": str(row[10]) if row[10] else None,
         "created_at":          row[11].isoformat() if row[11] else "",
+        "family_id":           family_id,
+        "version_index":       version_index,
+        "version_count":       int(version_count or version_index or 1),
+        "branch_parent_message_id": str(row[14]) if len(row) >= 15 and row[14] else None,
     }
+
+
+def _conversation_messages_support_versioning(cur) -> bool:
+    if not _relation_exists(cur, "conversation_messages"):
+        return False
+    cur.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'conversation_messages'
+          AND column_name IN ('family_id', 'family_version_number', 'branch_parent_message_id', 'is_active_in_family')
+        """,
+    )
+    available = {str(row[0]) for row in cur.fetchall()}
+    return {
+        'family_id',
+        'family_version_number',
+        'branch_parent_message_id',
+        'is_active_in_family',
+    }.issubset(available)
+
+
+def _conversation_rows_support_versioning(rows: list) -> bool:
+    return bool(rows) and len(rows[0]) >= 16
+
+
+def _get_family_version_counts(rows: list) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], set[int]] = {}
+    if not _conversation_rows_support_versioning(rows):
+        return counts
+    for row in rows:
+        family_id = str(row[12] or "").strip()
+        role = str(row[3] or "").strip().lower()
+        if not family_id:
+            continue
+        counts.setdefault((family_id, role), set()).add(int(row[13] or 1))
+    return {family_key: len(versions) for family_key, versions in counts.items()}
+
+
+def _resolve_active_conversation_branch_rows(rows: list) -> list:
+    if not _conversation_rows_support_versioning(rows):
+        return rows
+
+    user_rows_by_parent: dict[str | None, list] = {}
+    assistant_rows_by_user: dict[str, list] = {}
+    for row in rows:
+        role = str(row[3] or "").strip().lower()
+        if role == "user":
+            parent_id = str(row[14]) if row[14] else None
+            user_rows_by_parent.setdefault(parent_id, []).append(row)
+        elif role == "assistant" and row[10]:
+            assistant_rows_by_user.setdefault(str(row[10]), []).append(row)
+
+    active_rows: list = []
+    visited_user_ids: set[str] = set()
+    parent_assistant_id: str | None = None
+
+    while True:
+        candidates = [
+            row for row in user_rows_by_parent.get(parent_assistant_id, [])
+            if bool(row[15])
+        ]
+        if not candidates:
+            break
+        user_row = sorted(
+            candidates,
+            key=lambda item: (int(item[13] or 1), str(item[11] or ""), str(item[0] or "")),
+        )[-1]
+        user_message_id = str(user_row[0] or "")
+        if not user_message_id or user_message_id in visited_user_ids:
+            break
+        visited_user_ids.add(user_message_id)
+        active_rows.append(user_row)
+
+        assistant_candidates = assistant_rows_by_user.get(user_message_id, [])
+        if not assistant_candidates:
+            break
+        active_assistant_candidates = [
+            row for row in assistant_candidates if bool(row[15])
+        ]
+        assistant_row = sorted(
+            active_assistant_candidates or assistant_candidates,
+            key=lambda item: (int(item[13] or 1), str(item[11] or ""), str(item[0] or "")),
+        )[-1]
+        active_rows.append(assistant_row)
+        parent_assistant_id = str(assistant_row[0] or "") or None
+
+    return active_rows
 
 
 # ===========================================================================
@@ -958,35 +1061,80 @@ def get_conversation_messages(user_id, conversation_id) -> list:
             if not _relation_exists(cur, "conversation_messages"):
                 return []
 
-            cur.execute(
-                """
-                SELECT
-                    cm.message_id,
-                    cm.conversation_id,
-                    cm.user_id,
-                    cm.role,
-                    cm.message_text,
-                    cm.selected_document_ids,
-                    cm.retrieval_payload,
-                    cm.model_provider,
-                    cm.model_name,
-                    cm.prompt_version,
-                    cm.reply_to_message_id,
-                    cm.created_at
-                FROM conversation_messages cm
-                JOIN conversations c ON c.conversation_id = cm.conversation_id
-                WHERE cm.conversation_id = %s
-                  AND c.user_id = %s
-                ORDER BY
-                    cm.created_at ASC,
-                    COALESCE(cm.reply_to_message_id, cm.message_id) ASC,
-                    CASE WHEN cm.role = 'user' THEN 0 ELSE 1 END ASC,
-                    cm.message_id ASC
-                """,
-                (conversation_id, user_id),
-            )
+            if _conversation_messages_support_versioning(cur):
+                cur.execute(
+                    """
+                    SELECT
+                        cm.message_id,
+                        cm.conversation_id,
+                        cm.user_id,
+                        cm.role,
+                        cm.message_text,
+                        cm.selected_document_ids,
+                        cm.retrieval_payload,
+                        cm.model_provider,
+                        cm.model_name,
+                        cm.prompt_version,
+                        cm.reply_to_message_id,
+                        cm.created_at,
+                        cm.family_id,
+                        cm.family_version_number,
+                        cm.branch_parent_message_id,
+                        cm.is_active_in_family
+                    FROM conversation_messages cm
+                    JOIN conversations c ON c.conversation_id = cm.conversation_id
+                    WHERE cm.conversation_id = %s
+                      AND c.user_id = %s
+                    ORDER BY
+                        cm.created_at ASC,
+                        cm.family_id ASC NULLS LAST,
+                        cm.family_version_number ASC NULLS LAST,
+                        CASE WHEN cm.role = 'user' THEN 0 ELSE 1 END ASC,
+                        cm.message_id ASC
+                    """,
+                    (conversation_id, user_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT
+                        cm.message_id,
+                        cm.conversation_id,
+                        cm.user_id,
+                        cm.role,
+                        cm.message_text,
+                        cm.selected_document_ids,
+                        cm.retrieval_payload,
+                        cm.model_provider,
+                        cm.model_name,
+                        cm.prompt_version,
+                        cm.reply_to_message_id,
+                        cm.created_at
+                    FROM conversation_messages cm
+                    JOIN conversations c ON c.conversation_id = cm.conversation_id
+                    WHERE cm.conversation_id = %s
+                      AND c.user_id = %s
+                    ORDER BY
+                        cm.created_at ASC,
+                        COALESCE(cm.reply_to_message_id, cm.message_id) ASC,
+                        CASE WHEN cm.role = 'user' THEN 0 ELSE 1 END ASC,
+                        cm.message_id ASC
+                    """,
+                    (conversation_id, user_id),
+                )
             rows = cur.fetchall()
-        return [_serialize_conversation_message(row) for row in rows]
+        active_rows = _resolve_active_conversation_branch_rows(rows)
+        version_counts = _get_family_version_counts(rows)
+        return [
+            _serialize_conversation_message(
+                row,
+                version_count=version_counts.get(
+                    (str(row[12] or ""), str(row[3] or "").strip().lower()),
+                    1,
+                ) if len(row) >= 13 else 1,
+            )
+            for row in active_rows
+        ]
     except Exception:
         return []
     finally:
@@ -2433,24 +2581,37 @@ def change_password():
     if not user_id:
         return jsonify({'error': 'You must be logged in.'}), 401
 
-    data         = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password') or ''
     new_password = data.get('new_password') or ''
+    confirm_password = data.get('confirm_password') or ''
+    if not current_password:
+        return jsonify({'error': 'Current password is required.'}), 400
     if not new_password:
         return jsonify({'error': 'New password is required.'}), 400
+    if not confirm_password:
+        return jsonify({'error': 'Confirm password is required.'}), 400
+    if new_password != confirm_password:
+        return jsonify({'error': 'New password and confirm password must match.'}), 400
     if not STRONG_PASSWORD_REGEX.match(new_password):
         return jsonify({'error': PASSWORD_POLICY_ERROR}), 400
+    if current_password == new_password:
+        return jsonify({'error': 'New password must be different from the current password.'}), 400
 
     conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT auth_provider FROM users WHERE user_id = %s", (user_id,))
+            cur.execute("SELECT auth_provider, password_hash FROM users WHERE user_id = %s", (user_id,))
             row = cur.fetchone()
             if not row:
                 session.pop("user_id", None)
                 return jsonify({'error': 'User not found.'}), 404
             if row[0] != 'local':
                 return jsonify({'error': 'This account uses a different sign-in method.'}), 400
+            password_hash = row[1] or ''
+            if not password_hash or not check_password_hash(password_hash, current_password):
+                return jsonify({'error': 'Current password is incorrect.'}), 401
 
             cur.execute(
                 "UPDATE users SET password_hash = %s WHERE user_id = %s",
@@ -2508,8 +2669,6 @@ def auth_settings():
             for prompt_type in default_prompt_profiles
         }
         user_payload = serialize_user_row(row[:8]) or {}
-        default_prompt = _build_default_user_system_prompt(user_payload.get("username") or "")
-        custom_prompt = row[8] or ''
         return jsonify({
             'user': user_payload,
             'custom_system_prompt': prompt_profiles.get(PROMPT_TYPE_QNA, ''),
@@ -3197,6 +3356,7 @@ def _insert_document_and_mark_pending(cur, user_id, user_upload_dir, incoming_fi
             "mime_type":         mime_type,
             "original_filename": original_name,
             "conversation_id":   conversation_id,
+            "user_id":           user_id,
         },
         "_destination":      destination,   # kept for rollback cleanup; stripped before response
     }
@@ -3208,6 +3368,7 @@ def _run_document_parse_job(job: dict) -> None:
     mime_type = job.get("mime_type")
     original_filename = job.get("original_filename")
     conversation_id = job.get("conversation_id")
+    user_id = job.get("user_id")
 
     conn = None
     try:
@@ -3309,6 +3470,17 @@ def _run_document_parse_job(job: dict) -> None:
                 document_id=document_id,
                 extraction_payload=extraction_payload,
             )
+            parsed_file_type = str(parser_result.get("file_type") or "").strip().lower()
+            if parsed_file_type in {"png", "jpg", "jpeg", "webp"}:
+                try:
+                    prompt_profiles = get_prompt_profiles_for_user(cur, user_id) if user_id else {}
+                    run_diagram_analysis_for_document(
+                        cur,
+                        document_id=str(document_id),
+                        prompt_override=prompt_profiles.get(PROMPT_TYPE_VISION, ""),
+                    )
+                except Exception:
+                    logger.exception("Auto vision analysis failed for uploaded image document_id=%s", document_id)
             _maybe_refresh_conversation_title(cur, str(conversation_id or ""))
         conn.commit()
         _schedule_embedding_autorun(f"document_parse:{document_id}")
@@ -3596,19 +3768,49 @@ def api_conversation_messages(conversation_id):
         return jsonify({'error': 'Conversation not found.'}), 404
 
     payload = request.get_json(silent=True) or {}
+    edit_message_id = str(payload.get("edit_message_id") or "").strip()
+    regenerate_message_id = str(payload.get("regenerate_message_id") or "").strip()
+    if edit_message_id and regenerate_message_id:
+        return jsonify({'error': 'Choose edit or regenerate, not both.'}), 400
+
     query = str(payload.get("query") or "").strip()
-    if not query:
+    if not query and not regenerate_message_id:
         return jsonify({'error': 'query is required.'}), 400
 
     try:
-        response_payload = ChatAnswerService().answer_conversation_query(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            query=query,
-            document_ids=payload.get("document_ids"),
-            k=payload.get("k"),
-            include_filtered=payload.get("include_filtered"),
-        )
+        service = ChatAnswerService()
+        if edit_message_id:
+            response_payload = service.replay_conversation_query(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                target_message_id=edit_message_id,
+                mode="edit",
+                query=query,
+                document_ids=payload.get("document_ids"),
+                k=payload.get("k"),
+                include_filtered=payload.get("include_filtered"),
+            )
+        elif regenerate_message_id:
+            response_payload = service.replay_conversation_query(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                target_message_id=regenerate_message_id,
+                mode="regenerate",
+                query=query,
+                document_ids=payload.get("document_ids"),
+                k=payload.get("k"),
+                include_filtered=payload.get("include_filtered"),
+            )
+        else:
+            response_payload = service.answer_conversation_query(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                query=query,
+                document_ids=payload.get("document_ids"),
+                k=payload.get("k"),
+                include_filtered=payload.get("include_filtered"),
+            )
+        response_payload["conversation_messages"] = get_conversation_messages(user_id, conversation_id)
         return jsonify(response_payload), 200
     except ChatAnswerServiceError as exc:
         return jsonify({
@@ -3629,6 +3831,56 @@ def api_conversation_messages(conversation_id):
     except Exception as exc:
         logger.exception("Conversation message generation failed conversation_id=%s", conversation_id)
         error_payload = {'error': 'Unable to send your message right now.'}
+        if app.debug:
+            error_payload['details'] = {
+                'exception_type': type(exc).__name__,
+                'message': str(exc),
+            }
+        return jsonify(error_payload), 500
+
+
+@app.route('/api/conversations/<conversation_id>/message-versions/select', methods=['POST'])
+def api_select_conversation_message_version(conversation_id):
+    user_id = session.get("user_id")
+    conversation_id = (conversation_id or "").strip()
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+    if not conversation_exists_for_user(user_id, conversation_id):
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    family_id = str(payload.get("family_id") or "").strip()
+    role = str(payload.get("role") or "").strip().lower()
+    version_number = payload.get("version_number")
+    if not family_id:
+        return jsonify({'error': 'family_id is required.'}), 400
+    try:
+        version_number = int(version_number)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'version_number must be an integer.'}), 400
+
+    try:
+        selection_payload = ChatAnswerService().select_family_version(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            family_id=family_id,
+            role=role,
+            version_number=version_number,
+        )
+        return jsonify({
+            **selection_payload,
+            'conversation_messages': get_conversation_messages(user_id, conversation_id),
+        }), 200
+    except ChatAnswerServiceError as exc:
+        return jsonify({
+            'error': exc.message,
+            'details': exc.to_dict(),
+        }), exc.status_code
+    except Exception as exc:
+        logger.exception("Conversation version selection failed conversation_id=%s", conversation_id)
+        error_payload = {'error': 'Unable to switch message version right now.'}
         if app.debug:
             error_payload['details'] = {
                 'exception_type': type(exc).__name__,

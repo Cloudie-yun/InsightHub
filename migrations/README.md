@@ -27,6 +27,7 @@ For an existing database that already applied older files, keep using the histor
 12. `010_conversation_messages.sql`
 13. `012_user_profile_settings.sql`
 14. `013_user_prompt_profiles.sql`
+15. `014_conversation_message_versioning.sql`
 
 ## Notes
 

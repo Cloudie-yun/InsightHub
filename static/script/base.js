@@ -31,7 +31,10 @@ const profilePromptViewPanels = Array.from(document.querySelectorAll("[data-prom
 const profileSystemPromptRegenerateBtn = document.getElementById("profile-system-prompt-regenerate-btn");
 const profileSystemPromptMeta = document.getElementById("profile-system-prompt-meta");
 const profilePasswordForm = document.getElementById("profile-password-form");
+const profilePasswordUnavailable = document.getElementById("profile-password-unavailable");
+const profileCurrentPasswordInput = document.getElementById("profile-current-password-input");
 const profileNewPasswordInput = document.getElementById("profile-new-password-input");
+const profileConfirmPasswordInput = document.getElementById("profile-confirm-password-input");
 const profilePasswordSaveBtn = document.getElementById("profile-password-save-btn");
 const emailVerifyBadge = document.getElementById("email-verify-badge");
 const emailVerifyBanner = document.getElementById("email-verify-banner");
@@ -574,7 +577,7 @@ const syncProfileSettingsUi = (payload) => {
     const settingsUser = payload?.user || currentAuthUser || {};
     const authProvider = String(settingsUser.auth_provider || "").toLowerCase();
     const isGoogleLinked = Boolean(settingsUser.is_google_linked) || authProvider === "google";
-    const canChangePassword = authProvider === "local";
+    const canChangePassword = Boolean(settingsUser.has_password);
     const promptProfiles = payload?.prompt_profiles || {};
     const effectivePromptProfiles = payload?.effective_prompt_profiles || {};
 
@@ -590,6 +593,9 @@ const syncProfileSettingsUi = (payload) => {
     }
     if (profilePasswordForm) {
         profilePasswordForm.classList.toggle("hidden", !canChangePassword);
+    }
+    if (profilePasswordUnavailable) {
+        profilePasswordUnavailable.classList.toggle("hidden", canChangePassword);
     }
 };
 
@@ -711,7 +717,17 @@ if (profileSystemPromptRegenerateBtn) {
 if (profilePasswordForm) {
     profilePasswordForm.addEventListener("submit", async (event) => {
         event.preventDefault();
+        const currentPassword = profileCurrentPasswordInput?.value || "";
         const newPassword = profileNewPasswordInput?.value || "";
+        const confirmPassword = profileConfirmPasswordInput?.value || "";
+        if (!currentPassword) {
+            notifyUser({ type: "warning", message: "Current password is required." });
+            return;
+        }
+        if (!newPassword) {
+            notifyUser({ type: "warning", message: "New password is required." });
+            return;
+        }
         if (!strongPasswordRegex.test(newPassword)) {
             notifyUser({
                 type: "warning",
@@ -719,16 +735,28 @@ if (profilePasswordForm) {
             });
             return;
         }
+        if (newPassword !== confirmPassword) {
+            notifyUser({ type: "warning", message: "New password and confirm password must match." });
+            return;
+        }
+        if (currentPassword === newPassword) {
+            notifyUser({ type: "warning", message: "New password must be different from the current password." });
+            return;
+        }
         profilePasswordSaveBtn.disabled = true;
         try {
             const { response, payload } = await postJson("/api/auth/change-password", {
+                current_password: currentPassword,
                 new_password: newPassword,
+                confirm_password: confirmPassword,
             });
             if (!response.ok) {
                 notifyUser({ type: "error", message: payload.error || "Unable to update password right now." });
                 return;
             }
+            if (profileCurrentPasswordInput) profileCurrentPasswordInput.value = "";
             if (profileNewPasswordInput) profileNewPasswordInput.value = "";
+            if (profileConfirmPasswordInput) profileConfirmPasswordInput.value = "";
             notifyUser({ type: "success", message: payload.message || "Password updated successfully." });
         } catch (error) {
             notifyUser({ type: "error", message: "Network error. Please try again." });
@@ -998,6 +1026,7 @@ const loginEmailInput = document.getElementById("login-email");
 const loginPasswordInput = document.getElementById("login-password");
 const signupNameInput = document.getElementById("signup-name");
 const signupEmailInput = document.getElementById("signup-email");
+const signupEmailHiddenInput = document.getElementById("signup-email-hidden");
 const signupConfirmPasswordInput = document.getElementById("signup-confirm-password");
 const resetConfirmPasswordInput = document.getElementById("reset-confirm-password");
 
@@ -1011,6 +1040,16 @@ bindHideErrorsOnFocus([
     resetConfirmPasswordInput,
     forgotEmailInput,
 ]);
+
+const syncSignupPasswordManagerFields = () => {
+    if (!signupEmailHiddenInput) return;
+    signupEmailHiddenInput.value = (signupEmailInput?.value || "").trim();
+};
+
+if (signupEmailInput) {
+    signupEmailInput.addEventListener("input", syncSignupPasswordManagerFields);
+    signupEmailInput.addEventListener("change", syncSignupPasswordManagerFields);
+}
 
 if (loginPasswordInput) {
     loginPasswordInput.addEventListener("input", () => {
@@ -1093,6 +1132,7 @@ loginForm.addEventListener("submit", async (e) => {
 signupForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearFormErrors("auth-signup");
+    syncSignupPasswordManagerFields();
 
     const name = signupNameInput.value.trim();
     const email = signupEmailInput.value.trim();

@@ -239,12 +239,6 @@
                                     <button type="button" data-copy-message="true" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
                                         <i class="fa-solid fa-clone"></i>
                                     </button>
-                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-green-50 hover:text-green-600" title="Helpful">
-                                        <i class="fa-regular fa-thumbs-up"></i>
-                                    </button>
-                                    <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600" title="Not helpful">
-                                        <i class="fa-regular fa-thumbs-down"></i>
-                                    </button>
                                     <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Regenerate">
                                         <i class="fa-solid fa-rotate-right"></i>
                                     </button>
@@ -271,11 +265,18 @@
                                     <div class="rounded-2xl rounded-tr-none bg-brand-100 px-4 py-2.5 text-[14px] font-normal leading-6 text-gray-800 shadow-sm">
                                         <div data-copy-content="message" class="whitespace-pre-wrap">{{ message.message_text }}</div>
                                     </div>
+                                    {% if (message.version_count or 1) > 1 %}
+                                    <div class="absolute bottom-0 left-1 flex items-center gap-1 rounded-full bg-white/95 px-2 py-1 text-[11px] font-semibold text-slate-500 shadow-sm">
+                                        <button type="button" data-message-version-nav="prev" data-family-id="{{ message.family_id }}" data-role="{{ message.role }}" data-version-number="{{ (message.version_index or 1) - 1 }}" class="flex h-5 min-w-[10px] items-center justify-center rounded-sm px-0.5 transition-colors hover:bg-slate-100 {% if (message.version_index or 1) <= 1 %}pointer-events-none opacity-40{% endif %}" title="Previous version">&lt;</button>
+                                        <span>{{ message.version_index or 1 }}/{{ message.version_count or 1 }}</span>
+                                        <button type="button" data-message-version-nav="next" data-family-id="{{ message.family_id }}" data-role="{{ message.role }}" data-version-number="{{ (message.version_index or 1) + 1 }}" class="flex h-5 min-w-[10px] items-center justify-center rounded-sm px-0.5 transition-colors hover:bg-slate-100 {% if (message.version_index or 1) >= (message.version_count or 1) %}pointer-events-none opacity-40{% endif %}" title="Next version">&gt;</button>
+                                    </div>
+                                    {% endif %}
                                     <div class="absolute bottom-0 right-1 flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto">
                                         <button type="button" data-copy-message="true" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
                                             <i class="fa-solid fa-clone"></i>
                                         </button>
-                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-brand-50 hover:text-brand-600" title="Edit">
+                                        <button type="button" data-edit-message="true" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-brand-50 hover:text-brand-600" title="Edit">
                                             <i class="fa-solid fa-pen"></i>
                                         </button>
                                     </div>
@@ -355,19 +356,20 @@
                                         {% endif %}
                                     </div>
                                     {% endif %}
+                                    {% if (message.version_count or 1) > 1 %}
+                                    <div class="mt-2 flex items-center gap-1 text-[11px] font-semibold text-slate-500">
+                                        <button type="button" data-message-version-nav="prev" data-family-id="{{ message.family_id }}" data-role="{{ message.role }}" data-version-number="{{ (message.version_index or 1) - 1 }}" class="flex h-5 min-w-[10px] items-center justify-center rounded-sm px-0.5 transition-colors hover:bg-slate-100 {% if (message.version_index or 1) <= 1 %}pointer-events-none opacity-40{% endif %}" title="Previous version">&lt;</button>
+                                        <span>{{ message.version_index or 1 }}/{{ message.version_count or 1 }}</span>
+                                        <button type="button" data-message-version-nav="next" data-family-id="{{ message.family_id }}" data-role="{{ message.role }}" data-version-number="{{ (message.version_index or 1) + 1 }}" class="flex h-5 min-w-[10px] items-center justify-center rounded-sm px-0.5 transition-colors hover:bg-slate-100 {% if (message.version_index or 1) >= (message.version_count or 1) %}pointer-events-none opacity-40{% endif %}" title="Next version">&gt;</button>
+                                    </div>
+                                    {% endif %}
                                     <div class="mt-1.5 flex items-center gap-1">
                                         <button type="button" data-copy-message="true" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Copy">
                                             <i class="fa-solid fa-clone"></i>
                                         </button>
-                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-green-50 hover:text-green-600" title="Helpful">
-                                            <i class="fa-regular fa-thumbs-up"></i>
-                                        </button>
-                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600" title="Not helpful">
-                                            <i class="fa-regular fa-thumbs-down"></i>
-                                        </button>
-                                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Regenerate">
-                                            <i class="fa-solid fa-rotate-right"></i>
-                                        </button>
+                                            <button type="button" data-regenerate-message="true" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600" title="Regenerate">
+                                                <i class="fa-solid fa-rotate-right"></i>
+                                            </button>
                                         <button type="button" class="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-amber-50 hover:text-amber-600" title="Create study aid">
                                             <i class="fa-solid fa-lightbulb"></i>
                                         </button>
@@ -455,7 +457,7 @@
                 type="file"
                 class="hidden"
                 multiple
-                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.png,.jpg,.jpeg,.webp"
             >
             <div id="chat-upload-dropzone" class="rounded-xl border-2 border-dashed border-brand-300 bg-brand-50/30 p-8 text-center transition-colors">
                 <div class="text-brand-600 text-3xl mb-2">

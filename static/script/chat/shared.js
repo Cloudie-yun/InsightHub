@@ -98,6 +98,7 @@
         promptRailPointerBound: false,
         promptRailPointerInside: false,
         troubleshootMode: false,
+        pendingReplay: null,
     };
 
     ns.constants = {
@@ -116,6 +117,7 @@
             ".docx",
             ".ppt",
             ".pptx",
+            ".txt",
             ".png",
             ".jpg",
             ".jpeg",

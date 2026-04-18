@@ -3,6 +3,8 @@ import mimetypes
 import re
 
 from services.parsers.mineru import MINERU_SUPPORTED_EXTENSIONS, parse_document_with_mineru
+from services.parsers.text_parser import parse_text_document
+from services.parsers.image_parser import parse_image_document
 
 EXTENSION_TO_TYPE = {
     ".pdf": "pdf",
@@ -10,6 +12,11 @@ EXTENSION_TO_TYPE = {
     ".doc": "doc",
     ".docx": "docx",
     ".pptx": "pptx",
+    ".txt": "txt",
+    ".png": "png",
+    ".jpg": "jpg",
+    ".jpeg": "jpeg",
+    ".webp": "webp",
 }
 
 MIME_TO_TYPE = {
@@ -18,7 +25,14 @@ MIME_TO_TYPE = {
     "application/msword": "doc",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "text/plain": "txt",
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
 }
+
+LOCAL_TEXT_TYPES = {"txt"}
+LOCAL_IMAGE_TYPES = {"png", "jpg", "jpeg", "webp"}
 
 
 def _segment_sort_key(segment):
@@ -155,26 +169,37 @@ def parse_document(file_path, document_id=None, mime_type=None, original_filenam
             return result
 
         extension = Path(original_filename or file_path).suffix.lower()
-        if extension not in MINERU_SUPPORTED_EXTENSIONS:
-            result["errors"].append(
-                build_parser_error(
-                    code="unsupported_mineru_file_type",
-                    message="This document type is not enabled for MinerU parsing.",
-                    details={
-                        "file_type": file_type,
-                        "extension": extension,
-                        "supported_extensions": sorted(MINERU_SUPPORTED_EXTENSIONS),
-                    },
-                )
+        if file_type in LOCAL_TEXT_TYPES:
+            parser_result = parse_text_document(
+                file_path,
+                original_filename=original_filename,
             )
-            return result
+        elif file_type in LOCAL_IMAGE_TYPES:
+            parser_result = parse_image_document(
+                file_path,
+                original_filename=original_filename,
+            )
+        else:
+            if extension not in MINERU_SUPPORTED_EXTENSIONS:
+                result["errors"].append(
+                    build_parser_error(
+                        code="unsupported_mineru_file_type",
+                        message="This document type is not enabled for MinerU parsing.",
+                        details={
+                            "file_type": file_type,
+                            "extension": extension,
+                            "supported_extensions": sorted(MINERU_SUPPORTED_EXTENSIONS),
+                        },
+                    )
+                )
+                return result
 
-        parser_result = parse_document_with_mineru(
-            file_path,
-            progress_callback=progress_callback,
-            document_id=document_id,
-            original_filename=original_filename,
-        )
+            parser_result = parse_document_with_mineru(
+                file_path,
+                progress_callback=progress_callback,
+                document_id=document_id,
+                original_filename=original_filename,
+            )
         result["segments"] = sorted(parser_result.get("segments", []), key=_segment_sort_key)
         result["assets"] = parser_result.get("assets", [])
         result["references"] = parser_result.get("references", [])

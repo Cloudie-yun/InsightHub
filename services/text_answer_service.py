@@ -23,21 +23,16 @@ except ImportError:  # pragma: no cover - optional until dependency is installed
 
 from services.quota_router import (
     TASK_TYPE_TEXT,
-    QuotaRouterError,
-    classify_quota_error,
-    extract_response_headers,
     get_task_models,
-    get_quota_project_id,
-    pick_available_model,
-    record_model_success,
-    record_quota_failure,
+    execute_with_shared_quota_router,
+    resolve_usage_token_count,
 )
 
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-PROMPT_VERSION = "grounded_answer_v1"
+PROMPT_VERSION = "grounded_answer_v2"
 NO_EVIDENCE_PROMPT_VERSION = "grounded_refusal_v1"
-DEFAULT_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_TEXT_MAX_OUTPUT_TOKENS", "2048"))
+DEFAULT_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_TEXT_MAX_OUTPUT_TOKENS", "3072"))
 MAX_CONVERSATION_CONTEXT_TURNS = 4
 
 ANSWER_RESPONSE_SCHEMA = {
@@ -56,14 +51,13 @@ ANSWER_RESPONSE_SCHEMA = {
     "required": ["answer_text", "citation_block_ids", "confidence"],
 }
 
-DEFAULT_GROUNDED_ANSWER_PROMPT_TEMPLATE = """You are a grounded answer engine. You do not add pleasantries,
-filler phrases, or background knowledge. You answer only from
-the evidence chunks provided.
+DEFAULT_GROUNDED_ANSWER_PROMPT_TEMPLATE = """You are a grounded answer engine.
+Answer only from the evidence chunks provided.
 
 Answer style profile: {prompt_profile_label}
 Answer goal: {prompt_profile_goal}
 Preferred response shape: {prompt_profile_shape}
-Hard length limit: {prompt_profile_max_sentences} sentences maximum.
+Typical target length: around {prompt_profile_max_sentences} sentences when that fits the query, but answer more fully when the query is multi-part and the evidence supports it.
 
 {conversation_context_block}User query: {query}
 
@@ -71,22 +65,19 @@ Evidence chunks:
 {evidence_chunks}
 
 Rules:
-1. Ground every claim in the evidence. Do not infer,
-   extrapolate, or add background knowledge.
-2. Use conversation context only to interpret follow-up intent
-   such as 'simpler', 'more detail', or references to the
-   previous answer -- never as factual evidence.
-3. Prefer paraphrase over direct quotes. If you quote,
-   use fewer than 15 words and mark with '...' if trimmed.
-4. If chunks conflict, surface the conflict explicitly in
-   answer_text rather than silently picking one.
-5. Follow the answer style profile unless doing so would force
-   unsupported detail -- in that case, fall back to 'default'.
-6. If evidence is insufficient, set confidence to 'insufficient',
-   set citation_block_ids to [], and explain the gap in
-   answer_text with a suggested refinement.
+1. Ground every claim in the evidence. Do not add unsupported facts.
+2. Use conversation context only to interpret follow-up intent, never as factual evidence.
+3. Prefer paraphrase over direct quotes. If quoting, use fewer than 15 words.
+4. If chunks conflict, state the conflict explicitly in answer_text.
+5. If the query contains multiple sub-questions, answer each one explicitly.
+6. If the query asks to list or explain, include all major supported points from the evidence.
+7. Organize answer_text using clear labels or numbered sections when helpful.
+8. You may synthesize repeated or complementary points across evidence chunks, but only when directly supported by them.
+9. If evidence is insufficient for any part, say which part is unsupported.
+10. Prefer completeness over brevity when evidence is sufficient.
+11. Follow the answer style profile unless it would force unsupported detail. In that case, stay grounded and reduce the scope of the answer instead of guessing.
 
-Return JSON only -- no markdown fences, no preamble:
+Return JSON only:
 {{
   "answer_text": "...",
   "citation_block_ids": ["block_id_1", ...],
@@ -102,49 +93,49 @@ PROMPT_PROFILES = {
         "label": "summary",
         "goal": "Produce a compact synthesis of the most important points from the evidence.",
         "shape": "1 short paragraph plus 3-5 bullet-like sentences if the material has multiple key points.",
-        "max_sentences": 7,
+        "max_sentences": 9,
     },
     "explanation": {
         "label": "explanation",
         "goal": "Explain the concept or process clearly, with enough depth to make the reasoning understandable.",
-        "shape": "1-2 short paragraphs connecting cause, mechanism, and consequence when supported by evidence.",
-        "max_sentences": 8,
+        "shape": "1-2 short paragraphs connecting cause, mechanism, and consequence when supported by evidence, or labeled points if the question has multiple parts.",
+        "max_sentences": 10,
     },
     "causal": {
         "label": "causal",
         "goal": "Answer why or how something happens, highlighting mechanisms and any uncertainty.",
-        "shape": "1-2 short paragraphs with explicit cause-and-effect wording grounded in the evidence.",
-        "max_sentences": 8,
+        "shape": "1-2 short paragraphs with explicit cause-and-effect wording grounded in the evidence, or numbered points when several causes are supported.",
+        "max_sentences": 10,
     },
     "simplify": {
         "label": "simplify",
         "goal": "Restate the answer in simpler language for a non-expert without removing supported facts.",
-        "shape": "2-5 short simple sentences using plain language and fewer technical terms.",
-        "max_sentences": 5,
+        "shape": "A plain-language explanation using short sentences, while still covering all major supported points.",
+        "max_sentences": 7,
     },
     "detailed": {
         "label": "detailed",
         "goal": "Provide a fuller explanation including relevant supporting detail from the evidence.",
-        "shape": "2 short paragraphs, or 1 short paragraph plus 3-5 concrete supporting points.",
-        "max_sentences": 10,
+        "shape": "An organized answer with a short overview followed by numbered or labeled sections covering each major supported concept, method, or application.",
+        "max_sentences": 18,
     },
     "comparison": {
         "label": "comparison",
         "goal": "Compare relevant items, viewpoints, methods, or findings directly from the evidence.",
         "shape": "Short opening comparison statement followed by clearly separated comparison points.",
-        "max_sentences": 8,
+        "max_sentences": 10,
     },
     "definition": {
         "label": "definition",
         "goal": "Answer with a direct definition or characterization, then add the most relevant supporting detail.",
-        "shape": "2-4 sentences: direct answer first, then concise support.",
-        "max_sentences": 4,
+        "shape": "Direct answer first, then the most relevant supported detail or context.",
+        "max_sentences": 6,
     },
     "default": {
         "label": "default",
         "goal": "Answer the user directly and clearly using only the retrieved evidence.",
-        "shape": "2-4 sentences for simple factual queries; up to 2 short paragraphs for multi-part questions.",
-        "max_sentences": 6,
+        "shape": "A direct answer for simple factual queries; labeled points or short sections for multi-part questions.",
+        "max_sentences": 12,
     },
 }
 
@@ -183,6 +174,28 @@ def _get_text_provider_order(*, has_gemini_api_key: bool) -> list[str]:
     if _is_vertex_ai_enabled():
         providers.append("vertex_ai")
     return providers
+
+
+def _should_retry_text_with_another_model(exc: Exception) -> bool:
+    if not isinstance(exc, TextAnswerServiceError):
+        return False
+    if bool(exc.retryable):
+        return True
+
+    message = str(exc.message or "").lower()
+    response_body = str((exc.details or {}).get("response_body") or "").lower()
+    haystack = f"{message}\n{response_body}"
+    if exc.status_code == 404 and any(
+        marker in haystack
+        for marker in (
+            "model",
+            "not found",
+            "unsupported",
+            "not supported",
+        )
+    ):
+        return True
+    return False
 
 
 @dataclass
@@ -505,126 +518,51 @@ class TextAnswerService:
                 details={},
             )
 
-        project_id = get_quota_project_id()
-        configured_models = get_task_models(TASK_TYPE_TEXT, fallback_model=self.default_model)
-        attempted_models: list[str] = []
-        last_error: TextAnswerServiceError | None = None
-
-        while len(attempted_models) < len(configured_models):
-            try:
-                selected_model = pick_available_model(
-                    TASK_TYPE_TEXT,
-                    project_id=project_id,
-                    fallback_model=self.default_model,
-                    excluded_models=attempted_models,
-                )
-            except QuotaRouterError as exc:
-                if last_error is not None:
-                    raise last_error
-                raise TextAnswerServiceError(
-                    code="quota_router_unavailable",
-                    message=str(exc),
-                    retryable=True,
-                    retry_after_seconds=None,
-                    details={
-                        "attempted_models": attempted_models,
-                        "last_error": None,
-                    },
-                ) from exc
-
-            attempted_models.append(selected_model)
-            payload = self._build_payload(
-                query=query,
-                retrieval_payload=retrieval_payload,
-                selected_document_ids=selected_document_ids,
-                conversation_context=conversation_context or [],
-                prompt_template=user_prompt_override or "",
-            )
-            prompt_profile = self._select_prompt_profile(
-                query=query,
-                conversation_context=conversation_context or [],
-            )["label"]
-
-            for provider_name in provider_order:
-                try:
-                    if provider_name == "gemini":
-                        raw_response, response_headers, candidate_metadata = self._request_with_gemini(
-                            model_name=selected_model,
-                            payload=payload,
-                        )
-                    elif provider_name == "vertex_ai":
-                        raw_response, response_headers, candidate_metadata = self._request_with_vertex_ai(
-                            model_name=selected_model,
-                            payload=payload,
-                        )
-                    else:
-                        continue
-
-                    parsed = self._parse_provider_payload(
-                        provider_name=provider_name,
-                        raw_response=raw_response,
-                        candidate_metadata=candidate_metadata,
-                    )
-                    answer_text = str(parsed.get("answer_text") or "").strip()
-                    if not answer_text:
-                        raise TextAnswerServiceError(
-                            code="empty_answer_text",
-                            message="Grounded answer generation returned an empty answer.",
-                            details={},
-                        )
-                    citation_block_ids = [
-                        str(item).strip()
-                        for item in (parsed.get("citation_block_ids") or [])
-                        if str(item).strip()
-                    ]
-                    confidence = str(parsed.get("confidence") or "").strip().lower()
-                    if confidence not in {"high", "partial", "insufficient"}:
-                        confidence = "partial" if citation_block_ids else "insufficient"
-
-                    if provider_name == "gemini":
-                        record_model_success(
-                            project_id=project_id,
-                            model_name=selected_model,
-                            request_count=1,
-                            token_count=self._resolve_token_count(raw_response, candidate_metadata=candidate_metadata),
-                            response_headers=response_headers,
-                        )
-
-                    return {
-                        "answer_text": answer_text,
-                        "citation_block_ids": citation_block_ids,
-                        "model_provider": provider_name,
-                        "model_name": selected_model if provider_name == "gemini" else (str(raw_response.get("modelVersion") or raw_response.get("model") or self.vertex_default_model).strip() or self.vertex_default_model),
-                        "prompt_version": PROMPT_VERSION,
-                        "prompt_profile": prompt_profile,
-                        "confidence": confidence,
-                        "response_headers": response_headers,
-                    }
-                except TextAnswerServiceError as exc:
-                    last_error = exc
-                    if provider_name == "gemini":
-                        quota_error_code = classify_quota_error(
-                            status_code=exc.status_code,
-                            message=exc.message,
-                            details=exc.details,
-                        )
-                        if quota_error_code:
-                            record_quota_failure(
-                                project_id=project_id,
-                                model_name=selected_model,
-                                error_code=quota_error_code,
-                                retry_after_seconds=exc.retry_after_seconds,
-                                response_headers=extract_response_headers(exc.details),
-                            )
-
-        if last_error is not None:
-            raise last_error
-        raise TextAnswerServiceError(
-            code="text_provider_unavailable",
-            message="Grounded Q&A is unavailable because no text provider could be used.",
-            retryable=True,
-            details={},
+        payload = self._build_payload(
+            query=query,
+            retrieval_payload=retrieval_payload,
+            selected_document_ids=selected_document_ids,
+            conversation_context=conversation_context or [],
+            prompt_template=user_prompt_override or "",
         )
+        prompt_profile = self._select_prompt_profile(
+            query=query,
+            conversation_context=conversation_context or [],
+        )["label"]
+
+        try:
+            routed_result = execute_with_shared_quota_router(
+                TASK_TYPE_TEXT,
+                provider_order=provider_order,
+                fallback_model=self.default_model,
+                execute_provider=lambda model_name, provider_name: self._execute_provider_attempt(
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    payload=payload,
+                ),
+                should_retry_with_another_model=_should_retry_text_with_another_model,
+            )
+        except Exception as exc:
+            if isinstance(exc, TextAnswerServiceError):
+                raise
+            raise TextAnswerServiceError(
+                code="text_provider_unavailable",
+                message=str(exc) or "Grounded Q&A is unavailable because no text provider could be used.",
+                retryable=True,
+                details={},
+            ) from exc
+
+        provider_payload = routed_result.payload if isinstance(routed_result.payload, dict) else {}
+        return {
+            "answer_text": str(provider_payload.get("answer_text") or "").strip(),
+            "citation_block_ids": provider_payload.get("citation_block_ids") or [],
+            "model_provider": routed_result.provider_name,
+            "model_name": routed_result.provider_model_name,
+            "prompt_version": PROMPT_VERSION,
+            "prompt_profile": prompt_profile,
+            "confidence": str(provider_payload.get("confidence") or "insufficient"),
+            "response_headers": routed_result.response_headers,
+        }
 
     def _build_payload(
         self,
@@ -826,6 +764,66 @@ class TextAnswerService:
 
         return _parse_gemini_json_text(response_text)
 
+    def _execute_provider_attempt(
+        self,
+        *,
+        provider_name: str,
+        model_name: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if provider_name == "gemini":
+            raw_response, response_headers, candidate_metadata = self._request_with_gemini(
+                model_name=model_name,
+                payload=payload,
+            )
+        elif provider_name == "vertex_ai":
+            raw_response, response_headers, candidate_metadata = self._request_with_vertex_ai(
+                model_name=model_name,
+                payload=payload,
+            )
+        else:
+            raise TextAnswerServiceError(
+                code="unsupported_text_provider",
+                message=f"Unsupported text provider: {provider_name}",
+                retryable=False,
+                details={},
+            )
+
+        parsed = self._parse_provider_payload(
+            provider_name=provider_name,
+            raw_response=raw_response,
+            candidate_metadata=candidate_metadata,
+        )
+        answer_text = str(parsed.get("answer_text") or "").strip()
+        if not answer_text:
+            raise TextAnswerServiceError(
+                code="empty_answer_text",
+                message="Grounded answer generation returned an empty answer.",
+                details={},
+            )
+        citation_block_ids = [
+            str(item).strip()
+            for item in (parsed.get("citation_block_ids") or [])
+            if str(item).strip()
+        ]
+        confidence = str(parsed.get("confidence") or "").strip().lower()
+        if confidence not in {"high", "partial", "insufficient"}:
+            confidence = "partial" if citation_block_ids else "insufficient"
+
+        return {
+            "payload": {
+                "answer_text": answer_text,
+                "citation_block_ids": citation_block_ids,
+                "confidence": confidence,
+            },
+            "provider_model_name": model_name if provider_name == "gemini" else (
+                str(raw_response.get("modelVersion") or raw_response.get("model") or self.vertex_default_model).strip()
+                or self.vertex_default_model
+            ),
+            "response_headers": response_headers,
+            "token_count": resolve_usage_token_count(raw_response, candidate_metadata=candidate_metadata) if provider_name == "gemini" else None,
+        }
+
     def _select_prompt_profile(
         self,
         *,
@@ -845,6 +843,8 @@ class TextAnswerService:
             return PROMPT_PROFILES["summary"]
         if any(marker in query_text for marker in ("compare", "difference", "different", "versus", "vs")):
             return PROMPT_PROFILES["comparison"]
+        if any(marker in query_text for marker in ("list", "applications", "uses", "explained in this paper", "discussed in this paper")):
+            return PROMPT_PROFILES["detailed"]
         if any(marker in query_text for marker in ("why ", "why does", "why is", "how does", "how did", "cause", "reason")):
             return PROMPT_PROFILES["causal"]
         if any(marker in haystack for marker in ("simpler", "simplify", "easier to understand", "plain english", "layman")):

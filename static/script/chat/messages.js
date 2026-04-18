@@ -51,6 +51,9 @@
         article.dataset.promptId = promptId;
         article.dataset.messageId = messagePayload.message_id || "";
         article.dataset.messageRole = "user";
+        article.dataset.familyId = messagePayload.family_id || "";
+        article.dataset.versionIndex = String(messagePayload.version_index || 1);
+        article.dataset.versionCount = String(messagePayload.version_count || 1);
 
         const wrapper = document.createElement("div");
         wrapper.className = "relative group max-w-xl pb-7";
@@ -65,6 +68,9 @@
 
         bubble.appendChild(content);
         wrapper.appendChild(bubble);
+        if (Number(messagePayload.version_count || 1) > 1) {
+            wrapper.appendChild(ns.createVersionControls(messagePayload, { absolute: true }));
+        }
         wrapper.appendChild(ns.createUserActionRow());
         article.appendChild(wrapper);
         return article;
@@ -91,11 +97,13 @@
         });
         copyButton.dataset.copyMessage = "true";
         actions.appendChild(copyButton);
-        actions.appendChild(ns.createIconButton({
+        const editButton = ns.createIconButton({
             title: "Edit",
             iconClass: "fa-solid fa-pen",
             extraClass: "hover:bg-brand-50 hover:text-brand-600",
-        }));
+        });
+        editButton.dataset.editMessage = "true";
+        actions.appendChild(editButton);
         return actions;
     };
 
@@ -109,27 +117,52 @@
         });
         copyButton.dataset.copyMessage = "true";
         actions.appendChild(copyButton);
-        actions.appendChild(ns.createIconButton({
-            title: "Helpful",
-            iconClass: "fa-regular fa-thumbs-up",
-            extraClass: "hover:bg-green-50 hover:text-green-600",
-        }));
-        actions.appendChild(ns.createIconButton({
-            title: "Not helpful",
-            iconClass: "fa-regular fa-thumbs-down",
-            extraClass: "hover:bg-red-50 hover:text-red-600",
-        }));
-        actions.appendChild(ns.createIconButton({
+        const regenerateButton = ns.createIconButton({
             title: "Regenerate",
             iconClass: "fa-solid fa-rotate-right",
             extraClass: "hover:bg-gray-100 hover:text-gray-600",
-        }));
+        });
+        regenerateButton.dataset.regenerateMessage = "true";
+        actions.appendChild(regenerateButton);
         actions.appendChild(ns.createIconButton({
             title: "Create study aid",
             iconClass: "fa-solid fa-lightbulb",
             extraClass: "hover:bg-amber-50 hover:text-amber-600",
         }));
         return actions;
+    };
+
+    ns.createVersionControls = (messagePayload, options = {}) => {
+        const current = Math.max(1, Number(messagePayload?.version_index || 1));
+        const total = Math.max(1, Number(messagePayload?.version_count || 1));
+        if (total <= 1 || !messagePayload?.family_id) {
+            return null;
+        }
+
+        const wrap = document.createElement("div");
+        wrap.className = options.absolute
+            ? "absolute bottom-0 left-1 flex items-center gap-1 rounded-full bg-white/95 px-2 py-1 text-[11px] font-semibold text-slate-500 shadow-sm"
+            : "mt-2 flex items-center gap-1 text-[11px] font-semibold text-slate-500";
+
+        const addNavButton = (direction, targetVersion, disabled) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.dataset.messageVersionNav = direction;
+            button.dataset.familyId = messagePayload.family_id || "";
+            button.dataset.role = messagePayload.role || "";
+            button.dataset.versionNumber = String(targetVersion);
+            button.title = direction === "prev" ? "Previous version" : "Next version";
+            button.className = `flex h-5 min-w-[10px] items-center justify-center rounded-sm px-0.5 transition-colors hover:bg-slate-100 ${disabled ? "pointer-events-none opacity-40" : ""}`.trim();
+            button.textContent = direction === "prev" ? "<" : ">";
+            wrap.appendChild(button);
+        };
+
+        addNavButton("prev", current - 1, current <= 1);
+        const label = document.createElement("span");
+        label.textContent = `${current}/${total}`;
+        wrap.appendChild(label);
+        addNavButton("next", current + 1, current >= total);
+        return wrap;
     };
 
     ns.createMetricCard = (labelText, valueText) => {
@@ -208,21 +241,20 @@
         article.dataset.messageRole = "assistant-loading";
 
         const container = document.createElement("div");
-        container.className = "w-full max-w-4xl";
+        container.className = "w-full max-w-4xl px-1 py-1";
 
-        const text = document.createElement("div");
-        text.className = "px-1 py-0.5 text-[14px] leading-6 text-gray-700";
-        text.textContent = "Synthesizing a grounded answer from the selected documents...";
-        container.appendChild(text);
+        const ellipsis = document.createElement("div");
+        ellipsis.className = "chat-loading-ellipsis";
+        ellipsis.setAttribute("aria-label", "Generating response");
+        ellipsis.setAttribute("role", "status");
 
-        if (documentLabels.length) {
-            const chipsWrap = document.createElement("div");
-            chipsWrap.className = "mt-3 flex flex-wrap gap-2";
-            documentLabels.forEach((label) => {
-                chipsWrap.appendChild(ns.createLoadingDocumentChip(label));
-            });
-            container.appendChild(chipsWrap);
+        for (let index = 0; index < 3; index += 1) {
+            const dot = document.createElement("span");
+            dot.className = "chat-loading-ellipsis-dot";
+            ellipsis.appendChild(dot);
         }
+
+        container.appendChild(ellipsis);
 
         article.appendChild(container);
         return article;
@@ -304,6 +336,9 @@
         article.className = "flex justify-center";
         article.dataset.messageId = messagePayload.message_id || "";
         article.dataset.messageRole = "assistant";
+        article.dataset.familyId = messagePayload.family_id || "";
+        article.dataset.versionIndex = String(messagePayload.version_index || 1);
+        article.dataset.versionCount = String(messagePayload.version_count || 1);
 
         const retrievalPayload = messagePayload.retrieval_payload || {};
         const filterSummary = retrievalPayload.filter_summary || {};
@@ -348,6 +383,11 @@
             confidenceChip.textContent = `Confidence ${confidence}`;
             confidenceWrap.appendChild(confidenceChip);
             container.appendChild(confidenceWrap);
+        }
+
+        const versionControls = ns.createVersionControls(messagePayload);
+        if (versionControls) {
+            container.appendChild(versionControls);
         }
 
         const diagnostics = document.createElement("div");
@@ -420,6 +460,9 @@
         article.className = "flex justify-center";
         article.dataset.messageId = messagePayload?.message_id || "";
         article.dataset.messageRole = "assistant";
+        article.dataset.familyId = messagePayload?.family_id || "";
+        article.dataset.versionIndex = String(messagePayload?.version_index || 1);
+        article.dataset.versionCount = String(messagePayload?.version_count || 1);
 
         const container = document.createElement("div");
         container.className = "w-full max-w-4xl";
@@ -430,6 +473,10 @@
         content.textContent = messagePayload?.message_text || "Retrieval completed.";
 
         container.appendChild(content);
+        const versionControls = ns.createVersionControls(messagePayload);
+        if (versionControls) {
+            container.appendChild(versionControls);
+        }
         container.appendChild(ns.createAssistantActionRow());
         article.appendChild(container);
         return article;
@@ -450,6 +497,111 @@
         });
         ns.initializePromptRail?.();
         ns.scrollMessagesToBottom();
+    };
+
+    ns.renderConversationMessages = (messages) => {
+        if (!chatMessageList) return;
+        chatMessageList.innerHTML = "";
+        state.nextPromptIndex = 0;
+
+        (Array.isArray(messages) ? messages : []).forEach((messagePayload) => {
+            const role = String(messagePayload?.role || "").trim().toLowerCase();
+            let node = null;
+            if (role === "user") {
+                node = ns.createUserMessageNode(messagePayload);
+            } else if (role === "assistant") {
+                try {
+                    node = ns.createRetrievalInspectionNode(messagePayload);
+                } catch (error) {
+                    console.error("Failed to render assistant message during rerender:", error);
+                    node = ns.createAssistantFallbackNode(messagePayload);
+                }
+            }
+            if (node) {
+                chatMessageList.appendChild(node);
+            }
+        });
+
+        ns.bootstrapPromptIndex?.();
+        ns.initializePromptRail?.();
+        ns.scrollMessagesToBottom();
+    };
+
+    ns.removeMessageTailFrom = (messageId) => {
+        if (!chatMessageList || !messageId) return;
+        let shouldRemove = false;
+        Array.from(chatMessageList.children).forEach((node) => {
+            if (!(node instanceof HTMLElement)) return;
+            if (node.dataset.messageId === messageId) {
+                shouldRemove = true;
+            }
+            if (shouldRemove) {
+                node.remove();
+            }
+        });
+        ns.bootstrapPromptIndex?.();
+        ns.initializePromptRail?.();
+        ns.updateScrollToBottomButton?.();
+    };
+
+    ns.beginMessageEdit = (messageId) => {
+        if (!promptInput || !messageId) return;
+        const messageNode = chatMessageList?.querySelector?.(`[data-message-id="${CSS.escape(messageId)}"][data-message-role="user"]`);
+        const contentNode = messageNode?.querySelector?.("[data-copy-content='message']");
+        const messageText = String(contentNode?.textContent || "").trim();
+        if (!messageText) {
+            ns.notify("warning", "Unable to load that message for editing.");
+            return;
+        }
+        state.pendingReplay = {
+            mode: "edit",
+            targetMessageId: messageId,
+        };
+        promptInput.value = messageText;
+        promptInput.focus();
+        promptInput.setSelectionRange(promptInput.value.length, promptInput.value.length);
+        ns.setChatSendStatus("Editing an earlier prompt. Send to create a new version from this turn.");
+    };
+
+    ns.regenerateAssistantMessage = async (messageId) => {
+        const conversationId = ns.getCurrentConversationId();
+        if (!conversationId || !messageId) return;
+        if (state.isSendingMessage) return;
+
+        const assistantLoadingNode = ns.createAssistantLoadingNode(ns.getSelectedSourceDocumentLabels());
+        ns.appendMessageNodes([assistantLoadingNode]);
+        ns.setMessageSendingState(true);
+        ns.setChatSendStatus("");
+
+        try {
+            const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    regenerate_message_id: messageId,
+                    include_filtered: false,
+                }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.error || `Request failed with HTTP ${response.status}`);
+            }
+
+            assistantLoadingNode.remove();
+            if (Array.isArray(payload.conversation_messages)) {
+                ns.renderConversationMessages(payload.conversation_messages);
+            }
+            ns.setChatSendStatus("");
+        } catch (error) {
+            assistantLoadingNode.remove();
+            ns.setChatSendStatus(error.message || "Unable to regenerate that reply right now.", true);
+            ns.notify("error", error.message || "Unable to regenerate that reply right now.");
+        } finally {
+            ns.setMessageSendingState(false);
+            promptInput?.focus();
+        }
     };
 
     ns.submitChatPrompt = async () => {
@@ -476,6 +628,9 @@
         ns.removeChatEmptyState();
         ns.setMessageSendingState(true);
 
+        const pendingReplay = state.pendingReplay;
+        const isEditingReplay = pendingReplay?.mode === "edit" && pendingReplay?.targetMessageId;
+
         const optimisticUserNode = ns.createUserMessageNode({ message_text: query });
         const assistantLoadingNode = ns.createAssistantLoadingNode(ns.getSelectedSourceDocumentLabels());
         ns.appendMessageNodes([optimisticUserNode, assistantLoadingNode]);
@@ -493,6 +648,7 @@
                     query,
                     document_ids: selectedDocumentIds,
                     include_filtered: false,
+                    ...(isEditingReplay ? { edit_message_id: pendingReplay.targetMessageId } : {}),
                 }),
             });
             const payload = await response.json().catch(() => ({}));
@@ -500,10 +656,19 @@
                 throw new Error(payload.error || `Request failed with HTTP ${response.status}`);
             }
 
-            if (payload.messages?.user) {
-                optimisticUserNode.dataset.messageId = payload.messages.user.message_id || "";
+            if (isEditingReplay) {
+                assistantLoadingNode.remove();
+                optimisticUserNode.remove();
             }
-            if (payload.messages?.assistant) {
+            if (isEditingReplay && Array.isArray(payload.conversation_messages)) {
+                ns.renderConversationMessages(payload.conversation_messages);
+            } else if (payload.messages?.assistant) {
+                if (payload.messages?.user) {
+                    optimisticUserNode.dataset.messageId = payload.messages.user.message_id || "";
+                    optimisticUserNode.dataset.familyId = payload.messages.user.family_id || "";
+                    optimisticUserNode.dataset.versionIndex = String(payload.messages.user.version_index || 1);
+                    optimisticUserNode.dataset.versionCount = String(payload.messages.user.version_count || 1);
+                }
                 let assistantNode = null;
                 try {
                     assistantNode = ns.createRetrievalInspectionNode(payload.messages.assistant);
@@ -516,6 +681,7 @@
                     ns.appendMessageNodes([assistantNode]);
                 }
             }
+            state.pendingReplay = null;
             ns.setChatSendStatus("");
         } catch (error) {
             optimisticUserNode.remove();
@@ -565,6 +731,67 @@
                 promptInput.value = button.textContent?.trim() || "";
                 promptInput.focus();
             });
+        });
+
+        chatMessageList.addEventListener("click", (event) => {
+            const editButton = event.target?.closest?.("[data-edit-message='true']");
+            if (editButton) {
+                const messageNode = editButton.closest("[data-message-id][data-message-role='user']");
+                const messageId = String(messageNode?.dataset.messageId || "").trim();
+                if (messageId) {
+                    ns.beginMessageEdit(messageId);
+                }
+                return;
+            }
+
+            const regenerateButton = event.target?.closest?.("[data-regenerate-message='true']");
+            if (regenerateButton) {
+                const messageNode = regenerateButton.closest("[data-message-id][data-message-role='assistant']");
+                const messageId = String(messageNode?.dataset.messageId || "").trim();
+                if (messageId) {
+                    ns.regenerateAssistantMessage(messageId);
+                }
+                return;
+            }
+
+            const versionButton = event.target?.closest?.("[data-message-version-nav]");
+            if (versionButton) {
+                const familyId = String(versionButton.dataset.familyId || "").trim();
+                const role = String(versionButton.dataset.role || "").trim().toLowerCase();
+                const versionNumber = Number(versionButton.dataset.versionNumber || 0);
+                const conversationId = ns.getCurrentConversationId();
+                if (!familyId || !role || !versionNumber || !conversationId || state.isSendingMessage) {
+                    return;
+                }
+
+                ns.setMessageSendingState(true);
+                fetch(`/api/conversations/${encodeURIComponent(conversationId)}/message-versions/select`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        family_id: familyId,
+                        role,
+                        version_number: versionNumber,
+                    }),
+                })
+                    .then((response) => response.json().catch(() => ({})).then((payload) => ({ response, payload })))
+                    .then(({ response, payload }) => {
+                        if (!response.ok) {
+                            throw new Error(payload.error || `Request failed with HTTP ${response.status}`);
+                        }
+                        if (Array.isArray(payload.conversation_messages)) {
+                            ns.renderConversationMessages(payload.conversation_messages);
+                        }
+                    })
+                    .catch((error) => {
+                        ns.notify("error", error.message || "Unable to switch message version right now.");
+                    })
+                    .finally(() => {
+                        ns.setMessageSendingState(false);
+                    });
+            }
         });
 
         ns.updateScrollToBottomButton?.();
