@@ -340,6 +340,14 @@ class RetrievalService:
                 scoped_document_ids=scoped_document_ids,
             )["source_unit_limit"],
         )
+        # Semantic reranking pass - mirrors the Qdrant backend behaviour
+        reranker_summary: dict[str, Any] = {}
+        try:
+            fused_rows, reranker_summary = self._rerank_candidates(
+                query=query, rows=fused_rows, parsed_k=parsed_k
+            )
+        except RerankerServiceError:
+            reranker_summary = {"reranker_applied": False, "reranker_fallback": True}
         return self._build_payload(
             query=query,
             parsed_k=parsed_k,
@@ -357,6 +365,7 @@ class RetrievalService:
                     requested_k=parsed_k,
                     scoped_document_ids=scoped_document_ids,
                 )["source_unit_limit"],
+                **reranker_summary,
             },
         )
 
@@ -1019,29 +1028,45 @@ class RetrievalService:
         if not query_text:
             return "narrow"
 
-        broad_markers = (
-            "list",
-            "explain",
-            "applications",
-            "concepts",
-            "main points",
-            "key points",
-            "all",
-            "overview",
-            "summarize",
-            "summary",
-            "compare",
-            "advantages",
-            "disadvantages",
-            "challenges",
-            "future directions",
-        )
-        if any(marker in query_text for marker in broad_markers):
-            return "broad"
+        # Multiple questions always means broad
         if query_text.count("?") > 1:
             return "broad"
-        if len([part for part in query_text.split() if part]) >= 12:
+
+        # Vague follow-ups: weak embeddings need more chunks to compensate
+        followup_markers = (
+            "tell me more",
+            "elaborate",
+            "more detail",
+            "give an example",
+            "can you explain",
+            "what do you mean",
+            "go on",
+            "continue",
+        )
+        if any(query_text == marker or query_text.startswith(marker) for marker in followup_markers):
             return "broad"
+
+        # Intent phrases that require enumeration or synthesis across multiple chunks
+        broad_intent_phrases = (
+            "list all", "list the", "list every",
+            "main points", "key points", "key concepts",
+            "overview of", "summarize", "summary of",
+            "compare", "contrast",
+            "advantages and disadvantages", "pros and cons",
+            "challenges and", "future directions",
+            "explain the concept", "explain how", "explain why",
+            "applications of", "uses of",
+            "what are the", "what were the",
+            "describe all", "describe the main",
+        )
+        if any(phrase in query_text for phrase in broad_intent_phrases):
+            return "broad"
+
+        # Long queries are likely multi-part or complex
+        word_count = len([word for word in query_text.split() if word])
+        if word_count >= 15:
+            return "broad"
+
         return "narrow"
 
     @staticmethod
@@ -1105,7 +1130,11 @@ class RetrievalService:
         normalized = str(query or "").strip()
         if not self.query_normalization_enabled:
             return normalized
-        return " ".join(normalized.split())
+        normalized = " ".join(normalized.split())
+        # Strip trailing punctuation that adds no semantic value to the embedding
+        if normalized.endswith("?") or normalized.endswith("."):
+            normalized = normalized[:-1].strip()
+        return normalized
 
     @staticmethod
     def _vector_literal(vector: list[float]) -> str:

@@ -420,12 +420,16 @@ class ChatAnswerService:
             return build_no_evidence_payload(retrieval_payload=retrieval_payload)
 
         try:
-            return self.text_answer_service.generate_grounded_answer(
+            answer_payload = self.text_answer_service.generate_grounded_answer(
                 query=query,
                 retrieval_payload=retrieval_payload,
                 selected_document_ids=selected_document_ids,
                 conversation_context=conversation_context,
                 user_prompt_override=qna_prompt_override,
+            )
+            return self._apply_grounding_guardrails(
+                retrieval_payload=retrieval_payload,
+                answer_payload=answer_payload,
             )
         except TextAnswerServiceError as exc:
             raise ChatAnswerServiceError(
@@ -434,6 +438,57 @@ class ChatAnswerService:
                 status_code=exc.status_code,
                 details=exc.to_dict(),
             ) from exc
+
+    @staticmethod
+    def _normalize_supported_citation_block_ids(
+        *,
+        retrieval_payload: dict[str, Any],
+        answer_payload: dict[str, Any],
+    ) -> list[str]:
+        results = retrieval_payload.get("results") if isinstance(retrieval_payload, dict) else []
+        results = results if isinstance(results, list) else []
+        supported_block_ids = {
+            str(result.get("block_id") or "").strip()
+            for result in results
+            if str(result.get("block_id") or "").strip()
+        }
+
+        normalized_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for item in (answer_payload.get("citation_block_ids") or []):
+            block_id = str(item or "").strip()
+            if not block_id or block_id in seen_ids or block_id not in supported_block_ids:
+                continue
+            seen_ids.add(block_id)
+            normalized_ids.append(block_id)
+        return normalized_ids
+
+    def _apply_grounding_guardrails(
+        self,
+        *,
+        retrieval_payload: dict[str, Any],
+        answer_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_payload = dict(answer_payload or {})
+        supported_citation_block_ids = self._normalize_supported_citation_block_ids(
+            retrieval_payload=retrieval_payload,
+            answer_payload=normalized_payload,
+        )
+        normalized_payload["citation_block_ids"] = supported_citation_block_ids
+
+        confidence = str(normalized_payload.get("confidence") or "").strip().lower()
+        if confidence not in {"high", "partial", "insufficient"}:
+            confidence = "partial" if supported_citation_block_ids else "insufficient"
+
+        if not supported_citation_block_ids:
+            fallback_payload = build_no_evidence_payload(retrieval_payload=retrieval_payload)
+            fallback_payload["model_provider"] = normalized_payload.get("model_provider") or ""
+            fallback_payload["model_name"] = normalized_payload.get("model_name") or ""
+            fallback_payload["response_headers"] = normalized_payload.get("response_headers") or {}
+            return fallback_payload
+
+        normalized_payload["confidence"] = confidence
+        return normalized_payload
 
     @staticmethod
     def _build_citations(
@@ -449,35 +504,50 @@ class ChatAnswerService:
             if str(result.get("block_id") or "").strip()
         }
 
-        citation_block_ids = [
-            str(item).strip()
-            for item in (answer_payload.get("citation_block_ids") or [])
-            if str(item).strip()
-        ]
-
-        if not citation_block_ids and results:
-            citation_block_ids = [
-                str(result.get("block_id") or "").strip()
-                for result in results[:2]
-                if str(result.get("block_id") or "").strip()
-            ]
+        citation_block_ids = ChatAnswerService._normalize_supported_citation_block_ids(
+            retrieval_payload=retrieval_payload,
+            answer_payload=answer_payload,
+        )
 
         citations: list[dict[str, Any]] = []
-        for block_id in citation_block_ids:
+        for index, block_id in enumerate(citation_block_ids, start=1):
             result = result_map.get(block_id)
             if not result:
                 continue
             source_metadata = result.get("source_metadata") if isinstance(result.get("source_metadata"), dict) else {}
-            page_value = source_metadata.get("page") or source_metadata.get("page_number") or source_metadata.get("page_index")
+
+            page_value = (
+                source_metadata.get("page")
+                or source_metadata.get("page_number")
+                or source_metadata.get("page_index")
+            )
             page_label = f"p. {page_value}" if page_value not in (None, "") else ""
+
+            section_path: list[str] = [
+                str(item).strip()
+                for item in (source_metadata.get("section_path") or result.get("section_path") or [])
+                if str(item).strip()
+            ]
+
+            anchor: dict[str, Any] = {}
+            if page_value not in (None, ""):
+                anchor["page"] = page_value
+            if section_path:
+                anchor["section_path"] = section_path
+            char_offset = source_metadata.get("char_offset") or source_metadata.get("start_char")
+            if char_offset is not None:
+                anchor["char_offset"] = char_offset
+
             citations.append(
                 {
+                    "index": index,
                     "block_id": block_id,
                     "document_id": str(result.get("document_id") or ""),
                     "document_name": str(result.get("document_name") or result.get("document_id") or "Source"),
                     "snippet": str(result.get("snippet") or ""),
                     "page_label": page_label,
                     "score": float(result.get("score") or 0.0),
+                    "anchor": anchor,
                 },
             )
         return citations
@@ -494,6 +564,16 @@ class ChatAnswerService:
         )
         enriched_payload = dict(retrieval_payload or {})
         enriched_payload["citations"] = citations
+        enriched_payload["citation_index_map"] = {
+            str(citation["index"]): {
+                "block_id": citation["block_id"],
+                "document_id": citation["document_id"],
+                "document_name": citation["document_name"],
+                "page_label": citation["page_label"],
+                "anchor": citation["anchor"],
+            }
+            for citation in citations
+        }
         enriched_payload["grounded_answer"] = {
             "prompt_version": answer_payload.get("prompt_version") or PROMPT_VERSION,
             "prompt_profile": answer_payload.get("prompt_profile") or "default",

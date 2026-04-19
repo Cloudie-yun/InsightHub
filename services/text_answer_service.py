@@ -62,7 +62,7 @@ Answer only from the evidence chunks provided.
 Answer style profile: {prompt_profile_label}
 Answer goal: {prompt_profile_goal}
 Preferred response shape: {prompt_profile_shape}
-Typical target length: around {prompt_profile_max_sentences} sentences when that fits the query, but answer more fully when the query is multi-part and the evidence supports it.
+Minimum response length: aim for at least {prompt_profile_max_sentences} sentences, but always answer fully when the query is multi-part or the evidence supports additional detail. Never truncate a complete answer to hit a length target.
 
 {conversation_context_block}User query: {query}
 
@@ -81,6 +81,7 @@ Rules:
 9. If evidence is insufficient for any part, say which part is unsupported.
 10. Prefer completeness over brevity when evidence is sufficient.
 11. Follow the answer style profile unless it would force unsupported detail. In that case, stay grounded and reduce the scope of the answer instead of guessing.
+12. When you use a fact from a chunk, embed its citation number inline in answer_text using the format [1], [2], etc., matching the number at the start of the evidence chunk. Place the marker immediately after the sentence that uses that chunk. Example: "The process involves three stages [1]. The final stage requires manual review [2]."
 
 Return JSON only:
 {{
@@ -613,11 +614,17 @@ class TextAnswerService:
             source_metadata = result.get("source_metadata") if isinstance(result.get("source_metadata"), dict) else {}
             page_value = source_metadata.get("page") or source_metadata.get("page_number") or source_metadata.get("page_index")
             source_name = str(result.get("document_name") or result.get("document_id") or "Unknown source").strip()
-            chunk_text = str(result.get("snippet") or "").strip()
+            # Prefer full retrieval_text so the LLM sees what the reranker scored on.
+            # Fall back to snippet if retrieval_text is absent.
+            chunk_text = str(result.get("retrieval_text") or result.get("snippet") or "").strip()
+            # Guard against extremely long chunks that would overflow the context window.
+            if len(chunk_text) > 2000:
+                chunk_text = chunk_text[:2000]
             if page_value not in (None, ""):
                 source_name = f"{source_name}, {page_value}"
+            citation_index = len(evidence_lines) + 1
             evidence_lines.append(
-                f"[block_id: {result.get('block_id') or ''} | source: {source_name}] {chunk_text}"
+                f"[{citation_index}][block_id: {result.get('block_id') or ''} | source: {source_name}] {chunk_text}"
             )
 
         prompt_profile = self._select_prompt_profile(

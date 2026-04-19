@@ -186,6 +186,14 @@
         const article = trigger?.closest?.("[data-message-role]");
         if (!article) return "";
         const content = article.querySelector("[data-copy-content='message']");
+        const rawValue = String(content?.dataset.copyRaw || "").trim();
+        if (rawValue) {
+            try {
+                return String(JSON.parse(rawValue) || "").trim();
+            } catch (error) {
+                return rawValue;
+            }
+        }
         return String(content?.textContent || "").trim();
     };
 

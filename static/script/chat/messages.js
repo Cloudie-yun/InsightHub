@@ -189,26 +189,170 @@
         return badge;
     };
 
-    ns.createCitationChip = (citation) => {
-        const chip = document.createElement("span");
-        chip.className = "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm";
+    ns.parseJsonDataAttribute = (value, fallback) => {
+        const normalized = String(value || "").trim();
+        if (!normalized) return fallback;
+        try {
+            return JSON.parse(normalized);
+        } catch (error) {
+            return fallback;
+        }
+    };
 
-        const name = document.createElement("span");
-        name.className = "text-brand-700";
-        name.textContent = citation?.document_name || citation?.document_id || "Source";
-        chip.appendChild(name);
+    ns.buildCitationTargetUrl = (citation) => {
+        const documentId = String(citation?.document_id || "").trim();
+        if (!documentId) return "";
 
-        if (citation?.page_label) {
-            const page = document.createElement("span");
-            page.className = "text-slate-400";
-            page.textContent = citation.page_label;
-            chip.appendChild(page);
+        const params = new URLSearchParams();
+        const conversationId = String(ns.getCurrentConversationId?.() || window.__CURRENT_CONVERSATION_ID__ || "").trim();
+        const anchor = citation?.anchor && typeof citation.anchor === "object" ? citation.anchor : {};
+        if (conversationId) params.set("conversation_id", conversationId);
+        if (anchor.page !== undefined && anchor.page !== null && String(anchor.page).trim()) {
+            params.set("page", String(anchor.page).trim());
+        }
+        if (anchor.char_offset !== undefined && anchor.char_offset !== null && String(anchor.char_offset).trim()) {
+            params.set("char_offset", String(anchor.char_offset).trim());
+        }
+        if (Array.isArray(anchor.section_path) && anchor.section_path.length) {
+            params.set(
+                "section_path",
+                anchor.section_path.map((item) => String(item || "").trim()).filter(Boolean).join(" > "),
+            );
         }
 
+        const query = params.toString();
+        return `/documents/${encodeURIComponent(documentId)}/parser-results${query ? `?${query}` : ""}`;
+    };
+
+    ns.openCitationAnchor = (citation) => {
+        const targetUrl = ns.buildCitationTargetUrl(citation);
+        if (!targetUrl) {
+            ns.notify?.("warning", "This citation is missing a document link.");
+            return;
+        }
+        window.location.href = targetUrl;
+    };
+
+    ns.createCitationTrigger = (citation, label, extraClass = "") => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.openCitation = "true";
+        button.dataset.citationPayload = JSON.stringify(citation || {});
+        button.className = `inline-flex items-center rounded-md border border-brand-200 bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700 align-middle transition hover:border-brand-300 hover:bg-brand-100 ${extraClass}`.trim();
+        button.textContent = label;
         if (citation?.snippet) {
-            chip.title = citation.snippet;
+            button.title = citation.snippet;
         }
-        return chip;
+        return button;
+    };
+
+    ns.createAnswerTextNode = (answerText, citationIndexMap = {}) => {
+        const content = document.createElement("div");
+        content.className = "whitespace-pre-wrap";
+        content.dataset.copyContent = "message";
+        content.dataset.copyRaw = JSON.stringify(String(answerText || ""));
+
+        const normalizedAnswer = String(answerText || "");
+        const normalizedMap = citationIndexMap && typeof citationIndexMap === "object" ? citationIndexMap : {};
+        const pattern = /\[(\d+)\]/g;
+        let cursor = 0;
+        let match = pattern.exec(normalizedAnswer);
+
+        while (match) {
+            if (match.index > cursor) {
+                content.appendChild(document.createTextNode(normalizedAnswer.slice(cursor, match.index)));
+            }
+
+            const citationIndex = String(match[1] || "").trim();
+            const citation = normalizedMap[citationIndex];
+            if (citation && typeof citation === "object") {
+                const label = citation.page_label ? `[${citation.page_label}]` : `[${citationIndex}]`;
+                content.appendChild(ns.createCitationTrigger(citation, label, "mx-0.5"));
+            } else {
+                content.appendChild(document.createTextNode(match[0]));
+            }
+
+            cursor = pattern.lastIndex;
+            match = pattern.exec(normalizedAnswer);
+        }
+
+        if (cursor < normalizedAnswer.length) {
+            content.appendChild(document.createTextNode(normalizedAnswer.slice(cursor)));
+        }
+
+        return content;
+    };
+
+    ns.createCitationList = (citations) => {
+        const normalizedCitations = Array.isArray(citations) ? citations : [];
+        if (!normalizedCitations.length) return null;
+
+        const details = document.createElement("details");
+        details.className = "overflow-hidden rounded-2xl border border-slate-200/80 bg-white/85 shadow-sm";
+
+        const summary = document.createElement("summary");
+        summary.className = "flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-slate-700";
+        summary.innerHTML = `<span>Source citations</span><span class="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">${normalizedCitations.length} items</span>`;
+        details.appendChild(summary);
+
+        const body = document.createElement("div");
+        body.className = "border-t border-slate-200/80 px-4 py-3";
+
+        normalizedCitations.forEach((citation) => {
+            const row = document.createElement("div");
+            row.className = "flex flex-col gap-3 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between";
+
+            const copy = document.createElement("div");
+            copy.className = "min-w-0 flex-1";
+
+            const title = document.createElement("p");
+            title.className = "text-sm font-semibold text-slate-700";
+            title.textContent = `[${citation?.index || "?"}] ${citation?.document_name || citation?.document_id || "Source"}${citation?.page_label ? `, ${citation.page_label}` : ""}`;
+            copy.appendChild(title);
+
+            if (citation?.snippet) {
+                const snippet = document.createElement("p");
+                snippet.className = "mt-1 text-sm leading-6 text-slate-500";
+                snippet.textContent = `"...${String(citation.snippet).trim()}..."`;
+                copy.appendChild(snippet);
+            }
+
+            const openButton = ns.createCitationTrigger(
+                citation,
+                "Open",
+                "w-fit self-start px-3 py-1.5 text-xs",
+            );
+            row.appendChild(copy);
+            row.appendChild(openButton);
+            body.appendChild(row);
+        });
+
+        details.appendChild(body);
+        return details;
+    };
+
+    ns.hydrateInitialAssistantAnswers = () => {
+        document.querySelectorAll("[data-answer-text='true']").forEach((node) => {
+            if (!(node instanceof HTMLElement) || node.dataset.answerHydrated === "true") return;
+            const rawAnswer = ns.parseJsonDataAttribute(node.dataset.rawAnswer, node.textContent || "");
+            const citationIndexMap = ns.parseJsonDataAttribute(node.dataset.citationIndexMap, {});
+            const renderedNode = ns.createAnswerTextNode(rawAnswer, citationIndexMap);
+            renderedNode.dataset.answerText = "true";
+            renderedNode.dataset.rawAnswer = JSON.stringify(String(rawAnswer || ""));
+            renderedNode.dataset.citationIndexMap = JSON.stringify(citationIndexMap || {});
+            renderedNode.dataset.answerHydrated = "true";
+            node.replaceWith(renderedNode);
+        });
+
+        document.querySelectorAll("[data-citation-list-host]").forEach((node) => {
+            if (!(node instanceof HTMLElement) || node.dataset.citationListHydrated === "true") return;
+            const citations = ns.parseJsonDataAttribute(node.dataset.citations, []);
+            const list = ns.createCitationList(citations);
+            if (list) {
+                node.replaceChildren(list);
+            }
+            node.dataset.citationListHydrated = "true";
+        });
     };
 
     ns.createLoadingDocumentChip = (documentLabel) => {
@@ -346,6 +490,9 @@
         const citations = Array.isArray(messagePayload.citations)
             ? messagePayload.citations
             : (Array.isArray(retrievalPayload.citations) ? retrievalPayload.citations : []);
+        const citationIndexMap = retrievalPayload?.citation_index_map && typeof retrievalPayload.citation_index_map === "object"
+            ? retrievalPayload.citation_index_map
+            : {};
         const confidence = String(
             messagePayload.confidence
             || retrievalPayload?.grounded_answer?.confidence
@@ -358,21 +505,20 @@
         const summary = document.createElement("div");
         summary.className = "px-1 py-0.5 text-[14px] leading-6 text-gray-800";
 
-        const content = document.createElement("div");
-        content.className = "whitespace-pre-wrap";
-        content.dataset.copyContent = "message";
-        content.textContent = messagePayload.message_text || "Retrieval completed.";
+        const content = ns.createAnswerTextNode(
+            messagePayload.message_text || "Retrieval completed.",
+            citationIndexMap,
+        );
 
         summary.appendChild(content);
         container.appendChild(summary);
 
         if (citations.length) {
-            const citationsWrap = document.createElement("div");
-            citationsWrap.className = "mt-3 flex flex-wrap gap-2";
-            citations.forEach((citation) => {
-                citationsWrap.appendChild(ns.createCitationChip(citation));
-            });
-            container.appendChild(citationsWrap);
+            const citationsList = ns.createCitationList(citations);
+            if (citationsList) {
+                citationsList.classList.add("mt-3");
+                container.appendChild(citationsList);
+            }
         }
 
         if (confidence) {
@@ -777,6 +923,7 @@
 
         ns.bootstrapPromptIndex();
         ns.updateSendButtonState?.();
+        ns.hydrateInitialAssistantAnswers?.();
         ns.scrollMessagesToBottom();
 
         chatMessages.addEventListener("scroll", () => {
@@ -855,6 +1002,13 @@
                 if (messageId) {
                     ns.regenerateAssistantMessage(messageId);
                 }
+                return;
+            }
+
+            const citationTrigger = event.target?.closest?.("[data-open-citation='true']");
+            if (citationTrigger) {
+                const citation = ns.parseJsonDataAttribute(citationTrigger.dataset.citationPayload, {});
+                ns.openCitationAnchor(citation);
                 return;
             }
 

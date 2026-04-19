@@ -364,6 +364,7 @@ let initialParserDocument = {{ parser_document|tojson }};
     let copyDiagramPromptFeedbackTimer = null;
     const copyDiagramImageFeedbackTimers = new Map();
     const conversationId = {{ request.args.get('conversation_id')|tojson }};
+    const requestedPreviewPage = Number({{ request.args.get('page')|tojson }} || 0);
     const selectedDiagramIds = new Set();
     const invalidDiagramJsonBlockIds = new Set();
     let linkedHighlightTimer = null;
@@ -837,6 +838,13 @@ let initialParserDocument = {{ parser_document|tojson }};
             previewHighlightTimer = null;
         }
     };
+    const focusPreviewPage = (pageNumber) => {
+        const normalizedPage = Number(pageNumber || 0);
+        if (!normalizedPage || !documentPreviewPages) return;
+        const pageNode = documentPreviewPages.querySelector(`[data-preview-page="${CSS.escape(String(normalizedPage))}"]`);
+        if (!(pageNode instanceof HTMLElement)) return;
+        pageNode.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+    };
     const highlightPreviewBlock = (blockId) => {
         const normalizedBlockId = String(blockId || "").trim();
         if (!normalizedBlockId) return;
@@ -1000,6 +1008,11 @@ let initialParserDocument = {{ parser_document|tojson }};
             previewState.ready = true;
             previewState.renderedPageCount = pdfDoc.numPages;
             refreshDocumentPreviewHotspots();
+            if (requestedPreviewPage > 0) {
+                window.setTimeout(() => {
+                    focusPreviewPage(requestedPreviewPage);
+                }, 60);
+            }
         } catch (_error) {
             setPreviewFallbackMessage("Interactive preview could not be loaded. Use Open Document to inspect the file directly.");
         } finally {
