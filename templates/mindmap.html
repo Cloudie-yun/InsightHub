@@ -422,7 +422,13 @@ function applyNodeWidth(nodeId, width, options={}){
   const box=document.getElementById('box-'+nodeId);
   if(box) box.style.width=`${nextWidth}px`;
   if(!options.skipTidy){
-    renderConnections();
+    if(node.parentId && nodes[node.parentId]){
+      redist(node.parentId);
+    } else if(node.children.length){
+      redist(node.id);
+    } else {
+      renderConnections();
+    }
     syncWidthInput();
   }
 }
@@ -500,7 +506,13 @@ function finishEdit(id){
   const span=document.createElement('span');
   span.className='node-text'; span.id='text-'+id; span.textContent=node.text;
   ta.replaceWith(span);
-  renderConnections();
+  if(node.parentId && nodes[node.parentId]){
+    redist(node.parentId);
+  } else if(node.children.length){
+    redist(node.id);
+  } else {
+    renderConnections();
+  }
   syncWidthInput();
 }
 
@@ -531,14 +543,12 @@ function getAllDesc(id){
   return r;
 }
 function redist(pid){
-  const p=nodes[pid];if(!p)return;
-  const n=p.children.length,rowH=56,colW=getNodeBoxWidth(p)+80;
-  p.children.forEach((cid,i)=>{
-    const c=nodes[cid];if(!c)return;
-    c.x=p.x+colW; c.y=p.y-((n-1)*rowH)/2+i*rowH;
-    if(c.el) c.el.style.transform=`translate(${c.x}px,${c.y}px)`;
-    if(c.children.length) redist(cid);
-  });
+  const rootId=getRootOf(pid);
+  const root=nodes[rootId];
+  if(!root) return;
+  const centerY=root.y + getNodeBoxHeight(root) / 2;
+  placeSubtree(rootId, root.x, centerY);
+  renderConnections();
 }
 
 // ══════════ Selection ══════════
@@ -599,7 +609,13 @@ function startNodeResize(event, nodeId){
   const onUp=()=>{
     window.removeEventListener('mousemove', onMove);
     window.removeEventListener('mouseup', onUp);
-    renderConnections();
+    if(node.parentId && nodes[node.parentId]){
+      redist(node.parentId);
+    } else if(node.children.length){
+      redist(node.id);
+    } else {
+      renderConnections();
+    }
     syncWidthInput();
   };
   window.addEventListener('mousemove', onMove);
@@ -734,7 +750,7 @@ function applyWidthToSelected(){
   if(!selectedIds.size) return;
   const width=clampNodeWidth(document.getElementById('node-width-input').value);
   selectedIds.forEach((id)=>applyNodeWidth(id, width, { skipTidy: true }));
-  renderConnections();
+  autoTidySelectedSubtree();
   syncWidthInput();
 }
 
@@ -744,7 +760,7 @@ function applyWidthToAll(){
     const node=nodes[id];
     applyNodeWidth(id, node.depth===0 ? Math.max(width, ROOT_NODE_WIDTH) : width, { skipTidy: true });
   });
-  renderConnections();
+  autoTidyMap();
   syncWidthInput();
 }
 
@@ -764,7 +780,8 @@ function autoFitSelectedWidths(){
     const width=estimateTextWidth(node.text);
     applyNodeWidth(id, node.depth===0 ? Math.max(width, ROOT_NODE_WIDTH) : width, { skipTidy: true });
   });
-  renderConnections();
+  if(selectedIds.size) autoTidySelectedSubtree();
+  else autoTidyMap();
   syncWidthInput();
 }
 
@@ -778,6 +795,14 @@ function measureSubtreeHeight(nodeId){
     return sum + measureSubtreeHeight(childId) + (index > 0 ? childGap : 0);
   }, 0);
   return Math.max(selfHeight, childrenHeight);
+}
+
+function getRootOf(nodeId){
+  let current=nodes[nodeId];
+  while(current && current.parentId && nodes[current.parentId]){
+    current=nodes[current.parentId];
+  }
+  return current ? current.id : '';
 }
 
 function placeSubtree(nodeId, x, centerY){
@@ -802,15 +827,33 @@ function placeSubtree(nodeId, x, centerY){
   });
 }
 
+function layoutAllRoots(){
+  const roots=Object.values(nodes).filter((node)=>!node.parentId);
+  if(!roots.length) return;
+  const rootGap=48;
+  const startX=120;
+  const totalHeight=roots.reduce((sum, root, index)=>{
+    return sum + measureSubtreeHeight(root.id) + (index > 0 ? rootGap : 0);
+  }, 0);
+  let currentTop=(wrap.clientHeight / 2) - (totalHeight / 2);
+  roots.forEach((root)=>{
+    const height=measureSubtreeHeight(root.id);
+    placeSubtree(root.id, startX, currentTop + height / 2);
+    currentTop += height + rootGap;
+  });
+}
+
 function autoTidyMap(){
-  const root=Object.values(nodes).find((node)=>!node.parentId);
-  if(!root) return;
-  placeSubtree(root.id, 120, wrap.clientHeight / 2);
+  layoutAllRoots();
   renderConnections();
   fitView();
 }
 
 function autoTidySelectedSubtree(){
+  if(selectedIds.size !== 1){
+    autoTidyMap();
+    return;
+  }
   const selectedId=[...selectedIds][0];
   const root=selectedId && nodes[selectedId] ? nodes[selectedId] : Object.values(nodes).find((node)=>!node.parentId);
   if(!root) return;
@@ -911,9 +954,22 @@ function loadJSON(){
 function importData(data){
   container.innerHTML='';svgEl.innerHTML='';nodes={};nodeCounter=0;selectedIds.clear();
   if(data.title)document.getElementById('map-title').textContent=data.title;
-  data.nodes.forEach(n=>{nodeCounter=Math.max(nodeCounter,parseInt(String(n.id).replace('n',''))||0);nodes[n.id]={...n,width:clampNodeWidth(n.width || (n.depth===0?ROOT_NODE_WIDTH:DEFAULT_NODE_WIDTH)),el:null};});
-  Object.values(nodes).forEach(n=>buildNodeEl(n));renderConnections();
-  const root=Object.values(nodes).find(n=>!n.parentId);if(root)selectOnly(root.id);
+  data.nodes.forEach(n=>{
+    nodeCounter=Math.max(nodeCounter,parseInt(String(n.id).replace(/[^0-9]/g,''))||0);
+    nodes[n.id]={
+      ...n,
+      x:0,
+      y:0,
+      width:clampNodeWidth(n.width || (n.depth===0?ROOT_NODE_WIDTH:DEFAULT_NODE_WIDTH)),
+      el:null
+    };
+  });
+  Object.values(nodes).forEach(n=>buildNodeEl(n));
+  layoutAllRoots();
+  renderConnections();
+  const root=Object.values(nodes).find(n=>!n.parentId);
+  if(root) selectOnly(root.id);
+  setTimeout(()=>fitView(), 80);
 }
 function resetMap(){
   if(!confirm('Start fresh?'))return;
@@ -1182,10 +1238,6 @@ function applyFullMap(parsed, topic){
     remap[n.id]=newId;
   });
 
-  // Place root at center
-  const rootData=parsed.nodes.find(n=>n.parentId===null);
-  const W=wrap.clientWidth, H=wrap.clientHeight;
-
   parsed.nodes.forEach(n=>{
     const id=remap[n.id];
     const parentId=n.parentId?remap[n.parentId]:null;
@@ -1196,11 +1248,7 @@ function applyFullMap(parsed, topic){
     buildNodeEl(node);
   });
 
-  // Position: lay out tree
-  const rootId=remap[rootData.id];
-  nodes[rootId].x=W/2-90; nodes[rootId].y=H/2-22;
-  layoutTree(rootId);
-
+  layoutAllRoots();
   const root=Object.values(nodes).find(n=>!n.parentId);
   if(root) selectOnly(root.id);
   setTimeout(()=>{renderConnections();fitView();},60);
@@ -1227,8 +1275,14 @@ function extendNode(anchorId, parsed){
     // attach sub-children
     attachSubtree(n.id, id, parsed, remap);
   });
-  redist(anchorId);
+  const rootId=getRootOf(anchorId);
+  const root=nodes[rootId];
+  if(root){
+    const centerY=root.y + getNodeBoxHeight(root) / 2;
+    placeSubtree(rootId, root.x, centerY);
+  }
   renderConnections();
+  setTimeout(()=>fitView(), 60);
 }
 
 function attachSubtree(oldParentId, newParentId, parsed, remap){
@@ -1254,19 +1308,10 @@ function getDepth(n, allNodes, cache={}){
 }
 
 function layoutTree(rootId){
-  // Simple recursive layout: BFS, place children to the right
-  const colW=230, rowH=62;
-  function place(id, x, y){
-    const node=nodes[id];
-    node.x=x; node.y=y;
-    if(node.el) node.el.style.transform=`translate(${x}px,${y}px)`;
-    const n=node.children.length;
-    if(!n) return;
-    const startY=y-((n-1)*rowH)/2;
-    node.children.forEach((cid,i)=>place(cid, x+colW, startY+i*rowH));
-  }
   const root=nodes[rootId];
-  place(rootId, root.x, root.y);
+  if(!root) return;
+  const centerY=root.y + getNodeBoxHeight(root) / 2;
+  placeSubtree(rootId, root.x, centerY);
 }
 
 // ══════════ Boot ══════════

@@ -343,6 +343,23 @@ def _extract_gemini_text_payload(raw_response: dict) -> str:
     return ""
 
 
+def _coerce_json_object_text(raw_text: str) -> str:
+    text = str(raw_text or "").strip()
+    if not text:
+        return ""
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text).strip()
+
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        text = text[first_brace:last_brace + 1].strip()
+
+    return text
+
+
 def _request_gemini_structured_output(
     *,
     prompt: str,
@@ -360,55 +377,70 @@ def _request_gemini_structured_output(
         fallback_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
     )
     model_name = model_candidates[0] if model_candidates else "gemini-2.5-flash"
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": prompt}],
-            }
-        ],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": response_schema,
-            "temperature": temperature,
-            "topP": 0.9,
-            "maxOutputTokens": max_output_tokens,
-        },
-    }
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-    request_payload = json.dumps(payload).encode("utf-8")
-    req = Request(url, data=request_payload, headers={"Content-Type": "application/json"}, method="POST")
 
-    try:
-        with urlopen(req, timeout=90) as response:
-            response_body = response.read().decode("utf-8")
-    except HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        logger.warning("Flashcard generation HTTP error status=%s body=%s", exc.code, error_body[:500])
-        error_message = f"AI generation request failed ({exc.code})."
+    def _submit_request(prompt_text: str, request_temperature: float) -> str:
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt_text}],
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": response_schema,
+                "temperature": request_temperature,
+                "topP": 0.9,
+                "maxOutputTokens": max_output_tokens,
+            },
+        }
+        request_payload = json.dumps(payload).encode("utf-8")
+        req = Request(url, data=request_payload, headers={"Content-Type": "application/json"}, method="POST")
+
         try:
-            error_payload = json.loads(error_body)
-            api_message = (
-                error_payload.get("error", {}).get("message")
-                if isinstance(error_payload.get("error"), dict)
-                else error_payload.get("message")
-            )
-            if api_message:
-                error_message = f"{error_message} {str(api_message).strip()}"
-        except json.JSONDecodeError:
-            snippet = error_body[:240].strip()
-            if snippet:
-                error_message = f"{error_message} {snippet}"
-        raise ValueError(error_message) from exc
-    except URLError as exc:
-        raise ValueError("AI generation is currently unavailable.") from exc
+            with urlopen(req, timeout=90) as response:
+                response_body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            logger.warning("Flashcard generation HTTP error status=%s body=%s", exc.code, error_body[:500])
+            error_message = f"AI generation request failed ({exc.code})."
+            try:
+                error_payload = json.loads(error_body)
+                api_message = (
+                    error_payload.get("error", {}).get("message")
+                    if isinstance(error_payload.get("error"), dict)
+                    else error_payload.get("message")
+                )
+                if api_message:
+                    error_message = f"{error_message} {str(api_message).strip()}"
+            except json.JSONDecodeError:
+                snippet = error_body[:240].strip()
+                if snippet:
+                    error_message = f"{error_message} {snippet}"
+            raise ValueError(error_message) from exc
+        except URLError as exc:
+            raise ValueError("AI generation is currently unavailable.") from exc
 
-    raw_response = json.loads(response_body)
-    response_text = _extract_gemini_text_payload(raw_response)
-    if not response_text:
-        raise ValueError("AI returned an empty response.")
+        raw_response = json.loads(response_body)
+        response_text = _extract_gemini_text_payload(raw_response)
+        if not response_text:
+            raise ValueError("AI returned an empty response.")
+        return response_text
 
-    parsed = json.loads(response_text)
+    response_text = _submit_request(prompt, temperature)
+    try:
+        parsed = json.loads(_coerce_json_object_text(response_text))
+    except json.JSONDecodeError as exc:
+        logger.warning("Structured AI response was invalid JSON. Retrying once. error=%s snippet=%s", exc, response_text[:400])
+        retry_prompt = (
+            f"{prompt}\n\n"
+            "IMPORTANT: Return exactly one valid JSON object matching the schema. "
+            "Do not include markdown fences, commentary, or unescaped quotes inside JSON strings."
+        )
+        retry_text = _submit_request(retry_prompt, 0.2)
+        parsed = json.loads(_coerce_json_object_text(retry_text))
+
     if not isinstance(parsed, dict):
         raise ValueError("AI returned an invalid JSON payload.")
     return parsed, model_name
@@ -740,6 +772,52 @@ def list_study_aids(user_id, *, aid_type: str, limit: int = 50) -> list[dict]:
             conn.close()
 
 
+def list_conversation_study_aids(user_id, conversation_id: str, *, limit: int = 20) -> list[dict]:
+    if not user_id or not conversation_id:
+        return []
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            if not _study_aids_table_ready(cur):
+                return []
+            cur.execute(
+                """
+                SELECT
+                    study_aid_id::text,
+                    aid_type,
+                    title,
+                    document_id::text,
+                    created_at,
+                    updated_at
+                FROM study_aids
+                WHERE user_id = %s
+                  AND conversation_id = %s::uuid
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT %s
+                """,
+                (user_id, conversation_id, max(1, int(limit))),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "study_aid_id": str(row[0] or ""),
+                "aid_type": str(row[1] or ""),
+                "title": str(row[2] or "").strip() or "Untitled Study Aid",
+                "document_id": str(row[3] or "") if row[3] else "",
+                "created_at": row[4].isoformat() if row[4] else None,
+                "updated_at": row[5].isoformat() if row[5] else None,
+            }
+            for row in rows
+        ]
+    except Exception:
+        logger.exception("Unable to list conversation study aids conversation_id=%s", conversation_id)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def update_study_aid(
     *,
     user_id,
@@ -793,22 +871,41 @@ def update_study_aid(
             conn.close()
 
 
+DEFAULT_FLASHCARD_GENERATION_PROMPT = """I want you to act as a professional Anki flashcard creator, able to create Anki cards based on topics I provide. Use the SuperMemo principles for creating cards. Make sure that the cards are self-contained and that the questions are clear and unambiguous. Prefer questions that have a single well-defined answer.
+
+Here are some good examples of flashcards for the topic "Linear Regression":
+Q: What is the weak exogeneity assumption?
+A: That the predictor variables can be treated as fixed values, rather than random variables.
+
+Q: What is the most common method for fitting linear regression?
+A: Ordinary least-squares.
+
+Finally, when making flashcards, make sure that they are independent of one another.
+
+I also want you to keep answers as short as possible. If mathematical formulas are useful, format them with MathJax delimiters like \\( \\) or \\[ \\]. Do not restate the question in the answer."""
+
+
 def _generate_flashcards_with_ai(
     *,
     topic: str = "",
     count: int,
     document_source: dict | None = None,
     requirements: str = "",
+    user_prompt: str = "",
 ) -> dict:
     normalized_requirements = str(requirements or "").strip()
+    normalized_user_prompt = str(user_prompt or "").strip() or DEFAULT_FLASHCARD_GENERATION_PROMPT
     if document_source:
         prompt = (
+            "Use the flashcard authoring instructions below when generating the deck.\n"
+            "Keep answers short unless extra detail is required for accuracy.\n\n"
+            f"{normalized_user_prompt}\n\n"
             "Generate a study flashcard deck using the document material below.\n"
             "Return only valid JSON that matches the provided schema.\n"
             f"Create exactly {count} cards.\n"
-            "Each card must have a concise question or term on the front and a clear, accurate explanation on the back.\n"
+            "Each card must have a concise question or term on the front and a short, clear, accurate answer on the back.\n"
             "Avoid duplicates, filler, markdown, numbering, and commentary.\n"
-            "Keep fronts short and backs informative but compact.\n"
+            "Keep fronts short and backs compact.\n"
             f"Document name: {document_source['document_name']}\n"
             f"Page range: {document_source.get('page_range') or 'all available pages'}\n"
             f"Additional requirements: {normalized_requirements or 'None'}\n\n"
@@ -816,12 +913,15 @@ def _generate_flashcards_with_ai(
         )
     else:
         prompt = (
+            "Use the flashcard authoring instructions below when generating the deck.\n"
+            "Keep answers short unless extra detail is required for accuracy.\n\n"
+            f"{normalized_user_prompt}\n\n"
             "Generate a study flashcard deck for the topic below.\n"
             "Return only valid JSON that matches the provided schema.\n"
             f"Create exactly {count} cards.\n"
-            "Each card must have a concise question or term on the front and a clear, accurate explanation on the back.\n"
+            "Each card must have a concise question or term on the front and a short, clear, accurate answer on the back.\n"
             "Avoid duplicates, filler, markdown, numbering, and commentary.\n"
-            "Keep fronts short and backs informative but compact.\n"
+            "Keep fronts short and backs compact.\n"
             f"Additional requirements: {normalized_requirements or 'None'}\n"
             f"Topic:\n{topic.strip()}"
         )
@@ -847,6 +947,7 @@ def _generate_flashcards_with_ai(
         "deck_title": deck_title,
         "cards": cards[:count],
         "model": model_name,
+        "generation_prompt": normalized_user_prompt,
     }
 
 
@@ -3164,6 +3265,7 @@ def chat():
 
     conversation_documents       = get_conversation_documents(user_id, current_conversation_id)
     conversation_messages        = get_conversation_messages(user_id, current_conversation_id)
+    conversation_study_aids      = list_conversation_study_aids(user_id, current_conversation_id) if current_conversation_id else []
 
     return render_template(
         'chat.html',
@@ -3173,6 +3275,7 @@ def chat():
         highlight_new_conversation  = highlight_new_conversation,
         conversation_documents      = conversation_documents,
         conversation_messages       = conversation_messages,
+        conversation_study_aids     = conversation_study_aids,
         demo_messages               = _demo_chat_messages() if not current_conversation_id else [],
     )
 
@@ -3223,11 +3326,14 @@ def flashcards():
     page_range = (request.args.get("page_range") or "").strip()
     autostart = request.args.get("autostart") == "1"
     saved_study_aid = get_study_aid(user_id, study_aid_id, aid_type="flashcards") if study_aid_id else None
+    saved_payload = saved_study_aid.get("payload_json") if saved_study_aid else {}
+    generation_prompt = ""
     if saved_study_aid:
         conversation_id = saved_study_aid.get("conversation_id") or conversation_id
         document_id = saved_study_aid.get("document_id") or document_id
         requirements = saved_study_aid.get("source_requirements") or requirements
         page_range = saved_study_aid.get("page_range") or page_range
+        generation_prompt = str(saved_payload.get("generation_prompt") or "").strip()
         autostart = False
     conversation_documents = get_conversation_documents(user_id, conversation_id) if conversation_id else []
     selected_document = next(
@@ -3243,9 +3349,11 @@ def flashcards():
             "document_name": selected_document.get("original_filename") if selected_document else "",
             "requirements": requirements,
             "page_range": page_range,
+            "generation_prompt": generation_prompt or DEFAULT_FLASHCARD_GENERATION_PROMPT,
+            "default_generation_prompt": DEFAULT_FLASHCARD_GENERATION_PROMPT,
             "autostart": autostart,
             "study_aid_id": saved_study_aid.get("study_aid_id") if saved_study_aid else "",
-            "saved_payload": saved_study_aid.get("payload_json") if saved_study_aid else {},
+            "saved_payload": saved_payload,
             "saved_items": list_study_aids(user_id, aid_type="flashcards"),
             "documents": conversation_documents,
         },
@@ -3304,6 +3412,7 @@ def generate_flashcards():
     conversation_id = str(data.get('conversation_id') or '').strip() or None
     requirements = str(data.get('requirements') or '').strip()
     page_range = str(data.get('page_range') or '').strip()
+    generation_prompt = str(data.get('generation_prompt') or '').strip()
     count = data.get('count')
 
     try:
@@ -3330,6 +3439,7 @@ def generate_flashcards():
             count=count,
             document_source=document_source,
             requirements=requirements,
+            user_prompt=generation_prompt,
         )
         saved_study_aid = save_study_aid(
             user_id=user_id,
@@ -3338,6 +3448,7 @@ def generate_flashcards():
             payload_json={
                 "deck_title": payload["deck_title"],
                 "cards": payload["cards"],
+                "generation_prompt": payload["generation_prompt"],
             },
             conversation_id=conversation_id,
             document_id=document_id,
@@ -3357,6 +3468,7 @@ def generate_flashcards():
         'deck_title': payload['deck_title'],
         'cards': payload['cards'],
         'model': payload['model'],
+        'generation_prompt': payload['generation_prompt'],
         'study_aid_id': saved_study_aid.get('study_aid_id') if saved_study_aid else '',
     })
 

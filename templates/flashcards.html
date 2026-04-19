@@ -139,7 +139,7 @@
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
         <div class="flex items-center justify-between mb-5">
             <h3 id="modal-card-title" class="text-lg font-bold text-gray-800">Add New Card</h3>
-            <button onclick="closeModal('modal-card')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+            <button onclick="fcCloseModal('modal-card')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
         </div>
         <div class="space-y-4">
             <div>
@@ -153,7 +153,7 @@
         </div>
         <input type="hidden" id="edit-index" value="-1">
         <div class="flex justify-end gap-3 mt-6">
-            <button onclick="closeModal('modal-card')" class="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition">Cancel</button>
+            <button onclick="fcCloseModal('modal-card')" class="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition">Cancel</button>
             <button onclick="saveCard()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium">Save Card</button>
         </div>
     </div>
@@ -166,7 +166,7 @@
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6">
         <div class="flex items-center justify-between mb-5">
             <h3 class="text-lg font-bold text-gray-800">Import Flashcards</h3>
-            <button onclick="closeModal('modal-import')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+            <button onclick="fcCloseModal('modal-import')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
         </div>
 
         <!-- Tabs -->
@@ -208,7 +208,7 @@
                 Replace existing cards
             </label>
             <div class="flex gap-3">
-                <button onclick="closeModal('modal-import')" class="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition">Cancel</button>
+                <button onclick="fcCloseModal('modal-import')" class="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition">Cancel</button>
                 <button onclick="importCards()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium">Import</button>
             </div>
         </div>
@@ -222,7 +222,7 @@
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 flex flex-col max-h-[90vh]">
         <div class="flex items-center justify-between mb-4 shrink-0">
             <h3 class="text-lg font-bold text-gray-800">Edit Deck</h3>
-            <button onclick="closeModal('modal-edit-deck')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+            <button onclick="fcCloseModal('modal-edit-deck')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
         </div>
         <div class="mb-4 shrink-0">
             <label class="block text-sm font-medium text-gray-700 mb-1">Deck Name</label>
@@ -242,51 +242,65 @@
      MODAL: AI Generate
 ───────────────────────────────────────────── -->
 <div id="modal-ai" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-        <div class="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-4">
-            <i class="fa-solid fa-wand-magic-sparkles text-2xl text-brand-400"></i>
-        </div>
-        <h3 class="text-lg font-bold text-gray-800 mb-2 text-center">Generate Flashcards From Document</h3>
-        <p class="text-sm text-gray-500 mb-4 text-center">Use a parsed document as the source. Add optional page ranges or topic requirements if needed.</p>
-        <div class="space-y-4">
-            <div class="text-left">
-                <label for="ai-document" class="block text-sm font-medium text-gray-700 mb-1.5">Source document</label>
-                <select id="ai-document" class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white">
-                    <option value="">Select a document</option>
-                    {% for doc in (study_context.documents or []) %}
-                    {% if doc.parser_status != "pending" %}
-                    <option value="{{ doc.document_id }}" {% if study_context.document_id == doc.document_id %}selected{% endif %}>{{ doc.original_filename }}</option>
-                    {% endif %}
-                    {% endfor %}
-                </select>
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="shrink-0 border-b border-gray-100 px-6 pt-6 pb-4">
+            <div class="w-16 h-16 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fa-solid fa-wand-magic-sparkles text-2xl text-brand-400"></i>
             </div>
-            <div class="grid grid-cols-2 gap-3">
+            <h3 class="text-lg font-bold text-gray-800 mb-2 text-center">Generate Flashcards From Document</h3>
+            <p class="text-sm text-gray-500 text-center">Use a parsed document as the source. Edit the flashcard prompt if you want shorter or differently formatted cards.</p>
+        </div>
+        <div class="flex-1 overflow-y-auto px-6 py-5">
+            <div class="space-y-4">
                 <div class="text-left">
-                    <label for="ai-count" class="block text-sm font-medium text-gray-700 mb-1.5">Cards</label>
-                    <input id="ai-count" type="number" min="3" max="25" value="10" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
-                </div>
-                <div class="text-left">
-                    <label for="ai-mode" class="block text-sm font-medium text-gray-700 mb-1.5">Add mode</label>
-                    <select id="ai-mode" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white">
-                        <option value="replace">Replace current deck</option>
-                        <option value="append">Append to current deck</option>
+                    <label for="ai-document" class="block text-sm font-medium text-gray-700 mb-1.5">Source document</label>
+                    <select id="ai-document" class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white">
+                        <option value="">Select a document</option>
+                        {% for doc in (study_context.documents or []) %}
+                        {% if doc.parser_status != "pending" %}
+                        <option value="{{ doc.document_id }}" {% if study_context.document_id == doc.document_id %}selected{% endif %}>{{ doc.original_filename }}</option>
+                        {% endif %}
+                        {% endfor %}
                     </select>
                 </div>
-            </div>
-            <div class="grid grid-cols-1 gap-3">
-                <div class="text-left">
-                    <label for="ai-page-range" class="block text-sm font-medium text-gray-700 mb-1.5">Page range</label>
-                    <input id="ai-page-range" type="text" value="{{ study_context.page_range or '' }}" placeholder="Optional, e.g. 1-5, 8, 10-12" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div class="text-left">
+                        <label for="ai-count" class="block text-sm font-medium text-gray-700 mb-1.5">Cards</label>
+                        <input id="ai-count" type="number" min="3" max="25" value="10" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+                    </div>
+                    <div class="text-left">
+                        <label for="ai-mode" class="block text-sm font-medium text-gray-700 mb-1.5">Add mode</label>
+                        <select id="ai-mode" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white">
+                            <option value="replace">Replace current deck</option>
+                            <option value="append">Append to current deck</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="text-left">
-                    <label for="ai-requirements" class="block text-sm font-medium text-gray-700 mb-1.5">Extra requirements</label>
-                    <textarea id="ai-requirements" rows="3" placeholder="Optional, e.g. prioritize key terms, formulas, or exam-style concepts." class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none">{{ study_context.requirements or '' }}</textarea>
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div class="text-left">
+                        <label for="ai-page-range" class="block text-sm font-medium text-gray-700 mb-1.5">Page range</label>
+                        <input id="ai-page-range" type="text" value="{{ study_context.page_range or '' }}" placeholder="Optional, e.g. 1-5, 8, 10-12" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+                    </div>
+                    <div class="text-left">
+                        <label for="ai-requirements" class="block text-sm font-medium text-gray-700 mb-1.5">Extra requirements</label>
+                        <textarea id="ai-requirements" rows="3" placeholder="Optional, e.g. prioritize key terms, formulas, or exam-style concepts." class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none">{{ study_context.requirements or '' }}</textarea>
+                    </div>
                 </div>
+                <div class="text-left rounded-2xl border border-gray-200 bg-slate-50/70 p-4">
+                    <div class="mb-2 flex items-center justify-between gap-3">
+                        <label for="ai-generation-prompt" class="block text-sm font-medium text-gray-700">Flashcard prompt</label>
+                        <span class="text-xs text-gray-500">Editable instructions sent to the AI</span>
+                    </div>
+                    <textarea id="ai-generation-prompt" rows="8" class="w-full border border-gray-300 rounded-xl bg-white px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-y">{{ study_context.generation_prompt or study_context.default_generation_prompt or '' }}</textarea>
+                    <p class="mt-1.5 text-xs text-gray-500">Shorten or simplify this prompt if you want tighter answers.</p>
+                </div>
+                <div id="ai-error" class="hidden rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"></div>
             </div>
-            <div id="ai-error" class="hidden rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"></div>
-            <div class="flex items-center justify-end gap-3 pt-1">
-                <button onclick="closeModal('modal-ai')" class="px-5 py-2 text-sm bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition font-medium">Cancel</button>
-                <button id="ai-generate-btn" onclick="generateAICards()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium inline-flex items-center gap-2">
+        </div>
+        <div class="shrink-0 border-t border-gray-100 bg-white px-6 py-4">
+            <div class="flex items-center justify-end gap-3">
+                <button onclick="fcCloseModal('modal-ai')" class="px-5 py-2 text-sm bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition font-medium">Cancel</button>
+                <button id="ai-generate-btn" onclick="generateAICards()" class="px-5 py-2 text-sm bg-brand-600 text-white rounded-xl hover:bg-brand-700 transition font-medium inline-flex items-center gap-2 shadow-sm">
                     <i class="fa-solid fa-wand-magic-sparkles"></i>
                     <span id="ai-generate-btn-label">Generate</span>
                 </button>
@@ -315,31 +329,54 @@ let activeImportTab = 'tab-text';
 const STORAGE_KEY = 'flashcards_deck_v1';
 const STUDY_CONTEXT = {{ (study_context or {}) | tojson }};
 
+function getCurrentGenerationPrompt() {
+    const promptEl = document.getElementById('ai-generation-prompt');
+    const prompt = promptEl ? promptEl.value.trim() : '';
+    return prompt || STUDY_CONTEXT.generation_prompt || STUDY_CONTEXT.default_generation_prompt || '';
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     const hasDocumentContext = Boolean(STUDY_CONTEXT.document_id);
     const savedPayload = STUDY_CONTEXT.saved_payload || {};
     const saved = localStorage.getItem(STORAGE_KEY);
     if (Array.isArray(savedPayload.cards) && savedPayload.cards.length) {
-        deck = savedPayload.cards;
+        deck = savedPayload.cards.filter((card) => {
+            const front = typeof card?.front === 'string' ? card.front.trim() : '';
+            const back = typeof card?.back === 'string' ? card.back.trim() : '';
+            return front && back;
+        });
         document.getElementById('deck-title').textContent = savedPayload.deck_title || savedPayload.title || 'Flashcards';
+        STUDY_CONTEXT.generation_prompt = savedPayload.generation_prompt || STUDY_CONTEXT.generation_prompt || STUDY_CONTEXT.default_generation_prompt || '';
     } else if (saved && !STUDY_CONTEXT.autostart) {
         try {
             const parsed = JSON.parse(saved);
-            deck = parsed.cards || [];
-            document.getElementById('deck-title').textContent = parsed.name || 'Flashcards';
+            deck = Array.isArray(parsed.cards) ? parsed.cards.filter((card) => {
+                const front = typeof card?.front === 'string' ? card.front.trim() : '';
+                const back = typeof card?.back === 'string' ? card.back.trim() : '';
+                return front && back;
+            }) : [];
+            document.getElementById('deck-title').textContent = parsed.name || parsed.deck_title || 'Flashcards';
+            if (parsed.generation_prompt) {
+                STUDY_CONTEXT.generation_prompt = parsed.generation_prompt;
+            }
         } catch(e) { deck = []; }
     }
 
+    const generationPromptEl = document.getElementById('ai-generation-prompt');
+    if (generationPromptEl) {
+        generationPromptEl.value = STUDY_CONTEXT.generation_prompt || STUDY_CONTEXT.default_generation_prompt || '';
+    }
+
     // Seed a default card if empty for demo purposes
-    if (deck.length === 0 && !hasDocumentContext) {
+    if (false) {
         deck = [
             { front: "What is supervised learning?", back: "A type of machine learning where the model is trained on labeled data — input-output pairs — so it can learn to predict outputs for new inputs." },
             { front: "What is overfitting?", back: "When a model learns the training data too well, including its noise, causing poor generalization to new data." },
             { front: "What is a neural network?", back: "A computational model loosely inspired by the brain, composed of layers of interconnected nodes (neurons) that transform inputs into predictions." },
             { front: "What is gradient descent?", back: "An optimization algorithm that iteratively adjusts model parameters to minimize a loss function by moving in the direction of the steepest decrease." },
         ];
-    } else if (hasDocumentContext && STUDY_CONTEXT.document_name) {
+    } if (hasDocumentContext && STUDY_CONTEXT.document_name) {
         document.getElementById('deck-title').textContent = `${STUDY_CONTEXT.document_name} Flashcards`;
     }
 
@@ -478,7 +515,7 @@ function openCreateModal() {
     document.getElementById('input-front').value = '';
     document.getElementById('input-back').value = '';
     document.getElementById('edit-index').value = '-1';
-    openModal('modal-card');
+    fcOpenModal('modal-card');
 }
 
 function editCurrentCard(e) {
@@ -489,7 +526,7 @@ function editCurrentCard(e) {
     document.getElementById('input-front').value = c.front;
     document.getElementById('input-back').value = c.back;
     document.getElementById('edit-index').value = idx;
-    openModal('modal-card');
+    fcOpenModal('modal-card');
 }
 
 function saveCard() {
@@ -506,9 +543,9 @@ function saveCard() {
         currentPos = order.indexOf(deck.length - 1);
     }
 
-    closeModal('modal-card');
+    fcCloseModal('modal-card');
     renderCard();
-    showToast(editIdx >= 0 ? 'Card updated!' : 'Card added!');
+    fcShowToast(editIdx >= 0 ? 'Card updated!' : 'Card added!');
 }
 
 function deleteCurrentCard(e) {
@@ -518,14 +555,14 @@ function deleteCurrentCard(e) {
     rebuildOrder();
     currentPos = Math.min(currentPos, Math.max(0, order.length - 1));
     renderCard();
-    showToast('Card deleted.');
+    fcShowToast('Card deleted.');
 }
 
 // ─── Edit Deck Modal ──────────────────────────────────────────────────────────
 function openEditModal() {
     document.getElementById('deck-name-input').value = document.getElementById('deck-title').textContent;
     renderDeckList();
-    openModal('modal-edit-deck');
+    fcOpenModal('modal-edit-deck');
 }
 
 function renderDeckList() {
@@ -551,8 +588,8 @@ function editCardFromList(i) {
     document.getElementById('input-front').value = deck[i].front;
     document.getElementById('input-back').value = deck[i].back;
     document.getElementById('edit-index').value = i;
-    closeModal('modal-edit-deck');
-    openModal('modal-card');
+    fcCloseModal('modal-edit-deck');
+    fcOpenModal('modal-card');
 }
 
 function deleteCardFromList(i) {
@@ -566,8 +603,8 @@ function deleteCardFromList(i) {
 function saveDeckEdit() {
     const name = document.getElementById('deck-name-input').value.trim() || 'Flashcards';
     document.getElementById('deck-title').textContent = name;
-    closeModal('modal-edit-deck');
-    showToast('Deck saved!');
+    fcCloseModal('modal-edit-deck');
+    fcShowToast('Deck saved!');
 }
 
 // ─── Import ────────────────────────────────────────────────────────────────────
@@ -578,7 +615,7 @@ function openImportModal() {
     document.getElementById('csv-preview').classList.add('hidden');
     pendingCSVCards = [];
     switchImportTab('tab-text');
-    openModal('modal-import');
+    fcOpenModal('modal-import');
 }
 
 function switchImportTab(tab) {
@@ -665,9 +702,9 @@ function importCards() {
 
     rebuildOrder();
     currentPos = 0;
-    closeModal('modal-import');
+    fcCloseModal('modal-import');
     renderCard();
-    showToast(`Imported ${cards.length} card${cards.length > 1 ? 's' : ''}!`);
+    fcShowToast(`Imported ${cards.length} card${cards.length > 1 ? 's' : ''}!`);
 }
 
 // ─── AI Modal ─────────────────────────────────────────────────────────────────
@@ -676,7 +713,11 @@ function openAIModal() {
     if (STUDY_CONTEXT.document_id && document.getElementById('ai-document')) {
         document.getElementById('ai-document').value = STUDY_CONTEXT.document_id;
     }
-    openModal('modal-ai');
+    const generationPromptEl = document.getElementById('ai-generation-prompt');
+    if (generationPromptEl) {
+        generationPromptEl.value = STUDY_CONTEXT.generation_prompt || STUDY_CONTEXT.default_generation_prompt || '';
+    }
+    fcOpenModal('modal-ai');
 }
 
 async function generateAICards() {
@@ -685,6 +726,7 @@ async function generateAICards() {
     const modeEl = document.getElementById('ai-mode');
     const pageRangeEl = document.getElementById('ai-page-range');
     const requirementsEl = document.getElementById('ai-requirements');
+    const generationPromptEl = document.getElementById('ai-generation-prompt');
     const errorEl = document.getElementById('ai-error');
     const buttonEl = document.getElementById('ai-generate-btn');
     const buttonLabelEl = document.getElementById('ai-generate-btn-label');
@@ -694,6 +736,7 @@ async function generateAICards() {
     const mode = modeEl.value === 'append' ? 'append' : 'replace';
     const pageRange = pageRangeEl.value.trim();
     const requirements = requirementsEl.value.trim();
+    const generationPrompt = generationPromptEl.value.trim();
 
     errorEl.classList.add('hidden');
     errorEl.textContent = '';
@@ -721,6 +764,7 @@ async function generateAICards() {
                 count,
                 page_range: pageRange,
                 requirements,
+                generation_prompt: generationPrompt,
             }),
         });
         const payload = await response.json().catch(() => ({}));
@@ -744,15 +788,19 @@ async function generateAICards() {
         }
 
         deck = mode === 'replace' ? cards : [...deck, ...cards];
+        STUDY_CONTEXT.document_id = documentId;
+        STUDY_CONTEXT.page_range = pageRange;
+        STUDY_CONTEXT.requirements = requirements;
+        STUDY_CONTEXT.generation_prompt = payload.generation_prompt || generationPrompt || STUDY_CONTEXT.default_generation_prompt || '';
         if (payload.study_aid_id) {
             STUDY_CONTEXT.study_aid_id = payload.study_aid_id;
         }
         rebuildOrder();
         currentPos = 0;
         isFlipped = false;
-        closeModal('modal-ai');
+        fcCloseModal('modal-ai');
         renderCard();
-        showToast(`Generated ${cards.length} card${cards.length > 1 ? 's' : ''}!`);
+        fcShowToast(`Generated ${cards.length} card${cards.length > 1 ? 's' : ''}!`);
     } catch (error) {
         errorEl.textContent = error.message || 'AI generation failed.';
         errorEl.classList.remove('hidden');
@@ -767,8 +815,8 @@ async function generateAICards() {
 // ─── Save / Export ────────────────────────────────────────────────────────────
 function saveToLocalStorage() {
     const name = document.getElementById('deck-title').textContent;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ name, cards: deck }));
-    showToast('Deck saved to browser!');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ name, cards: deck, generation_prompt: getCurrentGenerationPrompt() }));
+    fcShowToast('Deck saved to browser!');
     saveDeckToServer();
 }
 
@@ -782,12 +830,12 @@ function exportDeck() {
     a.download = (name.replace(/\s+/g, '_') || 'flashcards') + '.json';
     a.click();
     URL.revokeObjectURL(url);
-    showToast('Exported!');
+    fcShowToast('Exported!');
 }
 
 function exportDeckImage() {
     if (!deck.length) {
-        showToast('No cards to export.');
+        fcShowToast('No cards to export.');
         return;
     }
     const canvas = document.createElement('canvas');
@@ -825,12 +873,12 @@ function exportDeckImage() {
     link.href = canvas.toDataURL('image/png');
     link.download = `${(document.getElementById('deck-title').textContent || 'flashcards').replace(/\s+/g, '_')}_card.png`;
     link.click();
-    showToast('Image exported!');
+    fcShowToast('Image exported!');
 }
 
 function exportDeckPdf() {
     if (!deck.length) {
-        showToast('No cards to export.');
+        fcShowToast('No cards to export.');
         return;
     }
     const title = document.getElementById('deck-title').textContent || 'Flashcards';
@@ -845,7 +893,7 @@ function exportDeckPdf() {
     `).join('');
     const printWindow = window.open('', '_blank', 'width=1000,height=800');
     if (!printWindow) {
-        showToast('Popup blocked.');
+        fcShowToast('Popup blocked.');
         return;
     }
     printWindow.document.write(`
@@ -871,7 +919,7 @@ function exportDeckPdf() {
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
-    showToast('Print dialog opened.');
+    fcShowToast('Print dialog opened.');
 }
 
 async function saveDeckToServer() {
@@ -883,6 +931,7 @@ async function saveDeckToServer() {
         payload_json: {
             deck_title: title,
             cards: deck,
+            generation_prompt: getCurrentGenerationPrompt(),
         },
     };
     const targetId = STUDY_CONTEXT.study_aid_id || '';
@@ -923,8 +972,8 @@ function startNewDeck() {
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
-function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+function fcOpenModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function fcCloseModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 function shakeModal(id) {
     const el = document.getElementById(id).querySelector('.bg-white');
@@ -932,7 +981,7 @@ function shakeModal(id) {
     setTimeout(() => el.classList.remove('animate-bounce'), 600);
 }
 
-function showToast(msg) {
+function fcShowToast(msg) {
     const toast = document.getElementById('toast');
     toast.textContent = msg;
     toast.style.opacity = '1';
@@ -976,7 +1025,7 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
 // Close modals on backdrop click
 document.querySelectorAll('[id^="modal-"]').forEach(modal => {
     modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeModal(modal.id);
+        if (e.target === modal) fcCloseModal(modal.id);
     });
 });
 </script>
