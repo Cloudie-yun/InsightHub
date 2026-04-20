@@ -20,6 +20,8 @@ import json
 import logging
 import mimetypes
 import time
+from dataclasses import dataclass
+from typing import Any
 from dotenv import load_dotenv
 from huggingface_hub import login as huggingface_login
 
@@ -38,7 +40,10 @@ from services.diagram_vision_service import (
 )
 from services.embedding_worker import EmbeddingWorker
 from services.embedding_service import EmbeddingServiceError
-from services.gemini_credentials import load_gemini_api_credentials
+from services.gemini_credentials import (
+    build_quota_project_id_for_credential,
+    load_gemini_api_credentials,
+)
 from services.extraction_store import (
     build_extraction_payload,
     build_pending_extraction_payload,
@@ -61,12 +66,14 @@ from services.retrieval_service import RetrievalService, RetrievalServiceError
 from services.quota_router import (
     TASK_TYPE_DIAGRAM_VISION,
     TASK_TYPE_TEXT,
+    QuotaRouterError,
+    execute_with_shared_quota_router,
     format_quota_timestamp,
     get_quota_project_id,
-    get_task_models,
     get_quota_display_timezone,
     load_model_limits,
     load_usage_state,
+    resolve_usage_token_count,
 )
 
 
@@ -360,6 +367,22 @@ def _coerce_json_object_text(raw_text: str) -> str:
     return text
 
 
+@dataclass
+class FlashcardGenerationError(Exception):
+    message: str
+    status_code: int = 503
+    retryable: bool = True
+    details: dict[str, Any] | None = None
+
+
+def _should_retry_flashcard_with_another_model(exc: Exception) -> bool:
+    if not isinstance(exc, FlashcardGenerationError):
+        return False
+    if exc.retryable:
+        return True
+    return exc.status_code == 404
+
+
 def _request_gemini_structured_output(
     *,
     prompt: str,
@@ -368,18 +391,12 @@ def _request_gemini_structured_output(
     temperature: float = 0.4,
 ) -> tuple[dict, str]:
     credentials = load_gemini_api_credentials()
-    api_key = credentials[0].api_key if credentials else ""
-    if not api_key:
+    if not credentials:
         raise ValueError("Gemini API key is missing. Set GEMINI_API_KEY or GEMINI_API_KEYS.")
 
-    model_candidates = get_task_models(
-        TASK_TYPE_TEXT,
-        fallback_model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
-    )
-    model_name = model_candidates[0] if model_candidates else "gemini-2.5-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    fallback_model = os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
 
-    def _submit_request(prompt_text: str, request_temperature: float) -> str:
+    def _submit_request(prompt_text: str, request_temperature: float, api_key: str, model_name: str) -> dict[str, Any]:
         payload = {
             "contents": [
                 {
@@ -395,11 +412,13 @@ def _request_gemini_structured_output(
                 "maxOutputTokens": max_output_tokens,
             },
         }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
         request_payload = json.dumps(payload).encode("utf-8")
         req = Request(url, data=request_payload, headers={"Content-Type": "application/json"}, method="POST")
 
         try:
             with urlopen(req, timeout=90) as response:
+                response_headers = dict(getattr(response, "headers", {}) or {})
                 response_body = response.read().decode("utf-8")
         except HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
@@ -418,17 +437,76 @@ def _request_gemini_structured_output(
                 snippet = error_body[:240].strip()
                 if snippet:
                     error_message = f"{error_message} {snippet}"
-            raise ValueError(error_message) from exc
+            raise FlashcardGenerationError(
+                message=error_message,
+                status_code=exc.code,
+                retryable=exc.code in {408, 409, 429, 500, 502, 503, 504},
+                details={"response_body": error_body[:2000]},
+            ) from exc
         except URLError as exc:
-            raise ValueError("AI generation is currently unavailable.") from exc
+            raise FlashcardGenerationError(
+                message="AI generation is currently unavailable.",
+                status_code=503,
+                retryable=True,
+            ) from exc
 
         raw_response = json.loads(response_body)
         response_text = _extract_gemini_text_payload(raw_response)
         if not response_text:
-            raise ValueError("AI returned an empty response.")
-        return response_text
+            raise FlashcardGenerationError(
+                message="AI returned an empty response.",
+                status_code=502,
+                retryable=True,
+                details={"raw_response": raw_response},
+            )
+        return {
+            "response_text": response_text,
+            "response_headers": response_headers,
+            "raw_response": raw_response,
+            "api_key": api_key,
+            "provider_model_name": model_name,
+            "token_count": resolve_usage_token_count(raw_response),
+        }
 
-    response_text = _submit_request(prompt, temperature)
+    base_project_id = get_quota_project_id()
+    last_error: Exception | None = None
+    routed_result = None
+
+    for credential in credentials:
+        scoped_project_id = build_quota_project_id_for_credential(base_project_id, credential.alias)
+        try:
+            def _execute_provider(model_name: str, provider_name: str, api_key: str = credential.api_key) -> dict[str, Any]:
+                response_payload = _submit_request(prompt, temperature, api_key, model_name)
+                return {
+                    "payload": response_payload,
+                    "response_headers": response_payload.get("response_headers") or {},
+                    "provider_model_name": response_payload.get("provider_model_name") or model_name,
+                    "token_count": response_payload.get("token_count"),
+                }
+
+            routed_result = execute_with_shared_quota_router(
+                TASK_TYPE_TEXT,
+                provider_order=["gemini"],
+                fallback_model=fallback_model,
+                project_id=scoped_project_id,
+                execute_provider=_execute_provider,
+                should_retry_with_another_model=_should_retry_flashcard_with_another_model,
+            )
+            break
+        except Exception as exc:
+            last_error = exc
+
+    if routed_result is None:
+        if isinstance(last_error, QuotaRouterError):
+            raise ValueError(str(last_error)) from last_error
+        if isinstance(last_error, FlashcardGenerationError):
+            raise ValueError(last_error.message) from last_error
+        if last_error is not None:
+            raise ValueError(str(last_error)) from last_error
+        raise ValueError("AI generation is currently unavailable.")
+
+    response_payload = routed_result.payload if isinstance(routed_result.payload, dict) else {}
+    response_text = str(response_payload.get("response_text") or "").strip()
     try:
         parsed = json.loads(_coerce_json_object_text(response_text))
     except json.JSONDecodeError as exc:
@@ -438,12 +516,18 @@ def _request_gemini_structured_output(
             "IMPORTANT: Return exactly one valid JSON object matching the schema. "
             "Do not include markdown fences, commentary, or unescaped quotes inside JSON strings."
         )
-        retry_text = _submit_request(retry_prompt, 0.2)
+        retry_payload = _submit_request(
+            retry_prompt,
+            0.2,
+            str(response_payload.get("api_key") or ""),
+            routed_result.provider_model_name,
+        )
+        retry_text = str(retry_payload.get("response_text") or "")
         parsed = json.loads(_coerce_json_object_text(retry_text))
 
     if not isinstance(parsed, dict):
         raise ValueError("AI returned an invalid JSON payload.")
-    return parsed, model_name
+    return parsed, routed_result.provider_model_name
 
 
 def _parse_page_range(page_range_raw: str | None) -> list[int]:

@@ -13,7 +13,7 @@
 ## 🎥 Video Demonstration
 
 > Add project demo link here  
-> Example: `[Watch the demo](https://your-demo-link-here)`
+> Example: `[Watch the demo](https://drive.google.com/file/d/1HKdovXlirdDNdEmWh8blVxuCIVjtgh9P/view?usp=sharing)`
 
 ## ✨ Core Functions
 
