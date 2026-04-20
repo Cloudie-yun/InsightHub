@@ -14,6 +14,8 @@
 
 [Watch the demo video](static/images/I22023337_Cheong%20Khai%20Yun_Demonstration%20Video.mp4)
 
+[Watch the demo video (Google Drive)](https://drive.google.com/file/d/1HKdovXlirdDNdEmWh8blVxuCIVjtgh9P/view?usp=sharing))
+
 ## ✨ Core Functions
 
 | Function | Description |
