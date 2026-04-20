@@ -1,4 +1,11 @@
+import json
+import sys
 import unittest
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from services.extraction_normalizer import normalize_extraction_result
 from services.parsers.mineru.zip_parser import (
@@ -8,6 +15,12 @@ from services.parsers.mineru.zip_parser import (
 
 
 class MinerUTablePipelineTests(unittest.TestCase):
+    maxDiff = None
+
+    def print_case_output(self, title, payload):
+        print(f"\n[{title}]")
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+
     def test_flat_table_item_preserves_structured_fields_in_segment_metadata(self):
         item = {
             "type": "table",
@@ -23,14 +36,30 @@ class MinerUTablePipelineTests(unittest.TestCase):
         }
 
         block = build_flat_intermediate_block(item, 1)
+        segments, _ = build_segments_from_blocks([block])
+
+        self.print_case_output(
+            "Flat Table Input",
+            item,
+        )
+        self.print_case_output(
+            "Flat Table Output",
+            {
+                "intermediate_block": {
+                    "table_caption_text": block["table_caption_text"],
+                    "table_footnote_texts": block["table_footnote_texts"],
+                    "table_html": block["table_html"],
+                    "table_text": block["table_text"],
+                },
+                "segment": segments[0] if segments else None,
+            },
+        )
 
         self.assertIsNotNone(block)
         self.assertEqual(block["table_caption_text"], "Table 1: Common VQA tasks across both subsets.")
         self.assertEqual(block["table_footnote_texts"], ["Footnote A", "Footnote B"])
         self.assertIn("<table>", block["table_html"])
         self.assertIn("| Task |", block["table_text"])
-
-        segments, _ = build_segments_from_blocks([block])
 
         self.assertEqual(len(segments), 1)
         segment = segments[0]
@@ -73,6 +102,19 @@ class MinerUTablePipelineTests(unittest.TestCase):
             parser_result=parser_result,
         )
 
+        self.print_case_output(
+            "Normalizer Input With HTML",
+            parser_result,
+        )
+        self.print_case_output(
+            "Normalizer Output With HTML",
+            {
+                "blocks": blocks,
+                "assets": assets,
+                "metadata": metadata,
+            },
+        )
+
         self.assertEqual(len(assets), 0)
         self.assertEqual(metadata["block_count"], 1)
         block = blocks[0]
@@ -108,6 +150,17 @@ class MinerUTablePipelineTests(unittest.TestCase):
         blocks, _, _ = normalize_extraction_result(
             document_id="doc-2",
             parser_result=parser_result,
+        )
+
+        self.print_case_output(
+            "Normalizer Input Without HTML",
+            parser_result,
+        )
+        self.print_case_output(
+            "Normalizer Output Without HTML",
+            {
+                "blocks": blocks,
+            },
         )
 
         block = blocks[0]

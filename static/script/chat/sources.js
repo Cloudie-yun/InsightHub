@@ -94,6 +94,144 @@
         });
     };
 
+    ns.getSourceNodeByDocumentId = (documentId) => {
+        const safeId = String(documentId || "").trim();
+        if (!safeId || !sourcesDetailedList) return null;
+        return sourcesDetailedList.querySelector(`[data-doc-id="${safeId}"]`);
+    };
+
+    ns.updateSourceNodeTitle = (node, nextTitle) => {
+        if (!node) return;
+        const safeTitle = String(nextTitle || "").trim();
+        if (!safeTitle) return;
+
+        node.dataset.docTitle = safeTitle;
+        const titleText = node.querySelector("[data-source-title]");
+        if (titleText) {
+            titleText.textContent = safeTitle;
+            titleText.title = safeTitle;
+        }
+
+        if (state.activeToolboxDocumentPath && state.activeToolboxDocumentPath === String(node.dataset.docFile || "")) {
+            if (toolboxDocTitle) {
+                toolboxDocTitle.textContent = safeTitle;
+            }
+        }
+    };
+
+    ns.setSourceActionBusy = (node, isBusy) => {
+        if (!node) return;
+        node.dataset.actionBusy = isBusy ? "true" : "false";
+        node.querySelectorAll('[data-source-rename-btn="true"], [data-source-delete-btn="true"]').forEach((button) => {
+            button.disabled = isBusy;
+            button.classList.toggle("opacity-60", isBusy);
+            button.classList.toggle("cursor-wait", isBusy);
+        });
+    };
+
+    ns.bindSourceActionButton = (button, handler) => {
+        if (!button || button.dataset.boundSourceAction === "true") return;
+        button.dataset.boundSourceAction = "true";
+        button.addEventListener("click", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            await handler(event);
+        });
+    };
+
+    ns.renameConversationDocument = async (node) => {
+        const conversationId = ns.getCurrentConversationId();
+        const documentId = String(node?.dataset.docId || "").trim();
+        const currentTitle = String(node?.dataset.docTitle || "").trim();
+        if (!conversationId || !documentId) return;
+
+        const nextTitle = window.prompt("Rename document", currentTitle);
+        if (nextTitle === null) return;
+
+        const normalizedTitle = String(nextTitle || "").trim();
+        if (!normalizedTitle) {
+            ns.notify("warning", "Document name cannot be empty.");
+            return;
+        }
+        if (normalizedTitle === currentTitle) return;
+
+        ns.setSourceActionBusy(node, true);
+        try {
+            const response = await fetch(
+                `/api/conversations/${encodeURIComponent(conversationId)}/documents/${encodeURIComponent(documentId)}`,
+                {
+                    method: "PATCH",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ original_filename: normalizedTitle }),
+                },
+            );
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.error || "Unable to rename document.");
+            }
+
+            if (payload.document) {
+                ns.upsertSourceItems(payload.document, { forceDirty: true });
+            } else {
+                ns.updateSourceNodeTitle(node, normalizedTitle);
+                ns.applySourceFiltersAndSorting();
+            }
+            ns.notify("success", payload.message || "Document renamed.");
+        } catch (error) {
+            ns.notify("error", error?.message || "Unable to rename document.");
+        } finally {
+            ns.setSourceActionBusy(node, false);
+        }
+    };
+
+    ns.deleteConversationDocument = async (node) => {
+        const conversationId = ns.getCurrentConversationId();
+        const documentId = String(node?.dataset.docId || "").trim();
+        const documentTitle = String(node?.dataset.docTitle || "").trim() || "this document";
+        if (!conversationId || !documentId) return;
+        if (!window.confirm(`Delete "${documentTitle}"? This is a soft delete and will hide it from the conversation.`)) {
+            return;
+        }
+
+        ns.setSourceActionBusy(node, true);
+        try {
+            const response = await fetch(
+                `/api/conversations/${encodeURIComponent(conversationId)}/documents/${encodeURIComponent(documentId)}`,
+                { method: "DELETE" },
+            );
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.error || "Unable to delete document.");
+            }
+
+            if (state.activeToolboxDocumentPath && state.activeToolboxDocumentPath === String(node.dataset.docFile || "")) {
+                ns.closeToolboxDocument();
+            }
+            ns.removeSourceItemsByDocId(documentId);
+            ns.updateSelectAllButtonState();
+            ns.updateSendButtonState();
+            ns.applySourceFiltersAndSorting();
+            ns.notify("success", payload.message || "Document deleted.");
+        } catch (error) {
+            ns.notify("error", error?.message || "Unable to delete document.");
+            ns.setSourceActionBusy(node, false);
+        }
+    };
+
+    ns.bindSourceActionButtons = (node) => {
+        if (!node) return;
+        const renameButton = node.querySelector('[data-source-rename-btn="true"]');
+        const deleteButton = node.querySelector('[data-source-delete-btn="true"]');
+        ns.bindSourceActionButton(renameButton, async () => {
+            await ns.renameConversationDocument(node);
+        });
+        ns.bindSourceActionButton(deleteButton, async () => {
+            await ns.deleteConversationDocument(node);
+        });
+    };
+
     ns.bindDocumentTrigger = (trigger) => {
         if (!trigger || trigger.dataset.boundDocHandler === "true") return;
         trigger.dataset.boundDocHandler = "true";
@@ -219,6 +357,7 @@
         const previewUrl = isPdf ? fileUrl : (isDocx ? ns.getPreviewUrl(filePath) : null);
 
         state.isToolboxDocumentMode = true;
+        state.activeToolboxDocumentPath = filePath;
         ns.applyPanelCollapseState();
         ns.snapPanelToSide(state.dockSide);
 
@@ -247,6 +386,7 @@
 
     ns.closeToolboxDocument = () => {
         state.isToolboxDocumentMode = false;
+        state.activeToolboxDocumentPath = "";
         const fallbackWidth = 340;
         const restoredWidth = state.widthBeforeDocumentMode ?? fallbackWidth;
         state.expandedPanelWidth = ns.clamp(
@@ -278,6 +418,7 @@
     ns.initializeDocumentViewer = () => {
         document.querySelectorAll("[data-doc-file]").forEach(ns.bindDocumentTrigger);
         document.querySelectorAll("#sources-detailed-list [data-doc-id]").forEach(ns.bindSourceItemSelection);
+        document.querySelectorAll("#sources-detailed-list [data-doc-id]").forEach(ns.bindSourceActionButtons);
         toolboxDocBack?.addEventListener("click", ns.closeToolboxDocument);
         sourcesCollapsedSummary?.addEventListener("click", () => {
             const firstVisibleNode = Array.from(
@@ -460,6 +601,7 @@
 
         const nameText = document.createElement("p");
         nameText.className = "truncate text-sm font-medium text-slate-700";
+        nameText.dataset.sourceTitle = "true";
         nameText.title = documentPayload.original_filename;
         nameText.textContent = documentPayload.original_filename;
         nameWrap.appendChild(nameText);
@@ -488,6 +630,25 @@
             parseLink.classList.add("pointer-events-none", "opacity-60");
         }
 
+        const actionsWrap = document.createElement("div");
+        actionsWrap.className = "flex items-center gap-2";
+
+        const renameButton = document.createElement("button");
+        renameButton.type = "button";
+        renameButton.className = "h-7 w-7 inline-flex items-center justify-center rounded-lg border border-transparent text-slate-400 transition-colors hover:border-gray-200 hover:bg-white hover:text-slate-600";
+        renameButton.dataset.sourceRenameBtn = "true";
+        renameButton.title = "Rename document";
+        renameButton.setAttribute("aria-label", "Rename document");
+        renameButton.innerHTML = '<i class="fa-solid fa-pen text-[11px]"></i>';
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "h-7 w-7 inline-flex items-center justify-center rounded-lg border border-transparent text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600";
+        deleteButton.dataset.sourceDeleteBtn = "true";
+        deleteButton.title = "Delete document";
+        deleteButton.setAttribute("aria-label", "Delete document");
+        deleteButton.innerHTML = '<i class="fa-solid fa-trash-can text-[11px]"></i>';
+
         const selectButton = document.createElement("button");
         selectButton.type = "button";
         selectButton.className = "h-5 w-5 rounded border text-[10px] transition-colors flex items-center justify-center";
@@ -500,21 +661,25 @@
         row.appendChild(iconWrap);
         row.appendChild(nameWrap);
         if (!isProcessing) {
-            row.appendChild(parseLink);
+            actionsWrap.appendChild(parseLink);
         }
         if (isProcessing) {
             const statusBadge = document.createElement("span");
             statusBadge.className = "h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-brand-50 text-xs text-brand-700";
             statusBadge.textContent = "Processing";
-            row.appendChild(statusBadge);
+            actionsWrap.appendChild(statusBadge);
         }
+        actionsWrap.appendChild(renameButton);
+        actionsWrap.appendChild(deleteButton);
         if (!isProcessing) {
-            row.appendChild(selectButton);
+            actionsWrap.appendChild(selectButton);
         }
 
+        row.appendChild(actionsWrap);
         article.appendChild(row);
         ns.bindDocumentTrigger(article);
         ns.bindSourceItemSelection(article);
+        ns.bindSourceActionButtons(article);
         if (!isProcessing) {
             ns.bindSourceSelectButton(selectButton);
         }
@@ -613,6 +778,7 @@
     ns.getDocumentVisualStateSignature = (documentPayload) => {
         const parserStatus = String(documentPayload?.parser_status || "").trim().toLowerCase() || constants.PENDING_PARSER_STATUS;
         return JSON.stringify({
+            original_filename: String(documentPayload?.original_filename || "").trim(),
             parser_status: parserStatus,
             parser_progress: ns.getParserProgressSignature(documentPayload),
         });

@@ -82,6 +82,7 @@
         expandedPanelWidth: 340,
         isToolboxDocumentMode: false,
         widthBeforeDocumentMode: null,
+        activeToolboxDocumentPath: "",
         promptScrollTicking: false,
         promptAnchors: [],
         isConversationUploading: false,

@@ -105,39 +105,59 @@
                                         <i class="fa-regular fa-file-lines"></i>
                                     </span>
                                     <div class="min-w-0 flex-1">
-                                        <p class="truncate text-sm font-medium text-slate-700" title="{{ doc.original_filename }}">{{ doc.original_filename }}</p>
+                                        <p class="truncate text-sm font-medium text-slate-700" data-source-title="true" title="{{ doc.original_filename }}">{{ doc.original_filename }}</p>
                                         {% if doc.parser_status == "pending" %}
                                         <p class="mt-0.5 text-xs text-brand-700">
                                             <i class="fa-solid fa-spinner animate-spin mr-1"></i>{{ (doc.parser_progress.message if doc.parser_progress else "Processing document...") }}
                                         </p>
                                         {% endif %}
                                     </div>
-                                    {% if doc.parser_status != "pending" %}
-                                    <a
-                                        href="{{ url_for('document_parser_results', document_id=doc.document_id, conversation_id=current_conversation_id) }}"
-                                        class="h-7 px-2 inline-flex items-center rounded-lg border border-gray-200 text-xs text-slate-500 hover:text-brand-700 hover:border-brand-300 hover:bg-brand-50"
-                                        title="Inspect parser results"
-                                    >
-                                        Parse
-                                    </a>
-                                    {% endif %}
-                                    {% if doc.parser_status == "pending" %}
-                                    <span class="h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-brand-50 text-xs text-brand-700">
-                                        Processing
-                                    </span>
-                                    {% endif %}
-                                    {% if doc.parser_status != "pending" %}
-                                    <button
-                                        type="button"
-                                        class="h-5 w-5 rounded border text-[10px] transition-colors"
-                                        data-source-select-btn="true"
-                                        data-selected="true"
-                                        aria-pressed="true"
-                                        title="Deselect Document"
-                                    >
-                                        <i class="fa-solid fa-check"></i>
-                                    </button>
-                                    {% endif %}
+                                    <div class="flex items-center gap-2">
+                                        {% if doc.parser_status != "pending" %}
+                                        <a
+                                            href="{{ url_for('document_parser_results', document_id=doc.document_id, conversation_id=current_conversation_id) }}"
+                                            class="h-7 px-2 inline-flex items-center rounded-lg border border-gray-200 text-xs text-slate-500 hover:text-brand-700 hover:border-brand-300 hover:bg-brand-50"
+                                            title="Inspect parser results"
+                                        >
+                                            Parse
+                                        </a>
+                                        {% endif %}
+                                        {% if doc.parser_status == "pending" %}
+                                        <span class="h-7 px-2 inline-flex items-center rounded-lg border border-brand-200 bg-brand-50 text-xs text-brand-700">
+                                            Processing
+                                        </span>
+                                        {% endif %}
+                                        <button
+                                            type="button"
+                                            class="h-7 w-7 inline-flex items-center justify-center rounded-lg border border-transparent text-slate-400 transition-colors hover:border-gray-200 hover:bg-white hover:text-slate-600"
+                                            data-source-rename-btn="true"
+                                            title="Rename document"
+                                            aria-label="Rename document"
+                                        >
+                                            <i class="fa-solid fa-pen text-[11px]"></i>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="h-7 w-7 inline-flex items-center justify-center rounded-lg border border-transparent text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                                            data-source-delete-btn="true"
+                                            title="Delete document"
+                                            aria-label="Delete document"
+                                        >
+                                            <i class="fa-solid fa-trash-can text-[11px]"></i>
+                                        </button>
+                                        {% if doc.parser_status != "pending" %}
+                                        <button
+                                            type="button"
+                                            class="h-5 w-5 rounded border text-[10px] transition-colors"
+                                            data-source-select-btn="true"
+                                            data-selected="true"
+                                            aria-pressed="true"
+                                            title="Deselect Document"
+                                        >
+                                            <i class="fa-solid fa-check"></i>
+                                        </button>
+                                        {% endif %}
+                                    </div>
                                 </div>
                             </article>
                             {% endfor %}

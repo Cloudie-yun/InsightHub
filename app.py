@@ -1839,6 +1839,48 @@ def get_conversation_documents(user_id, conversation_id) -> list:
             conn.close()
 
 
+def get_conversation_document_record(user_id, conversation_id, document_id) -> dict | None:
+    if not user_id or not conversation_id or not document_id:
+        return None
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    d.document_id,
+                    d.original_filename,
+                    d.stored_filename,
+                    d.file_extension,
+                    d.mime_type,
+                    d.created_at,
+                    d.user_id,
+                    d.storage_path,
+                    de.parser_status,
+                    de.metadata
+                FROM conversations c
+                JOIN conversation_documents cd ON cd.conversation_id = c.conversation_id
+                JOIN documents d              ON d.document_id       = cd.document_id
+                LEFT JOIN document_extractions de ON de.document_id = d.document_id
+                WHERE c.conversation_id = %s
+                  AND c.user_id         = %s
+                  AND d.document_id     = %s
+                  AND d.is_deleted      = FALSE
+                LIMIT 1
+                """,
+                (conversation_id, user_id, document_id),
+            )
+            row = cur.fetchone()
+            return _serialize_conversation_document(row) if row else None
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def get_document_summary(user_id, document_id, conversation_id=None) -> dict | None:
     if not user_id or not document_id:
         return None
@@ -5006,6 +5048,130 @@ def api_conversation_documents(conversation_id):
         "conversation_id": conversation_id,
         "documents": documents,
     }), 200
+
+
+@app.route('/api/conversations/<conversation_id>/documents/<document_id>', methods=['PATCH'])
+def api_update_conversation_document(conversation_id, document_id):
+    user_id = session.get("user_id")
+    conversation_id = (conversation_id or "").strip()
+    document_id = (document_id or "").strip()
+
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+    if not document_id:
+        return jsonify({'error': 'Document ID is required.'}), 400
+    if not conversation_exists_for_user(user_id, conversation_id):
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    original_filename = str(payload.get("original_filename") or "").strip()
+    if not original_filename:
+        return jsonify({'error': 'Document name is required.'}), 400
+
+    original_filename = original_filename[:255]
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE documents d
+                    SET original_filename = %s
+                    FROM conversation_documents cd
+                    JOIN conversations c ON c.conversation_id = cd.conversation_id
+                    WHERE d.document_id = cd.document_id
+                      AND c.conversation_id = %s
+                      AND c.user_id = %s
+                      AND d.document_id = %s
+                      AND d.is_deleted = FALSE
+                    RETURNING d.document_id
+                    """,
+                    (original_filename, conversation_id, user_id, document_id),
+                )
+                updated_row = cur.fetchone()
+
+        if not updated_row:
+            return jsonify({'error': 'Document not found.'}), 404
+
+        document_payload = get_conversation_document_record(user_id, conversation_id, document_id)
+        if not document_payload:
+            return jsonify({'error': 'Document not found after update.'}), 404
+
+        return jsonify({
+            "message": "Document renamed.",
+            "document": document_payload,
+        }), 200
+    except Exception:
+        logger.exception(
+            "Failed to rename document conversation_id=%s document_id=%s",
+            conversation_id,
+            document_id,
+        )
+        return jsonify({'error': 'Unable to rename document right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.route('/api/conversations/<conversation_id>/documents/<document_id>', methods=['DELETE'])
+def api_soft_delete_conversation_document(conversation_id, document_id):
+    user_id = session.get("user_id")
+    conversation_id = (conversation_id or "").strip()
+    document_id = (document_id or "").strip()
+
+    if not user_id:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if not conversation_id:
+        return jsonify({'error': 'Conversation ID is required.'}), 400
+    if not document_id:
+        return jsonify({'error': 'Document ID is required.'}), 400
+    if not conversation_exists_for_user(user_id, conversation_id):
+        return jsonify({'error': 'Conversation not found.'}), 404
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE documents d
+                    SET is_deleted = TRUE,
+                        deleted_at = CURRENT_TIMESTAMP
+                    FROM conversation_documents cd
+                    JOIN conversations c ON c.conversation_id = cd.conversation_id
+                    WHERE d.document_id = cd.document_id
+                      AND c.conversation_id = %s
+                      AND c.user_id = %s
+                      AND d.document_id = %s
+                      AND d.is_deleted = FALSE
+                    RETURNING d.document_id
+                    """,
+                    (conversation_id, user_id, document_id),
+                )
+                deleted_row = cur.fetchone()
+
+        if not deleted_row:
+            return jsonify({'error': 'Document not found.'}), 404
+
+        return jsonify({
+            "message": "Document deleted.",
+            "document_id": document_id,
+        }), 200
+    except Exception:
+        logger.exception(
+            "Failed to soft delete document conversation_id=%s document_id=%s",
+            conversation_id,
+            document_id,
+        )
+        return jsonify({'error': 'Unable to delete document right now.'}), 500
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @app.route('/api/documents/<document_id>/summary', methods=['GET'])
