@@ -1,276 +1,130 @@
 # 📌 InsightHub
 
-*AI-powered document study workspace for parsing files, grounded chat, summaries, flashcards, and mind maps.*
+*An AI-powered academic support platform that transforms uploaded documents into searchable knowledge, grounded answers, and interactive study aids.*
 
 ## 🚀 Overview
 
-- Upload academic or study documents and process them in the background.
-- Extract structured document content with MinerU-based parsing and post-processing.
-- Ask grounded questions over uploaded material with retrieval-backed chat.
-- Generate document summaries, flashcards, and mind maps from extracted content.
-- Review parser output, diagram analysis, and source-backed answers in one Flask app.
+- **InsightHub** helps students and researchers work with complex documents more efficiently.
+- The system accepts uploaded files, processes them into structured content, and makes that content reusable across multiple learning workflows.
+- Instead of treating a document as raw text only, the platform preserves useful structure such as paragraphs, headings, tables, and diagrams.
+- Extracted content is then used for **grounded chat**, **document review**, **summaries**, **flashcards**, and **mind maps**.
+- The goal is to turn static study material into an interactive learning environment.
 
-## ✨ Features
+## 🎥 Video Demonstration
 
-| Feature | Description |
+> Add project demo link here  
+> Example: `[Watch the demo](https://your-demo-link-here)`
+
+## ✨ Core Functions
+
+| Function | Description |
 |--------|------------|
-| Document Uploads | Supports `.pdf`, `.doc`, `.docx`, `.ppt`, `.pptx`, `.txt`, `.png`, `.jpg`, `.jpeg`, `.webp`. |
-| Background Parsing | Stores uploads immediately, then runs document parsing asynchronously. |
-| Grounded Chat | Uses retrieval over extracted document blocks to answer with source context. |
-| Parser Review | Exposes parser results and review flows for extracted blocks and diagrams. |
-| Diagram Analysis | Runs Gemini-based vision analysis on detected diagram blocks. |
-| Summaries | Generates document and conversation summaries from extracted content. |
-| Study Aids | Builds editable **flashcards** and **mind maps** from selected source documents. |
-| Authentication | Email/password auth, email verification, password reset, and Google OAuth. |
-| Prompt Profiles | Stores per-user system prompt and prompt profile preferences. |
-| Retrieval Backends | Supports PostgreSQL hybrid retrieval and optional Qdrant-backed dense retrieval. |
+| Document Upload | Users upload study materials such as PDFs, slides, text files, and images. |
+| Document Parsing | The system extracts structured content from uploaded documents in the background. |
+| Content Normalization | Parsed output is cleaned and reorganized into reusable blocks for downstream features. |
+| Grounded Question Answering | Users can ask questions and receive answers based on uploaded document evidence. |
+| Parser Result Review | Users can inspect extracted content and review how the system interpreted the document. |
+| Diagram Analysis | Diagram regions can be analyzed to produce text descriptions and study-friendly context. |
+| Summary Generation | The system produces concise summaries from processed document content. |
+| Flashcard Generation | Users can generate editable flashcards directly from selected documents. |
+| Mind Map Generation | Users can generate structured mind maps to visualize document topics and relationships. |
+| Conversation-Based Study Flow | Documents can be grouped into conversations for context-aware study sessions. |
 
-## 🏗️ Architecture / Structure
+## 🧠 What the System Does
+
+### 1. Document Understanding
+
+- Accepts uploaded academic or study documents
+- Processes them asynchronously to avoid blocking the user interface
+- Extracts meaningful document structure instead of keeping only plain text
+- Preserves content needed for later retrieval and analysis
+
+### 2. Knowledge Grounding
+
+- Converts extracted content into searchable document blocks
+- Uses those blocks to support evidence-based answers
+- Reduces unsupported responses by grounding outputs in uploaded material
+- Connects source content to chat, summaries, and study aids
+
+### 3. Learning Support
+
+- Helps users review parsed material visually
+- Generates revision tools from document content
+- Supports different study styles through chat, flashcards, and mind maps
+- Turns a static file into an interactive study workflow
+
+## 🏗️ System Structure
 
 ```text
-project-root/
-├── app.py                         # Main Flask entrypoint and route handlers
-├── db.py                          # PostgreSQL connection helpers
-├── email_service.py               # SMTP email sending
-├── requirements.txt
-├── database_schema.sql            # Baseline schema snapshot
-├── migrations/                    # Incremental SQL migrations
-├── services/
-│   ├── document_parser.py         # Parsing pipeline orchestration
-│   ├── extraction_store.py        # Persisted parser payloads
-│   ├── retrieval_service.py       # Grounded retrieval orchestration
-│   ├── chat_answer_service.py     # Answer generation
-│   ├── summary_service.py         # Summary generation
-│   ├── diagram_vision_service.py  # Diagram analysis
-│   ├── embedding_service.py       # Embedding provider integration
-│   └── parsers/
-│       ├── pdf_parser.py
-│       ├── pptx_parser.py
-│       ├── text_parser.py
-│       ├── image_parser.py
-│       └── mineru/                # MinerU ZIP/API parsing helpers
-├── templates/
-│   ├── base.html
-│   ├── dashboard.html
-│   ├── chat.html
-│   ├── document_parser_results.html
-│   ├── flashcards.html
-│   ├── mindmap.html
-│   └── partials/
-├── static/
-│   ├── styles/base.css
-│   └── script/
-│       ├── base.js
-│       ├── chat.js
-│       └── chat/                  # Chat page modules
-├── tests/                         # unittest-based regression coverage
-├── docs/                          # Project notes and pipeline docs
-└── uploads/                       # Local uploaded files and generated assets
+InsightHub/
+├── app.py                    # Main application and route handling
+├── db.py                     # Database connection layer
+├── email_service.py          # Email delivery for account flows
+├── services/                 # Parsing, retrieval, AI, and processing services
+├── templates/                # Jinja UI templates
+├── static/                   # Shared frontend assets
+├── migrations/               # SQL schema evolution
+├── tests/                    # Validation of parsing and answer behavior
+├── docs/                     # Supporting implementation notes
+└── uploads/                  # User-uploaded files and generated assets
 ```
 
-## ⚙️ Installation
+## ⚙️ Main Modules
 
-### 1. Clone and enter the project
+| Module | Responsibility |
+|-------|----------------|
+| `app.py` | Coordinates routes, auth flows, upload flows, API responses, and page rendering. |
+| `services/document_parser.py` | Orchestrates document parsing and extracted content preparation. |
+| `services/extraction_store.py` | Stores and loads parser output for later reuse. |
+| `services/retrieval_service.py` | Retrieves relevant content blocks for grounded responses. |
+| `services/chat_answer_service.py` | Produces answer responses using retrieved source context. |
+| `services/summary_service.py` | Generates summaries from document and conversation content. |
+| `services/diagram_vision_service.py` | Handles diagram analysis and diagram-related enrichment. |
+| `templates/` | Defines the main user-facing pages such as dashboard, chat, parser results, flashcards, and mind map views. |
+| `static/script/chat/` | Contains modular client-side behavior for the chat workspace. |
 
-```bash
-git clone <your-repo-url>
-cd FYP2
-```
+## 🖥️ User-Facing Pages
 
-### 2. Create a virtual environment
+| Page | Purpose |
+|------|---------|
+| Dashboard | Entry point for conversations, uploads, and document access. |
+| Chat | Main grounded Q&A workspace for studying uploaded materials. |
+| Parser Results | Displays extracted content and parser review information. |
+| Flashcards | Generates and edits study flashcards from document content. |
+| Mind Map | Generates and edits visual topic maps from document content. |
 
-```bash
-python -m venv .venv
-```
+## 🔄 High-Level Workflow
 
-### 3. Activate the virtual environment
+1. A user uploads one or more study documents.
+2. The system stores the files and starts background parsing.
+3. Parsed output is cleaned, normalized, and stored as structured content.
+4. That content becomes available to retrieval and study workflows.
+5. The user interacts with the system through chat, summaries, flashcards, mind maps, and parser review pages.
 
-```bash
-# Windows PowerShell
-.venv\Scripts\Activate.ps1
+## 📡 Key Capabilities
 
-# macOS / Linux
-source .venv/bin/activate
-```
+| Capability | Outcome |
+|-----------|---------|
+| Background Processing | Large or complex documents can be handled without blocking the UI. |
+| Structured Extraction | The system keeps useful layout-aware content for better downstream quality. |
+| Evidence-Aware Retrieval | Answers can be tied back to uploaded document content. |
+| Multi-Feature Reuse | A single parsed document supports multiple study tools. |
+| Study Aid Persistence | Generated study aids can be revisited and updated later. |
+| Diagram-Aware Enrichment | Visual content can be included in the overall study pipeline. |
 
-### 4. Install dependencies
+## 🎯 Project Purpose
 
-```bash
-pip install -r requirements.txt
-```
-
-### 5. Configure environment variables
-
-Create a `.env` file in the project root and set the required values.
-
-### 6. Apply database migrations
-
-```bash
-psql "$DATABASE_URL" -f migrations/001_document_extraction_persistence.sql
-psql "$DATABASE_URL" -f migrations/002_document_extraction_assets_and_references.sql
-psql "$DATABASE_URL" -f migrations/003_diagram_vision_tables.sql
-psql "$DATABASE_URL" -f migrations/003_document_blocks.sql
-psql "$DATABASE_URL" -f migrations/004_diagram_vision_scoring.sql
-psql "$DATABASE_URL" -f migrations/004_document_block_embeddings.sql
-psql "$DATABASE_URL" -f migrations/005_embedding_runs.sql
-psql "$DATABASE_URL" -f migrations/006_document_block_soft_delete.sql
-psql "$DATABASE_URL" -f migrations/007_fix_diagram_crop_storage_paths.sql
-psql "$DATABASE_URL" -f migrations/008_quota_state.sql
-psql "$DATABASE_URL" -f migrations/009_quota_limits.sql
-psql "$DATABASE_URL" -f migrations/010_conversation_messages.sql
-psql "$DATABASE_URL" -f migrations/011_quota_limits_billing_tier.sql
-psql "$DATABASE_URL" -f migrations/012_user_profile_settings.sql
-psql "$DATABASE_URL" -f migrations/013_user_prompt_profiles.sql
-psql "$DATABASE_URL" -f migrations/014_conversation_message_versioning.sql
-psql "$DATABASE_URL" -f migrations/015_summary_pipeline.sql
-psql "$DATABASE_URL" -f migrations/016_study_aids.sql
-```
-
-### 7. Start the development server
-
-```bash
-python app.py
-```
-
-## ▶️ Usage
-
-### Web App
-
-1. Open `http://127.0.0.1:5000`
-2. Create an account or sign in
-3. Upload one or more study documents
-4. Wait for parsing to complete
-5. Use:
-   - `/chat` for grounded Q&A
-   - `/documents/<document_id>/parser-results` for extraction review
-   - `/flashcards` for deck generation
-   - `/mindmap` for map generation
-
-### Example Upload Request
-
-```bash
-curl -X POST http://127.0.0.1:5000/api/documents/upload \
-  -F "files=@sample.pdf"
-```
-
-### Example Retrieval Request
-
-```bash
-curl -X POST http://127.0.0.1:5000/api/conversations/<conversation_id>/retrieve \
-  -H "Content-Type: application/json" \
-  -d "{\"query\":\"Summarize the main findings\"}"
-```
-
-## 🔧 Configuration
-
-| Variable | Description | Default |
-|---------|-------------|---------|
-| `FLASK_SECRET_KEY` | Flask session secret | `dev-secret-change-me` |
-| `DATABASE_URL` | Full PostgreSQL connection string | `""` |
-| `DB_HOST` | PostgreSQL host when `DATABASE_URL` is not used | `localhost` |
-| `DB_NAME` | PostgreSQL database name | `InsightHubDB` |
-| `DB_USER` | PostgreSQL user | `postgres` |
-| `DB_PASSWORD` | PostgreSQL password | `""` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_SSLMODE` | PostgreSQL SSL mode | `""` |
-| `DB_TIMEZONE` | Session timezone for DB connections | `""` |
-| `APP_BASE_URL` | Public app base URL for links/callbacks | `""` |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID | `""` |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | `""` |
-| `GOOGLE_REDIRECT_URI` | OAuth callback override | `""` |
-| `MAIL_USERNAME` | SMTP username | `""` |
-| `MAIL_APP_PASSWORD` | SMTP app password | `""` |
-| `MAIL_FROM_NAME` | Sender display name | `InsightHub` |
-| `MINERU_API_KEY` | MinerU parsing API key | `""` |
-| `GEMINI_API_KEY` | Primary Gemini API key | `""` |
-| `GEMINI_API_KEYS` | Comma-separated Gemini API key pool | `""` |
-| `GEMINI_TEXT_MODEL` | Text generation model | `gemini-2.5-flash` |
-| `GEMINI_VISION_MODEL` | Diagram vision model | `gemini-3-flash` |
-| `EMBEDDING_PROVIDER` | Embedding provider (`gemini` or `openai`) | `gemini` |
-| `EMBEDDING_MODEL` | Embedding model override | provider-dependent |
-| `OPENAI_API_KEY` | OpenAI key for embeddings | `""` |
-| `QDRANT_URL` | Qdrant base URL for dense retrieval | `""` |
-| `QDRANT_API_KEY` | Qdrant API key | `""` |
-| `QDRANT_COLLECTION` | Qdrant collection name | `document_blocks` |
-| `RERANKER_ENABLED` | Enables reranking stage | `1` |
-| `DOCUMENT_PARSE_MAX_WORKERS` | Background parse worker count | `2` |
-| `EMBEDDING_AUTORUN_ENABLED` | Auto-run embedding jobs | `1` |
-| `SUMMARY_AUTORUN_ENABLED` | Auto-run summary jobs | `1` |
-
-## 📡 API
-
-| Endpoint | Method | Description |
-|---------|--------|-------------|
-| `/api/auth/signup` | `POST` | Create a new user account |
-| `/api/auth/login` | `POST` | Authenticate a user |
-| `/api/auth/logout` | `POST` | End the current session |
-| `/api/auth/verify-email` | `GET` | Verify signup email token |
-| `/api/auth/forgot-password/request` | `POST` | Request password reset |
-| `/api/auth/forgot-password/reset` | `POST` | Reset password |
-| `/api/auth/google/start` | `GET` | Start Google OAuth login |
-| `/api/documents/upload` | `POST` | Upload documents for parsing |
-| `/api/conversations/<conversation_id>/documents/upload` | `POST` | Upload into an existing conversation |
-| `/api/conversations/<conversation_id>/documents` | `GET` | List conversation documents |
-| `/api/conversations/<conversation_id>/documents/<document_id>` | `PATCH` | Rename/update a document record |
-| `/api/conversations/<conversation_id>/documents/<document_id>` | `DELETE` | Soft-delete a document from a conversation |
-| `/api/documents/<document_id>/parser-results` | `GET` | Fetch parser output |
-| `/api/documents/<document_id>/parser-review` | `POST` | Save parser review edits |
-| `/api/documents/<document_id>/diagram-analysis` | `POST` | Run diagram analysis |
-| `/api/documents/<document_id>/summary` | `GET` | Fetch document summary |
-| `/api/conversations/<conversation_id>/summary` | `GET` | Fetch conversation summary |
-| `/api/conversations/<conversation_id>/retrieve` | `POST` | Retrieve relevant source blocks |
-| `/api/conversations/<conversation_id>/messages` | `POST` | Send a chat message |
-| `/api/conversations/<conversation_id>/message-versions/select` | `POST` | Switch active message version |
-| `/api/flashcards/generate` | `POST` | Generate flashcards from a document |
-| `/api/mindmap/generate` | `POST` | Generate a mind map from a document |
-| `/api/study-aids` | `POST` | Save a study aid |
-| `/api/study-aids/<study_aid_id>` | `GET` | Load a saved study aid |
-| `/api/study-aids/<study_aid_id>` | `PUT` | Update a saved study aid |
-
-## 🧪 Testing
-
-### Run syntax checks
-
-```bash
-python -m py_compile app.py db.py email_service.py
-```
-
-### Run unit tests
-
-```bash
-python -m unittest discover -s tests -p "test_*.py" -v
-```
-
-### Current coverage focus
-
-- Parser post-processing
-- MinerU text and table pipeline behavior
-- Chat answer guardrails
-
-## 📦 Deployment
-
-### Production entrypoint
-
-```bash
-gunicorn app:app
-```
-
-### Recommended deployment steps
-
-1. Provision **PostgreSQL**
-2. Set all required `.env` variables
-3. Apply SQL migrations in order
-4. Serve the Flask app with **Gunicorn**
-5. Put a reverse proxy in front of the app
-6. Persist the `uploads/` directory if uploaded artifacts must survive restarts
+- Improve how students interact with long or complex academic materials
+- Reduce friction between reading, understanding, and revising
+- Combine document parsing and AI assistance into one workflow
+- Support more active, reusable, and visual forms of studying
 
 ## 🤝 Contributing
 
-- Keep changes **small and localized**, especially in `app.py`
-- Follow the existing style in Python, Jinja, JavaScript, and CSS
-- Place schema changes in `migrations/`
-- Run `py_compile` and relevant tests before opening a PR
-- Include screenshots for visible UI changes
+- Keep changes focused and aligned with the current architecture
+- Prefer small updates over broad refactors
+- Preserve existing frontend hooks and backend flow assumptions
+- Add tests when extending parser or answer behavior
 
 ## 📄 License
 
