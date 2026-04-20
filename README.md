@@ -12,8 +12,7 @@
 
 ## 🎥 Video Demonstration
 
-> Add project demo link here  
-> Example: `[Watch the demo](https://drive.google.com/file/d/1HKdovXlirdDNdEmWh8blVxuCIVjtgh9P/view?usp=sharing)`
+[Watch the demo video](static/images/I22023337_Cheong%20Khai%20Yun_Demonstration%20Video.mp4)
 
 ## ✨ Core Functions
 
